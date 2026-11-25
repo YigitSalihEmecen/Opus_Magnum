@@ -444,6 +444,16 @@ export class Viewmodel {
       THREE.MathUtils.lerp(rz, INSPECT_ROT.z, ie) - arc * 12 * D2R + kr.z,
       'YXZ',
     );
+    // magnified optics, aimed: nothing may tilt or shift the scope off the view axis (landing, jump and
+    // recoil kicks included); only the straight push back along the sight line is left
+    if (o.shadow && !this.swaps.scope) {
+      const k = ads * ads * (1 - ie);
+      this.sway.rotation.x *= 1 - k;
+      this.sway.rotation.y *= 1 - k;
+      this.sway.rotation.z *= 1 - k;
+      p.x += (adsPos.x - p.x) * k;
+      p.y += (adsPos.y - p.y) * k;
+    }
 
     // clip layer; left hand leaves the gun while inspecting
     const g = this.player.get('gun', null);
@@ -598,11 +608,12 @@ export class Viewmodel {
       const t = Math.min(1, s.t);
       const k = s.phase === 'out' ? easeIn(t) : 1 - easeOutBack(t);
       const obj = this.attached[slot]?.obj;
+      const base = obj ? (obj.userData.baseScale ??= obj.scale.x) : 1; // e.g. the 6× scope is built at 1.3×
       if (obj) {
         obj.position.set(cfg.move[0] * k, cfg.move[1] * k, cfg.move[2] * k);
         obj.rotation.set(cfg.spin[0] * k, cfg.spin[1] * k, cfg.spin[2] * k);
         const sc = s.phase === 'out' ? 1 - Math.max(0, (t - 0.6) / 0.4) * 0.6 : 1;
-        obj.scale.setScalar(sc);
+        obj.scale.setScalar(sc * base);
       }
       if (t < 1) continue;
       if (s.phase === 'out') {
@@ -611,7 +622,7 @@ export class Viewmodel {
         s.t = 0;
         this.#updateSwaps(0);
       } else {
-        if (obj) { obj.position.set(0, 0, 0); obj.rotation.set(0, 0, 0); obj.scale.setScalar(1); }
+        if (obj) { obj.position.set(0, 0, 0); obj.rotation.set(0, 0, 0); obj.scale.setScalar(base); }
         this.kickRot.kick(slot === 'stock' ? -0.4 : 0.5, slot === 'muzzle' ? 0.4 : 0, -0.4);
         this.kickPos.kick(0, slot === 'mag' ? 0.25 : 0.12, slot === 'stock' ? -0.2 : 0);
         this.onEvent('attachIn', slot);
