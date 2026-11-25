@@ -27,6 +27,29 @@ export function packHeights(h) {
 }
 
 const GRID = gridTexture();
+let groundMat;
+/** Paper-gridded ground, tinted per vertex (see tintGround). Shared by the playable terrain and the outer hills. */
+export const terrainMaterial = () => (groundMat ??= toon(P.oat, { map: GRID, rim: 0, vertexColors: true }));
+
+const GRASS = new THREE.Color(0.8, 0.9, 0.7), DIRT = new THREE.Color(1.02, 0.95, 0.86), PAPER = new THREE.Color(1, 1, 1);
+const _c = new THREE.Color();
+/**
+ * Vertex tint over the oat paper: flat low ground stays paper (streets and lots read clean), slopes and
+ * raised ground turn grassy, steep banks show dirt. Needs normals.
+ */
+export function tintGround(geo) {
+  const pos = geo.attributes.position, nor = geo.attributes.normal;
+  const col = geo.attributes.color?.count === pos.count ? geo.attributes.color : new THREE.BufferAttribute(new Float32Array(pos.count * 3), 3);
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i), ny = nor.getY(i);
+    const grass = THREE.MathUtils.smoothstep(y, 0.4, 2.2) * 0.75 + THREE.MathUtils.smoothstep(1 - ny, 0.015, 0.08) * 0.35;
+    const dirt = THREE.MathUtils.smoothstep(1 - ny, 0.12, 0.3);
+    _c.copy(PAPER).lerp(GRASS, Math.min(1, grass)).lerp(DIRT, dirt * 0.8);
+    col.setXYZ(i, _c.r, _c.g, _c.b);
+  }
+  col.needsUpdate = true;
+  geo.setAttribute('color', col);
+}
 
 /** Ground mesh for a size × size square; heights applied by setHeights. */
 export function terrainMesh(size) {
@@ -35,7 +58,7 @@ export function terrainMesh(size) {
   // world-scale UVs so the paper grid meets every piece's grid
   const pos = geo.attributes.position, uv = geo.attributes.uv;
   for (let i = 0; i < pos.count; i++) uv.setXY(i, pos.getX(i) / 4, -pos.getZ(i) / 4);
-  const mesh = new THREE.Mesh(geo, toon(P.oat, { map: GRID, rim: 0 }));
+  const mesh = new THREE.Mesh(geo, terrainMaterial());
   mesh.receiveShadow = true;
   mesh.userData.terrain = true;
   return mesh;
@@ -47,6 +70,7 @@ export function setHeights(mesh, h) {
   for (let i = 0; i < pos.count; i++) pos.setY(i, h[i]);
   pos.needsUpdate = true;
   mesh.geometry.computeVertexNormals();
+  tintGround(mesh.geometry);
   mesh.geometry.computeBoundingSphere();
   mesh.geometry.computeBoundingBox();
 }

@@ -3,36 +3,65 @@ import { assetById } from '../assets.js';
 import { segFor, heightAt } from '../terrain.js';
 
 /*
-  "Saltgrass" — a dense little city in a bowl of hills, 192 × 192 m.
+  "Saltgrass" — a packed, vertical hill town, 128 × 128 m.
 
-     hills ─────────────────────────────────────────────────────── hills
-       │  ╭──────────────── ring road (wide bends) ───────────────╮  │
-       │  │  TOWERS + bridges │ CIVIC TERRACE + tower │ SHOP STREET  │  │
-  ally ═══╡──────────────── 20 ──────────────────────────────────────╞═══ enemy
-  spawn   │  MOTEL BLOCK      │  PARK (mound, cover)  │ INDUSTRIAL   │   spawn
-       │  │──────────────── -20 ─────────────────────────────────────│  │
-       │  │  HOUSES (gabled)  │ TERRACES + towers     │ HIGH-RISE    │  │
-       │  ╰──────────────────────────────────────────────────────────╯  │
-     hills ─────────────────────────────────────────────────────── hills
+  An avenue (east–west, the two team entrances) and a cross street split the core into four blocks.
+  Each block is a two-storey base of stacked rooms whose joined roofs make a raised DECK — a second
+  ground level at 7 m — with L-, U- and tower-shaped buildings standing on it. Under the deck runs a
+  covered alley; an open courtyard and a stair court (two flights, street → landing → deck) are cut into
+  it. Walkway bridges tie the four decks together over the streets, so you can cross the town without
+  touching the street. Hills and terraced houses close the town in.
 
-  Cross streets at ±20 inside a ring road at ±64 with bends at the corners; each 36 m block has a sidewalk ring around a 28 m
-  core (two 12 m lots, a 4 m alley). Height comes from towers (3–5 storeys, roof access), podium
-  terraces, walkway bridges at the third floor, the park mound and the hills outside the ring.
+        hills · houses · pines
+      ┌──────────┬──────────┐
+      │  BLOCK   ┆  BLOCK   │   ┆ = bridge at deck height
+  ═══ │ ▤ court  ┆ court ▤  │ ═══ avenue (spawns at both ends)
+      │  BLOCK   ┆  BLOCK   │
+      └──────────┴──────────┘
+        hills · houses · pines
+
+  Block grid (local): 10 cells across (i, away from the cross street) × 8 deep (j, away from the
+  avenue), 4 m each; cell (i, j) sits at x = sx·(8 + 4i), z = sz·(8 + 4j).
 */
 
-const SIZE = 192, HALF = SIZE / 2;
-const BLOCKS = [-40, 0, 40];
-const s = (a, b, v) => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
+const SIZE = 128, HALF = SIZE / 2, ST = 3.5;
+const sm = (a, b, v) => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 function ground(x, z) {
-  const d = Math.max(Math.abs(x), Math.abs(z));
-  // hills outside the ring, with a flat cutting for the two exit roads along z = 0
-  const hills = s(66, 92, d) * (6 + 2.5 * Math.sin(x * 0.07) * Math.cos(z * 0.05)) * (Math.abs(x) > Math.abs(z) ? s(5, 16, Math.abs(z)) : 1);
-  // a grassy mound in the central park
-  const r = Math.hypot(x - 2, z + 1) / 11;
-  const mound = r < 1 ? 2.6 * (1 - r * r) ** 2 : 0;
-  return hills + mound;
+  const edge = Math.max(Math.abs(x) / 48, Math.abs(z) / 41);
+  const hills = sm(1, 1.3, edge) * (5.5 + 2 * Math.sin(x * 0.11) * Math.cos(z * 0.09));
+  const valley = Math.abs(x) > 46 ? sm(4, 12, Math.abs(z)) : 1; // flat cutting for the avenue's ends
+  return hills * valley;
 }
+
+/** Upper buildings on each block's deck: cells (i, j) and storeys above the deck. Shapes per quadrant. */
+const UPPER = [
+  [
+    { cells: [[0, 4], [0, 5], [0, 6], [0, 7], [1, 7], [2, 7]], h: 3, color: P.clay },              // L
+    { cells: [[5, 4], [6, 4], [7, 4], [5, 5], [5, 6], [7, 5], [7, 6]], h: 2, color: P.sky },       // U
+    { cells: [[8, 6], [9, 6], [8, 7], [9, 7]], h: 4, color: P.oat },                              // tower
+    { cells: [[1, 1], [2, 1], [2, 2]], h: 1, color: P.sage },                                     // small L
+  ],
+  [
+    { cells: [[0, 5], [1, 5], [2, 5], [0, 6], [0, 7]], h: 2, color: P.manilla },                  // L
+    { cells: [[5, 5], [6, 5], [7, 5], [5, 6], [5, 7], [6, 7], [7, 7]], h: 3, color: P.bookcloth }, // U, open east
+    { cells: [[8, 0], [9, 0], [9, 1]], h: 4, color: P.slate },
+    { cells: [[2, 2], [2, 3]], h: 2, color: P.ivory },
+  ],
+  [
+    { cells: [[1, 6], [2, 6], [3, 6], [1, 7], [3, 7]], h: 3, color: P.sage },                     // U
+    { cells: [[6, 4], [6, 5], [6, 6], [7, 6], [8, 6]], h: 2, color: P.kraft },                    // L
+    { cells: [[9, 3], [9, 4], [8, 3]], h: 4, color: P.sky },
+    { cells: [[0, 1], [1, 1]], h: 1, color: P.clay },
+  ],
+  [
+    { cells: [[0, 4], [1, 4], [0, 5], [0, 6]], h: 4, color: P.oat },                              // tall L
+    { cells: [[5, 6], [6, 6], [7, 6], [5, 7], [7, 7]], h: 2, color: P.sage },                     // U
+    { cells: [[8, 4], [9, 4], [9, 5]], h: 3, color: P.clay },
+    { cells: [[2, 1], [2, 2]], h: 1, color: P.manilla },
+  ],
+];
+const BASES = [[P.manilla, P.ivory, P.kraft], [P.ivory, P.sky, P.oat], [P.kraft, P.manilla, P.sage], [P.oat, P.bookcloth, P.ivory]];
 
 export function settlement() {
   const seg = segFor(SIZE), n = seg + 1, step = SIZE / seg;
@@ -41,234 +70,183 @@ export function settlement() {
   const gy = (x, z) => Math.round(heightAt(h, SIZE, x, z) * 20) / 20;
 
   const pieces = [];
-  const put = (type, x, z, rot = 0, y = 0, color) => pieces.push({ type, x, y, z, rot, color: color ?? assetById(type).colors[0] });
+  const put = (type, x, z, rot = 0, y = 0, color) => { pieces.push({ type, x, y, z, rot, color: color ?? assetById(type).colors[0] }); return pieces.at(-1); };
   const onGround = (type, x, z, rot = 0, color, sink = 0) => put(type, x, z, rot, gy(x, z) - sink, color);
 
-  // ── roads: ring at ±64 with bends at the corners, cross streets, exit roads ──
-  for (let t = -52; t <= 52; t += 4) for (const e of [-64, 64]) { put('road', e, t); put('road', t, e); }
-  const bends = [[-60, -60, 0], [60, -60, 270], [60, 60, 180], [-60, 60, 90]];
-  for (const [x, z, r] of bends) put('road_curve', x, z, r);
-  const bendCentres = [[-54, -54], [54, -54], [54, 54], [-54, 54]]; // each bend sweeps 8…12 m around these
-  for (const c of [-20, 20]) for (let t = -60; t <= 60; t += 4) { if (Math.abs(t) !== 20) put('road', c, t); put('road', t, c); }
-  for (let x = 68; x <= 92; x += 4) { put('road', -x, 0); put('road', x, 0); }
+  // ── streets ──
+  for (let x = -60; x <= 60; x += 4) put('road', x, 0);
+  for (let z = 4; z <= 36; z += 4) { put('road', 0, z); put('road', 0, -z); }
+  for (let t = 4; t <= 44; t += 4) for (const s of [-1, 1]) { put('sidewalk', s * t, 4); put('sidewalk', s * t, -4); }
+  for (let t = 8; t <= 36; t += 4) for (const s of [-1, 1]) { put('sidewalk', 4, s * t); put('sidewalk', -4, s * t); }
 
-  // ── sidewalks: a ring round every block, and a promenade inside the ring road (clear of the bends) ──
-  const clearOfBends = (x, z) => bendCentres.every(([cx, cz]) => { const d = Math.hypot(x - cx, z - cz); return d + 2.9 < 8 || d - 2.9 > 12; });
-  for (const bx of BLOCKS) for (const bz of BLOCKS) {
-    for (let t = -16; t <= 16; t += 4) {
-      put('sidewalk', bx + t, bz - 16); put('sidewalk', bx + t, bz + 16);
-      if (Math.abs(t) !== 16) { put('sidewalk', bx - 16, bz + t); put('sidewalk', bx + 16, bz + t); }
+  // ── the four blocks ──
+  let qi = 0;
+  for (const sz of [-1, 1]) for (const sx of [-1, 1]) block(sx, sz, qi++);
+
+  function block(sx, sz, q) {
+    const W = 10, D = 8;
+    const X = (i) => sx * (8 + 4 * i), Z = (j) => sz * (8 + 4 * j);
+    const sideOf = (di, dj) => (di ? (di * sx > 0 ? 'E' : 'W') : dj * sz > 0 ? 'S' : 'N'); // local step → world side
+    const stairRot = (di, dj) => { const wx = di * sx, wz = dj * sz; return wz > 0 ? 180 : wz < 0 ? 0 : wx > 0 ? 270 : 90; }; // rising toward (di, dj)
+    const baseColor = (i) => BASES[q][i < 4 ? 0 : i < 7 ? 1 : 2];
+
+    // storeys present per cell: the base is storeys 0 and 1, its roof is the deck
+    const lv = [...Array(W)].map(() => [...Array(D)].map(() => new Set([0, 1])));
+    const color = [...Array(W)].map((_, i) => [...Array(D)].map(() => baseColor(i)));
+    const court = [[3, 0], [3, 1], [3, 2], [3, 3], [4, 0], [4, 1], [4, 2], [4, 3]];
+    const yard = [[7, 1], [8, 1], [7, 2], [8, 2]];
+    for (const [i, j] of [...court, ...yard]) lv[i][j].clear();
+    for (let i = 0; i < W; i++) lv[i][5].delete(0); // covered alley under the deck
+    for (const b of UPPER[q]) for (const [i, j] of b.cells) { for (let k = 2; k < 2 + b.h; k++) lv[i][j].add(k); color[i][j] = b.color; }
+    const top = (i, j) => (lv[i]?.[j]?.size ? Math.max(...lv[i][j]) + 1 : 0); // storeys up to the roof
+
+    const rec = new Map();
+    for (let i = 0; i < W; i++) for (let j = 0; j < D; j++) for (const k of lv[i][j]) {
+      rec.set(`${i},${j},${k}`, put('room', X(i), Z(j), 0, k * ST, k >= 2 ? color[i][j] : baseColor(i)));
     }
-  }
-  const promenade = new Set();
-  for (let t = -60; t <= 60; t += 4) {
-    if (Math.abs(t) === 20) continue; // cross streets run through here
-    for (const [x, z] of [[t, -60], [t, 60], [-60, t], [60, t]]) promenade.add(`${x},${z}`);
-  }
-  for (const key of promenade) {
-    const [x, z] = key.split(',').map(Number);
-    if (clearOfBends(x, z)) put('sidewalk', x, z);
-  }
+    const mark = (i, j, k, field, side) => { const p = rec.get(`${i},${j},${k}`); if (p) p[field] = (p[field] ?? '') + side; };
+    // deck-level roofs are plazas: curated props instead of random roof clutter
+    for (let i = 0; i < W; i++) for (let j = 0; j < D; j++) if (top(i, j) === 2) { const p = rec.get(`${i},${j},1`); if (p) p.clear = true; }
 
-  const lot = (bx, bz, qx, qz) => [bx + qx * 8, bz + qz * 8]; // 12 m lot centres in a block core
+    // ── stair court: street → landing (3.5) → deck (7) ──
+    put('stairs', X(3), sz * (6 + 3), stairRot(0, 1), 0, P.oat);
+    put('floor', X(3), sz * (6 + 8), 0, 3.2, P.oat);
+    put('floor', X(4), sz * (6 + 8), 0, 3.2, P.oat);
+    put('stairs', X(4), sz * (6 + 13), stairRot(0, 1), ST, P.oat);
+    for (const z of [12.4, 15.6]) put('pillar', (X(3) + X(4)) / 2, sz * z, 0, 0, P.oat); // the landing's open span
+    if (top(4, 4) > 2) mark(4, 4, 2, 'door', sideOf(0, -1)); else mark(4, 4, 1, 'open', sideOf(0, -1));
+    put('dumpster', X(4) + sx * 0.2, sz * 8.5, 90, 0, P.sage);
+    put('crate', X(4) - sx * 1, sz * 11.2, 15);
+    put('barrel', X(3) + sx * 1.3, sz * 18.5, 0, 0, P.clay);
 
-  /**
-   * Favela / cyberpunk stack filling a 28 m block core (7 × 7 cells of 4 m) at base height y0.
-   * Heights are smoothed noise; colours come in small groups so each group reads as one building.
-   * Two dead-end alleys get stairs up to the building at their end; some terraces get stairs up to a
-   * doorway in a taller neighbour.
-   */
-  const stack = (bx, bz, sd, { maxH = 5, minH = 1, y0 = 0, palette = [P.manilla, P.sky, P.sage, P.kraft, P.clay, P.ivory, P.bookcloth, P.oat] } = {}) => {
-    let st = sd;
-    const r = () => (st = (st * 16807) % 2147483647) / 2147483647;
-    const N = 7, cx = (i) => bx - 12 + 4 * i, cz = (j) => bz - 12 + 4 * j;
-    const raw = [...Array(N)].map(() => [...Array(N)].map(() => r()));
-    const hgt = raw.map((row, i) => row.map((v, j) => {
-      let sum = 0, n = 0;
-      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) if (raw[i + a]?.[j + b] !== undefined) { sum += raw[i + a][j + b]; n++; }
-      const t = (sum / n) * 0.55 + v * 0.45;
-      return Math.max(minH, Math.min(maxH, Math.round(minH + t ** 1.4 * (maxH - minH + 0.9))));
-    }));
-    const colAlley = 4, rowAlley = 2;
-    for (let j = 0; j < N - 1; j++) hgt[colAlley][j] = 0;          // N–S alley, dead end at the south row
-    for (let i = 1; i < N; i++) hgt[i][rowAlley] = 0;               // E–W alley, dead end at the west column
-    hgt[1 + Math.floor(r() * 2)][5] = 0;                            // a courtyard
-    hgt[colAlley][N - 1] = Math.max(2, hgt[colAlley][N - 1]);
-    hgt[0][rowAlley] = Math.max(2, hgt[0][rowAlley]);
-    // a staircase spine up the west edge: paired roofs stepping up a storey every 8 m
-    const spine = [1, 1, 2, 2, 3, 3, 4].map((v) => Math.min(maxH, v));
-    for (let j = 0; j < N; j++) hgt[0][j] = spine[j];
-    // colour groups: 2 × 2 patches with some merges
-    const groups = [...Array(N)].map((_, i) => [...Array(N)].map((_, j) => palette[(Math.floor(i / 2) * 3 + Math.floor(j / 2) * 5 + Math.floor(r() * 1.4)) % palette.length]));
-    const rec = new Map(); // `${i},${j},${k}` → record
-    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) for (let k = 0; k < hgt[i][j]; k++) {
-      put('room', cx(i), cz(j), 0, y0 + k * 3.5, groups[i][j]);
-      rec.set(`${i},${j},${k}`, pieces.at(-1));
-    }
-    const addTo = (i, j, k, field, side) => { const p = rec.get(`${i},${j},${k}`); if (p) p[field] = (p[field] ?? '') + side; };
-    // alley stairs up to the dead-end building: a doorway on its first floor (or an open roof edge)
-    put('stairs', cx(colAlley), cz(N - 1) - 2 - 3, 180, y0, P.slate); // centred: lands square on the doorway
-    if (hgt[colAlley][N - 1] >= 2) addTo(colAlley, N - 1, 1, 'door', 'N'); else addTo(colAlley, N - 1, 0, 'open', 'N');
-    put('stairs', cx(0) + 2 + 3, cz(rowAlley), 90, y0, P.slate);
-    if (hgt[0][rowAlley] >= 2) addTo(0, rowAlley, 1, 'door', 'E'); else addTo(0, rowAlley, 0, 'open', 'E');
-    // terrace stairs: two equal roofs in a line, then a neighbour at least two storeys taller
-    // spine stairs first (they guarantee a way to the top), then any other terraces, lowest roofs first
-    const used = new Set();
-    const climb = (i, j, di, dj, back, rot) => {
-      const hA = hgt[i][j], hC = hgt[i + di]?.[j + dj];
-      if (hA < 1 || hgt[i - di]?.[j - dj] !== hA || !(hC >= hA + 1)) return false;
+    // ── courtyard: open to the sky, a tree and somewhere to sit ──
+    const yx = (X(7) + X(8)) / 2, yz = (Z(1) + Z(2)) / 2;
+    put('tree', yx, yz, 0, 0, P.sage);
+    put('bench', yx + sx * 2.6, yz, 90, 0, P.kraft);
+    put('bush', yx - sx * 2.6, yz - sz * 2.4, 0, 0, P.olive);
+    put('barrel', yx - sx * 2.8, yz + sz * 2.8, 0, 0, P.sky);
+    put('planter', yx, yz + sz * 2.9, 0, 0, P.ivory);
+
+    // ── covered alley (row 5): crates and bins in the run under the deck ──
+    put('dumpster', X(1), Z(5), 0, 0, P.slate);
+    put('crate', X(6) + sx * 0.8, Z(5) - sz * 0.9, 0);
+    put('crate', X(6) + sx * 0.8, Z(5) - sz * 0.9, 20, 1.2);
+    put('barrel', X(8), Z(5) + sz * 1.2, 0, 0, P.clay);
+
+    // ── terrace stairs up to the buildings on the deck (lowest roofs first) ──
+    const used = new Set(['0,2', '1,0', '4,4']); // bridge landings and the stair court's top stay clear
+    const climb = (i, j, di, dj) => {
+      const hA = top(i, j), hB = top(i - di, j - dj), hC = top(i + di, j + dj);
+      if (hA < 2 || hB !== hA || !(hC >= hA + 1)) return false;
+      if (!lv[i][j].has(hA - 1) || !lv[i - di][j - dj].has(hA - 1)) return false;
       const cells = [`${i},${j}`, `${i - di},${j - dj}`];
       if (cells.some((c) => used.has(c))) return false;
       cells.forEach((c) => used.add(c));
-      // stairs end at the A–C boundary (square on C's doorway / roof gap) and run back across A into B
-      put('stairs_open', cx(i) + di * 2 - di * 3, cz(j) + dj * 2 - dj * 3, rot, y0 + hA * 3.5, P.slate); // no rails: the roof beside it stays walkable
-      if (hC === hA + 1) addTo(i + di, j + dj, hA, 'open', back); else addTo(i + di, j + dj, hA + 1, 'door', back);
-      for (const [a, c] of [[i, j], [i - di, j - dj]]) { const top = rec.get(`${a},${c},${hA - 1}`); if (top) top.clear = true; }
+      const ex = X(i) + sx * di * 2, ez = Z(j) + sz * dj * 2;
+      put('stairs_open', ex - sx * di * 3, ez - sz * dj * 3, stairRot(di, dj), hA * ST, P.cloud);
+      const back = sideOf(-di, -dj);
+      // the flight tops out one storey above A's roof: onto C's roof, or through a door into C
+      if (hC === hA + 1) mark(i + di, j + dj, hA, 'open', back); else mark(i + di, j + dj, hA + 1, 'door', back);
       return true;
     };
-    addTo(0, rowAlley, 1, 'door', 'N'); // the alley stair's landing room opens onto the spine's first terrace
-    for (const j of [1, 3, 5]) climb(0, j, 0, 1, 'N', 180);
-    // lowest roofs first, so each storey's terraces lead on to the next one up
-    const dirs = [[0, 1, 'S', 'N', 180], [0, -1, 'N', 'S', 0], [1, 0, 'E', 'W', 270], [-1, 0, 'W', 'E', 90]];
+    const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
     const cands = [];
-    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
-      const hA = hgt[i][j];
-      if (hA < 1) continue;
-      for (const d of dirs) {
-        const [di, dj] = d;
-        if (hgt[i - di]?.[j - dj] === hA && hgt[i + di]?.[j + dj] >= hA + 1) cands.push({ i, j, hA, d, k: r() });
-      }
-    }
+    for (let i = 0; i < W; i++) for (let j = 0; j < D; j++) for (const [di, dj] of dirs) cands.push({ i, j, di, dj, hA: top(i, j), k: Math.sin(i * 7.1 + j * 3.3 + q) });
     cands.sort((a, b) => a.hA - b.hA || a.k - b.k);
     let placed = 0;
-    for (const { i, j, d: [di, dj, , back, rot] } of cands) {
-      if (placed >= 12) break;
-      if (climb(i, j, di, dj, back, rot)) placed++;
-    }  };
+    for (const c of cands) if (placed < 7 && climb(c.i, c.j, c.di, c.dj)) placed++;
 
-
-  // ── NW: hillside-style favela — the densest stack, five storeys at the peaks ──
-  stack(-40, -40, 11, { maxH: 5 });
-
-  // ── N: civic terrace — four podiums, the gaps decked over, water tower on top ──
-  {
-    const [bx, bz] = [0, -40];
-    for (const qx of [-1, 1]) for (const qz of [-1, 1]) put('podium', ...lot(bx, bz, qx, qz), qx < 0 ? 0 : 180, 0, P.manilla);
-    // deck over the cross-shaped gap between the four podiums
-    for (const t of [-12, -8, -4, 4, 8, 12]) { put('floor', bx, bz + t, 0, 3.2, P.oat); put('floor', bx + t, bz, 0, 3.2, P.oat); }
-    put('floor', bx, bz, 0, 3.2, P.oat);
-    put('tower', bx, bz - 8, 0, 3.5, P.sky);
-    put('tree', bx - 9, bz + 9, 0, 3.5, P.sage);
-    put('tree', bx + 9, bz - 10, 0, 3.5, P.olive);
-    put('bench', bx + 3, bz + 6, 0, 3.5, P.kraft);
-    put('bench', bx - 6, bz - 3, 90, 3.5, P.kraft);
-    put('sandbags', bx + 5, bz + 2, 0, 3.5, P.kraft);
-    put('lamp', bx + 6, bz + 10, 0, 3.5, P.slate);
-  }
-
-  // ── NE: neon stack — taller and greyer, billboards and masts on the roofs ──
-  stack(40, -40, 23, { maxH: 6, minH: 2, palette: [P.slate, P.oat, P.sky, P.ivory, P.cloud, P.bookcloth] });
-
-  // ── W: low market stack, mostly two storeys, lots of shopfronts ──
-  stack(-40, 0, 37, { maxH: 3 });
-
-  // ── centre: park on a mound, low cover, two kiosks ──
-  {
-    const [bx, bz] = [0, 0];
-    for (const [x, z, c] of [[-10, -9, P.sage], [10, -10, P.olive], [-11, 9, P.olive], [9, 11, P.sage], [-4, 11, P.sage], [12, 2, P.olive]]) onGround('tree', bx + x, bz + z, 0, c);
-    for (const [x, z] of [[-6, -4], [6, 6], [-9, 3], [4, -9], [11, -4]]) onGround('bush', bx + x, bz + z, 0, P.olive);
-    for (const [x, z, r] of [[-3, 6, 30], [7, -3, 200], [-8, -10, 120]]) onGround('rock', bx + x, bz + z, r, P.cloud, 0.3);
-    onGround('sandbags', bx - 2, bz - 7, 0, P.kraft);
-    onGround('sandbags', bx + 7, bz + 4, 90, P.kraft);
-    onGround('bench', bx - 12, bz - 2, 90, P.kraft);
-    onGround('bench', bx + 1, bz + 12, 0, P.kraft);
-  }
-
-  // ── E: industrial yard ──
-  {
-    const [bx, bz] = [40, 0];
-    put('warehouse', bx - 4, bz - 6, 0, 0, P.sage);
-    put('container', bx - 6, bz + 7, 0, 0, P.clay);
-    put('container', bx - 6, bz + 7, 90, 2.6, P.sky);
-    put('container', bx + 5, bz + 10, 0, 0, P.sage);
-    put('container', bx + 11, bz + 3, 90, 0, P.kraft);
-    for (const [x, z, r] of [[1, 5, 0], [2.3, 5.4, 25], [1.5, 6.2, 0]]) put('crate', bx + x, bz + z, r);
-    put('crate', bx + 1.6, bz + 5.5, 0, 1.2);
-    for (const [x, z] of [[8, -12], [8.8, -11.2]]) put('barrel', bx + x, bz + z, 0, 0, P.clay);
-    for (const x of [-12, -8, 0, 4, 8, 12]) put('fence', bx + x, bz + 14, 0, 0, P.slate);
-    put('van', bx + 9, bz - 4, 90, 0, P.ivory);
-    put('sandbags', bx - 12, bz + 12, 0, 0, P.kraft);
-  }
-
-  // ── SW: colourful stack climbing to four storeys ──
-  stack(-40, 40, 53, { maxH: 4, palette: [P.clay, P.sky, P.sage, P.manilla, P.kraft, P.bookcloth, P.ivory] });
-
-  // ── S: terraces with towers on top ──
-  {
-    const [bx, bz] = [0, 40];
-    put('podium', ...lot(bx, bz, -1, -1), 0, 0, P.oat);
-    put('podium', ...lot(bx, bz, 1, -1), 180, 0, P.oat);
-    put('tower3', ...lot(bx, bz, -1, 1), 0, 0, P.ivory);
-    put('shoprow', bx + 8, bz + 10, 0, 0, P.manilla);
-    put('house', bx - 8, bz - 8, 0, 3.5, P.sky);
-    put('tree', bx + 8, bz - 8, 0, 3.5, P.olive);
-    put('walkway', bx, bz - 10, 0, 3.5, P.oat);
-    put('walkway', bx, bz - 6, 0, 3.5, P.oat);
-    put('sandbags', bx + 9, bz - 4, 90, 3.5, P.kraft);
-    put('dumpster', bx + 9, bz + 2, 0, 0, P.sky);
-  }
-
-  // ── SE: high-rise quarter ──
-  {
-    const [bx, bz] = [40, 40];
-    const cols = [P.slate, P.oat, P.sky, P.ivory];
-    [[-1, -1, 'tower5'], [1, -1, 'tower3'], [-1, 1, 'tower3'], [1, 1, 'tower5']].forEach(([qx, qz, t], i) => put(t, ...lot(bx, bz, qx, qz), 0, 0, cols[i]));
-    for (const qz of [-1, 1]) put('walkway', bx, bz + qz * 8 - 4, 0, 7.0, P.slate);
-    put('dumpster', bx, bz + 1.5, 90, 0, P.clay);
-  }
-
-  // ── street furniture ──
-  for (const c of [-20, 20]) for (const t of [-48, -32, 32, 48]) { put('lamp', c - 2.6, t, 270, 0, P.slate); put('lamp', t, c + 2.6, 0, 0, P.slate); }
-  for (const [x, z, r] of [[-20, 6, 0], [20, -6, 0], [6, 20, 90], [-6, -20, 90]]) put('jersey', x, z, r, 0, P.ivory);
-
-  // ── outer band: a row of buildings facing the ring road, climbing the first slope of the hills ──
-  {
-    const kinds = ['house', 'shoprow', 'house', 'warehouse', 'house', 'shoprow', 'tower3', 'house'];
-    const cols = [P.ivory, P.manilla, P.sage, P.sky, P.kraft, P.oat];
-    let i = 0;
-    for (const side of ['N', 'S', 'W', 'E']) {
-      for (let t = -44; t <= 44; t += 16) {
-        const kind = kinds[i % kinds.length];
-        const depth = kind === 'warehouse' ? 12 : kind === 'house' ? 8 : kind === 'tower3' ? 12 : 8;
-        const off = 66 + 2 + depth / 2; // just past the ring road's outer edge
-        if ((side === 'W' || side === 'E') && Math.abs(t) < 10) { i++; continue; } // exit road
-        const [x, z, rot] = side === 'N' ? [t, -off, 0] : side === 'S' ? [t, off, 180] : side === 'W' ? [-off, t, 90] : [off, t, 270];
-        // buildings face the ring: front (south side of the prefab) turned toward the city
-        onGround(kind, x, z, rot, cols[i % cols.length], 0.1);
-        i++;
-      }
+    // ── deck plazas: planters, benches, lamps, cover ──
+    let n = 0;
+    for (let i = 0; i < W; i++) for (let j = 0; j < D; j++) {
+      if (top(i, j) !== 2 || used.has(`${i},${j}`)) continue;
+      const x = X(i), z = Z(j), y = 2 * ST, r = (i * 13 + j * 7 + q * 5) % 12;
+      if (r === 0) put('tree', x, z, 0, y, P.olive);
+      else if (r === 1) put('canopy', x, z, sz > 0 ? 0 : 180, y, [P.clay, P.sky, P.sage][(i + j + q) % 3]);
+      else if (r === 3) put('planter', x, z, (i + j) % 2 ? 90 : 0, y, P.oat);
+      else if (r === 6) put('stall', x, z, sz > 0 ? 180 : 0, y, [P.sky, P.clay, P.sage][(i + q) % 3]);
+      else if (r === 2) put('bench', x, z + sz * 1.2, 0, y, P.kraft);
+      else if (r === 4) put('sandbags', x, z, (n++ % 2) * 90, y, P.kraft);
+      else if (r === 5) put('lamp', x + sx * 1.6, z, sx > 0 ? 90 : 270, y, P.slate);
+      else if (r === 7) { put('crate', x - 0.6, z, 0, y); put('barrel', x + 0.9, z + 0.6, 0, y, P.sky); }
+      else if (r === 8) put('bush', x, z, 0, y, P.sage);
     }
+
+    // street-side dressing at ground level
+    put('lamp', X(1), sz * 5.4, sz > 0 ? 0 : 180, 0, P.slate);
+    put('lamp', X(7), sz * 5.4, sz > 0 ? 0 : 180, 0, P.slate);
+    put('lamp', sx * 5.4, Z(6), sx > 0 ? 90 : 270, 0, P.slate);
+    put('jersey', X(9) + sx * 2, sz * 4.6, 0, 0, P.oat);
+    for (const x of [30, 40]) put('stall', sx * x, sz * 4.9, sz > 0 ? 0 : 180, 0, [P.clay, P.sky, P.sage, P.kraft][(q + x / 10) % 4]);
+    put('stall', sx * 4.9, Z(5) + sz * 0.4, sx > 0 ? 90 : 270, 0, [P.sage, P.clay, P.sky, P.kraft][q]);
+    put('planter', sx * 5, sz * 37, 90, 0, P.oat);
   }
 
-  // ── outskirts: houses on the hillside, pines, rocks, a few wrecks ──
-  for (const [x, z, r] of [[-88, -36, 90], [-88, -22, 90], [-88, 30, 90], [88, 34, 270], [36, -88, 0], [-36, 88, 180], [6, 88, 180]]) onGround('house', x, z, r, pick([P.ivory, P.manilla, P.sage, P.sky], x + z), 0.2);
-  let seed = 7;
+  // ── bridges at deck height, over the cross street and the avenue ──
+  /** Remove the parapet (or add a door, if a building stands there) where a bridge meets a deck cell. */
+  const openDeck = (sx, sz, i, j, side) => {
+    const x = sx * (8 + 4 * i), z = sz * (8 + 4 * j);
+    const deck = pieces.find((r) => r.type === 'room' && r.x === x && r.z === z && Math.abs(r.y - ST) < 0.01);
+    const above = pieces.find((r) => r.type === 'room' && r.x === x && r.z === z && Math.abs(r.y - 2 * ST) < 0.01);
+    if (above) above.door = (above.door ?? '') + side; else if (deck) deck.open = (deck.open ?? '') + side;
+  };
+  for (const sz of [-1, 1]) {
+    for (const x of [-4, 0, 4]) put('walkway', x, sz * 16, 0, 2 * ST, P.oat);
+    openDeck(-1, sz, 0, 2, 'E');
+    openDeck(1, sz, 0, 2, 'W');
+  }
+  for (const sx of [-1, 1]) {
+    for (const z of [-4, 0, 4]) put('walkway', sx * 12, z, 90, 2 * ST, P.oat);
+    openDeck(sx, -1, 1, 0, 'S');
+    openDeck(sx, 1, 1, 0, 'N');
+  }
+
+  // ── avenue ends: cover and wrecks at the entrances ──
+  for (const s of [-1, 1]) {
+    put('sedan', s * 50, -1.2, 90 + s * 10, 0, s < 0 ? P.slate : P.clay);
+    put('sandbags', s * 54, 2.8, 90, 0, P.kraft);
+    put('jersey', s * 47, 1.6, 90, 0, P.ivory);
+    put('pickup', s * 30, 1.4, 270, 0, s < 0 ? P.sage : P.sky);
+  }
+  for (const s of [-1, 1]) {
+    put('container', s * 62.6, -3.1, 90, 0, s < 0 ? P.sky : P.clay);
+    put('container', s * 62.6, 3.1, 90, 0, s < 0 ? P.sage : P.kraft);
+    put('container', s * 62.6, 0.2, 86, 2.6, s < 0 ? P.clay : P.sky);
+    for (const x of [-2, 2]) put('jersey', x, s * 39.2, 0, 0, P.oat);
+    for (const x of [49, 55, 61]) onGround('pole', -s * x, 7.2 * s, 0, P.kraft);
+  }
+  put('van', 2.4, -24, 0, 0, P.ivory);
+  put('sedan', -1.4, 26, 180, 0, P.kraft);
+
+  // ── outskirts: terraced houses on the slopes, pines and rocks ──
+  const houses = [[-40, -50, 0], [-26, -52, 0], [-12, -51, 0], [14, -52, 0], [30, -50, 0], [-36, 52, 180], [-20, 53, 180], [10, 52, 180], [26, 54, 180], [42, 50, 180]];
+  houses.forEach(([x, z, r], i) => {
+    onGround('house', x, z, r, [P.ivory, P.manilla, P.sage, P.sky, P.kraft][i % 5], 0.15);
+    const f = r === 0 ? 1 : -1; // front (door side) faces the town
+    for (const dx of [-4, 4]) onGround('picket', x + dx, z + f * 6.5, 0, [P.ivory, P.kraft, P.sage][i % 3]);
+    onGround('bush', x + 2.5, z + f * 5.2, 0, P.sage);
+  });
+  let seed = 19;
   const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-  for (let i = 0; i < 70; i++) {
-    const a = rnd() * Math.PI * 2, r = 82 + rnd() * 12;
-    const x = Math.cos(a) * r, z = Math.sin(a) * r;
-    if (Math.abs(x) > HALF - 3 || Math.abs(z) > HALF - 3) continue;
-    if (Math.abs(z) < 8 && Math.abs(x) > 60) continue; // keep the exit roads clear
-    onGround(rnd() < 0.6 ? 'pine' : rnd() < 0.5 ? 'tree' : 'rock', x, z, Math.round(rnd() * 360), rnd() < 0.5 ? P.olive : P.sage, 0.25);
+  for (let i = 0; i < 46; i++) {
+    const a = rnd() * Math.PI * 2, rad = 50 + rnd() * 12;
+    const x = Math.cos(a) * rad * 1.05, z = Math.sin(a) * rad * 0.95;
+    if (Math.abs(x) > HALF - 3 || Math.abs(z) > HALF - 3 || (Math.abs(z) < 7 && Math.abs(x) > 44)) continue;
+    if (houses.some(([hx, hz]) => Math.hypot(hx - x, hz - z) < 7)) continue;
+    const kind = rnd() < 0.6 ? 'pine' : rnd() < 0.5 ? 'tree' : 'rock';
+    onGround(kind, x, z, Math.round(rnd() * 360), kind === 'rock' ? P.cloud : rnd() < 0.5 ? P.olive : P.sage, 0.25);
   }
-  put('sedan', -74, -4.5, 90, 0, P.slate);
-  put('pickup', 76, 4.5, 270, 0, P.clay);
 
-  // ── spawns at the ends of the exit roads ──
-  for (const [x, z] of [[-90, -2], [-90, 2], [-86, -2], [-86, 2]]) put('spawn_ally', x, z, 270, gy(x, z));
-  for (const [x, z] of [[90, -2], [90, 2], [86, -2], [86, 2]]) put('spawn_enemy', x, z, 90, gy(x, z));
+  for (let i = 0; i < 34; i++) {
+    const x = (rnd() * 2 - 1) * 44, z = (rnd() < 0.5 ? -1 : 1) * (40.5 + rnd() * 5);
+    if (Math.abs(x) < 7 || houses.some(([hx, hz]) => Math.hypot(hx - x, hz - z) < 8)) continue;
+    const bush = rnd() < 0.65;
+    onGround(bush ? 'bush' : 'rock', x, z, Math.round(rnd() * 360), bush ? (rnd() < 0.5 ? P.sage : P.olive) : P.cloud, 0.1);
+  }
+
+  // ── spawns at the avenue's ends ──
+  for (const [x, z] of [[-58, -1.5], [-58, 1.5], [-55, -1.5], [-55, 1.5]]) put('spawn_ally', x, z, 270, gy(x, z));
+  for (const [x, z] of [[58, -1.5], [58, 1.5], [55, -1.5], [55, 1.5]]) put('spawn_enemy', x, z, 90, gy(x, z));
 
   return { id: 'builtin-saltgrass', builtin: true, name: 'Saltgrass', size: SIZE, updated: 0, pieces, terrain: { seg, h: Array.from(h) } };
 }
-
-const pick = (list, i) => list[Math.abs(Math.round(i)) % list.length];

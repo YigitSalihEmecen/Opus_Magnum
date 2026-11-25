@@ -5,6 +5,7 @@ import { ASSETS, CATEGORIES, assetById, buildPiece, buildJoints, makeContext } f
 import { listMaps, getMap, saveMap, deleteMap, hasSpawns } from './storage.js';
 import { MAP_SIZE } from './mapWorld.js';
 import { terrainMesh, setHeights, heightsOf, packHeights, heightAt, brush } from './terrain.js';
+import { applySky } from '../../world/sky.js';
 import './editor.css';
 
 /*
@@ -74,7 +75,7 @@ class Editor {
 
   #world() {
     const s = this.scene;
-    s.background = new THREE.Color(P.pampas);
+    applySky(s);
     s.fog = new THREE.Fog(P.pampas, 140, 380);
     s.add(new THREE.HemisphereLight(0xfffaf0, P.kraft, 1.3));
     const sun = new THREE.DirectionalLight(0xfff4e6, 2.3);

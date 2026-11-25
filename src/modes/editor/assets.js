@@ -102,21 +102,24 @@ function wall(color, ctx, { len = 4, h = WALL_H, t = WALL_T, holes = [] } = {}) 
     if (!hole) piece(a, b, 0, h);
     else { piece(a, b, 0, hole.y0); piece(a, b, hole.y1, h); }
   }
-  const frame = mat(P.slate), F = 0.09, fd = t + 0.08;
+  const frame = mat(P.slate), F = 0.09, fd = t + 0.08, SILL = 0.05;
   for (const o of holes) {
-    const hh = o.y1 - o.y0;
-    rbox(g, F, hh, fd, o.x0 + F / 2, (o.y0 + o.y1) / 2, 0, frame, 0.02);
-    rbox(g, F, hh, fd, o.x1 - F / 2, (o.y0 + o.y1) / 2, 0, frame, 0.02);
+    // a window's sill sits proud of the wall below (top SILL above the opening's base), and the frame stands on it
+    const base = o.y0 > 0 ? o.y0 + SILL : o.y0, hh = o.y1 - base;
+    rbox(g, F, hh, fd, o.x0 + F / 2, (base + o.y1) / 2, 0, frame, 0.02);
+    rbox(g, F, hh, fd, o.x1 - F / 2, (base + o.y1) / 2, 0, frame, 0.02);
     rbox(g, o.x1 - o.x0 - 2 * F, F, fd, (o.x0 + o.x1) / 2, o.y1 - F / 2, 0, frame, 0.02);
-    if (o.y0 > 0) sbox(g, o.x1 - o.x0 + 0.2, 0.08, t + 0.2, (o.x0 + o.x1) / 2, o.y0 - 0.04, 0, mat(P.ink)); // sill
+    if (o.y0 > 0) sbox(g, o.x1 - o.x0 + 0.2, 0.09, t + 0.2, (o.x0 + o.x1) / 2, o.y0 + SILL - 0.045, 0, mat(P.ink));
   }
   if (ctx?.ground) piece(-L, L, -FOUND, 0);
-  sbox(g, len, 0.12, t + 0.08, 0, h + 0.06, 0, mat(P.ink));
+  // cap and kick stop a few mm short of the wall's ends, jambs and underside, so no face lies on a wall face
+  const E = 0.004;
+  sbox(g, len - 2 * E, 0.12, t + 0.08, 0, h + 0.06 - E, 0, mat(P.ink)); // just below a ceiling slab's underside
   if (h > 1) {
     // kick strip along the foot of the wall, broken at doorways (no sill to trip on)
     let x = -L;
     for (const o of [...holes.filter((o) => o.y0 === 0), { x0: L, x1: L }].sort((a, b) => a.x0 - b.x0)) {
-      if (o.x0 - x > 0.01) sbox(g, o.x0 - x, 0.16, t + 0.05, (x + o.x0) / 2, 0.08, 0, mat(P.slate));
+      if (o.x0 - x > 0.02) sbox(g, o.x0 - x - 2 * E, 0.16, t + 0.05, (x + o.x0) / 2, 0.08 + E, 0, mat(P.slate));
       x = Math.max(x, o.x1);
     }
   }
@@ -135,8 +138,8 @@ function pillar(color, ctx) {
   const g = new THREE.Group();
   gbox(g, 0.6, WALL_H, 0.6, 0, WALL_H / 2, 0, color);
   if (ctx?.ground) gbox(g, 0.6, FOUND, 0.6, 0, -FOUND / 2, 0, color);
-  sbox(g, 0.68, 0.14, 0.68, 0, WALL_H + 0.07, 0, mat(P.ink));
-  sbox(g, 0.64, 0.18, 0.64, 0, 0.09, 0, mat(P.slate));
+  sbox(g, 0.68, 0.14, 0.68, 0, WALL_H + 0.066, 0, mat(P.ink)); // dips under a slab resting on it
+  sbox(g, 0.64, 0.18, 0.64, 0, 0.094, 0, mat(P.slate));
   return g;
 }
 
@@ -180,13 +183,13 @@ function stairs(color, ctx, { rise = 3.5, run = 6, w = 2, rail = true } = {}) {
   const steps = add(g, mergeGeometries(geos), mat(color, true));
   steps.userData.noCollide = true;
   const noses = [];
-  for (let i = 0; i < n; i++) noses.push(new THREE.BoxGeometry(w + 0.01, 0.04, 0.06).translate(0, stepH * (i + 1) + 0.005, run / 2 - tread * i - 0.03));
+  for (let i = 0; i < n; i++) noses.push(new THREE.BoxGeometry(w + 0.01, 0.04, 0.06).translate(0, stepH * (i + 1) + 0.005, run / 2 - tread * i - 0.025));
   add(g, mergeGeometries(noses), mat(P.ink)).userData.noCollide = true;
   // walk surface from just below the first step's toe to the top landing edge
   const z0 = run / 2 + 0.3, y0 = -0.05, z1 = -run / 2, y1 = rise;
   const rl = Math.hypot(z0 - z1, y1 - y0), ra = Math.atan2(y1 - y0, z0 - z1);
-  // narrower than the flight so the floor beside the stairs stays walkable for bots
-  const ramp = collider(g, new THREE.BoxGeometry(w - 0.8, 0.1, rl), 0, (y0 + y1) / 2 - 0.05, (z0 + z1) / 2);
+  // nearly the full width of the flight, so feet never slip off the side through the visual steps
+  const ramp = collider(g, new THREE.BoxGeometry(w - 0.1, 0.1, rl), 0, (y0 + y1) / 2 - 0.05, (z0 + z1) / 2);
   ramp.rotation.x = ra;
   const len = Math.hypot(run, rise), a = Math.atan2(rise, run);
   if (rail) {
@@ -389,10 +392,10 @@ function container(color) {
   for (const y of [0.08, H - 0.08]) for (const s of [-1, 1]) sbox(g, 0.14, 0.16, D - 0.28, s * (L / 2 - 0.07), y, 0, dark);
   for (const x of [-1, 1]) for (const z of [-1, 1]) sbox(g, 0.18, H, 0.18, x * (L / 2 - 0.09), H / 2, z * (D / 2 - 0.09), dark);
   rbox(g, 0.06, H - 0.3, D - 0.36, L / 2 - 0.1, H / 2, 0, body, 0.02);
-  rbox(g, 0.08, H - 0.3, 0.05, L / 2 - 0.08, H / 2, 0, dark, 0.02);
+  rbox(g, 0.08, H - 0.27, 0.05, L / 2 - 0.08, H / 2, 0, dark, 0.02);
   for (const z of [-0.85, -0.45, 0.45, 0.85]) {
     add(g, cyl(0.03, H - 0.3, 10), dark, L / 2 - 0.03, H / 2, z);
-    rbox(g, 0.06, 0.32, 0.06, L / 2, 1.15, z + 0.08, ink, 0.02);
+    rbox(g, 0.06, 0.32, 0.06, L / 2, 1.15, z + 0.058, ink, 0.02); // handle against its locking bar
   }
   return g;
 }
@@ -457,20 +460,91 @@ function fuelPump(color) {
   const g = new THREE.Group();
   rbox(g, 1.8, 0.2, 1.0, 0, 0.1, 0, mat(P.slate), 0.05); // island
   rbox(g, 0.7, 1.6, 0.5, 0, 1.0, 0, mat(P.ivory), 0.06);
-  rbox(g, 0.72, 0.5, 0.52, 0, 1.55, 0, mat(color), 0.05);
+  rbox(g, 0.72, 0.52, 0.52, 0, 1.57, 0, mat(color), 0.05);
   rbox(g, 0.4, 0.26, 0.02, 0, 1.2, -0.26, mat(P.ink), 0.02);
-  const hose = add(g, new THREE.TorusGeometry(0.28, 0.025, 6, 16, Math.PI), mat(P.ink), 0.38, 0.85, 0);
+  const hose = add(g, new THREE.TorusGeometry(0.28, 0.025, 6, 16, Math.PI), mat(P.ink), 0.37, 0.85, 0);
   hose.rotation.y = Math.PI / 2;
   for (const x of [-0.75, 0.75]) add(g, cyl(0.07, 1.0, 10), mat(P.clay), x, 0.7, 0); // bollards
   return g;
 }
 
+/** Sandbag wall, 2 m: staggered courses of plump bags, each a little askew, tied ends showing. */
 function sandbags(color) {
   const g = new THREE.Group();
-  const bag = new THREE.CapsuleGeometry(0.15, 0.38, 4, 10).rotateZ(Math.PI / 2).scale(1, 0.72, 1.25);
-  const geos = [];
-  for (let row = 0; row < 4; row++) for (let i = 0; i < 3; i++) geos.push(bag.clone().translate(-0.66 + i * 0.66 + (row % 2) * 0.33 - (row % 2 && i === 2 ? 0.99 : 0), 0.12 + row * 0.22, 0));
+  const bag = new RoundedBoxGeometry(0.62, 0.2, 0.38, 3, 0.09);
+  const geos = [], ties = [];
+  for (let row = 0; row < 4; row++) {
+    const n = row === 3 ? 2 : 3, off = row % 2 ? 0.32 : 0;
+    for (let i = 0; i < n; i++) {
+      const x = -0.64 + i * 0.64 + off + (row === 3 ? 0.32 : 0), y = 0.1 + row * 0.19, k = Math.sin(row * 7.3 + i * 3.1);
+      geos.push(bag.clone().rotateY(k * 0.08).rotateZ(k * 0.04).translate(x, y, (row % 2 ? -0.03 : 0.03) + k * 0.02));
+      ties.push(new THREE.BoxGeometry(0.06, 0.12, 0.2).translate(x + 0.3, y, 0));
+    }
+  }
   add(g, mergeGeometries(geos), mat(color));
+  add(g, mergeGeometries(ties), mat(P.kraft)).userData.noCollide = true;
+  return g;
+}
+
+/** Concrete planter box, 2 × 1 m, soil and a hedge of shrubs. Waist-high cover. */
+function planter(color) {
+  const g = new THREE.Group();
+  rbox(g, 2, 0.7, 1, 0, 0.35, 0, mat(color), 0.06);
+  sbox(g, 1.8, 0.05, 0.8, 0, 0.68, 0, mat(P.bookcloth));
+  const leaf = mat(P.sage);
+  for (const [r, x, z] of [[0.42, -0.55, 0.05], [0.5, 0.05, -0.05], [0.38, 0.6, 0.08]]) add(g, ico(r, 1), leaf, x, 0.72 + r * 0.55, z).userData.noCollide = true;
+  return g;
+}
+
+/** 4 × 4 shade canopy: four posts, two beams, a striped sail tilted to shed rain. Walk under it. */
+function canopy(color) {
+  const g = new THREE.Group();
+  const post = mat(P.slate);
+  for (const x of [-1.8, 1.8]) for (const z of [-1.8, 1.8]) add(g, cyl(0.07, z < 0 ? 2.9 : 2.6, 10), post, x, (z < 0 ? 2.9 : 2.6) / 2, z);
+  for (const x of [-1.8, 1.8]) { const b = sbox(g, 0.1, 0.12, 3.9, x, 2.78, 0, post); b.rotation.x = Math.atan2(0.3, 3.6); }
+  const a = Math.atan2(0.3, 3.6);
+  for (let i = 0; i < 7; i++) {
+    const strip = sbox(g, 0.54, 0.04, 3.9, -1.62 + i * 0.54, 2.88, 0, i % 2 ? mat(P.ivory) : mat(color));
+    strip.rotation.x = a;
+    strip.userData.noCollide = true;
+  }
+  for (const z of [-1, 1]) sbox(g, 3.8, 0.22, 0.03, 0, 2.62 + (z < 0 ? 0.15 : -0.15), z * 1.95, mat(color)).userData.noCollide = true; // valances
+  return g;
+}
+
+/** Market stall, 2.4 × 1.4: counter with produce crates, striped roof on four posts. Faces -Z. */
+function stall(color) {
+  const g = new THREE.Group();
+  const wood = mat(P.kraft), post = mat(P.slate);
+  rbox(g, 2.4, 0.9, 0.7, 0, 0.45, -0.3, wood, 0.04);
+  sbox(g, 2.5, 0.06, 0.8, 0, 0.93, -0.3, mat(P.bookcloth));
+  for (const x of [-1.15, 1.15]) for (const z of [-0.65, 0.65]) add(g, cyl(0.04, 2.3, 8), post, x, 1.15, z);
+  const fruit = [P.clay, 0xc6a03a, P.sage, 0xd9a05b];
+  for (let i = 0; i < 3; i++) {
+    const x = -0.75 + i * 0.75;
+    rbox(g, 0.62, 0.18, 0.46, x, 1.05, -0.36, mat(P.manilla), 0.03);
+    const m = mat(fruit[(i + (color % 3)) % fruit.length]);
+    for (let k = 0; k < 6; k++) add(g, ico(0.075, 0), m, x - 0.18 + (k % 3) * 0.18, 1.18, -0.46 + Math.floor(k / 3) * 0.18).userData.noCollide = true;
+  }
+  const a = 0.22;
+  for (let i = 0; i < 5; i++) {
+    const strip = sbox(g, 0.52, 0.04, 1.7, -1.04 + i * 0.52, 2.38, -0.05, i % 2 ? mat(P.ivory) : mat(color));
+    strip.rotation.x = -a;
+    strip.userData.noCollide = true;
+  }
+  rbox(g, 0.5, 0.5, 0.5, 0.8, 0.25, 0.4, wood, 0.04); // spare crate behind
+  return g;
+}
+
+/** Timber utility pole, 7.5 m: crossarm with insulators and a transformer can. */
+function pole(color) {
+  const g = new THREE.Group();
+  const wood = mat(color);
+  add(g, cyl(0.13, 7.5, 10, 0.1), wood, 0, 3.75, 0);
+  sbox(g, 2.2, 0.14, 0.14, 0, 6.9, 0, wood);
+  for (const x of [-0.95, -0.35, 0.35, 0.95]) add(g, cyl(0.05, 0.22, 8), mat(P.ivory), x, 7.08, 0).userData.noCollide = true;
+  add(g, cyl(0.26, 0.7, 14), mat(P.cloud), 0, 5.6, 0.3).userData.noCollide = true;
+  for (const d of [-1, 1]) { const b = sbox(g, 0.05, 0.05, 0.8, d * 0.4, 6.6, 0, mat(P.slate)); b.rotation.z = d * 0.9; b.rotation.y = Math.PI / 2; b.userData.noCollide = true; }
   return g;
 }
 
@@ -488,8 +562,8 @@ function waterTower(color) {
   add(g, cyl(2.35, 0.25, 28), mat(P.ink), 0, 9.0, 0);
   add(g, new THREE.ConeGeometry(2.45, 1.2, 28), mat(P.slate), 0, 12.8, 0);
   rbox(g, 5.2, 0.1, 5.2, 0, 8.85, 0, steel, 0.03); // catwalk
-  for (let i = 0; i < 18; i++) sbox(g, 0.05, 0.05, 0.36, 0.25, 0.5 + i * 0.47, 1.62, steel); // ladder rungs
-  for (const x of [0.07, 0.43]) sbox(g, 0.05, 8.6, 0.05, x, 4.4, 1.62, steel);
+  for (let i = 0; i < 18; i++) sbox(g, 0.36, 0.05, 0.05, 0.25, 0.5 + i * 0.47, 1.62, steel); // ladder rungs
+  for (const x of [0.07, 0.43]) sbox(g, 0.05, 8.8, 0.05, x, 4.4, 1.62, steel); // rails: ground to catwalk
   return g;
 }
 
@@ -555,7 +629,7 @@ function sedan(color) {
     rbox(g, 0.06, 0.14, 0.38, -2.19, 0.74, z, mat(P.clay), 0.03);
   }
   for (const x of [-2.18, 2.18]) rbox(g, 0.14, 0.2, 1.84, x, 0.36, 0, ink, 0.06);
-  for (const z of [-0.96, 0.96]) rbox(g, 0.16, 0.1, 0.14, 0.55, 1.0, z, ink, 0.03);
+  for (const z of [-0.96, 0.96]) rbox(g, 0.16, 0.1, 0.14, 0.55, 0.975, z, ink, 0.03); // mirrors on the door tops
   rbox(g, 4.0, 0.08, 1.82, 0, 0.5, 0, ink, 0.03);
   wheels(g, [-1.35, 1.35], [-0.82, 0.82], 0.34, 0.26);
   return g;
@@ -659,8 +733,8 @@ function jointPost(kind, h, t, color, ground) {
     const w = t + 0.16;
     gbox(g, w, h + 0.02, w, 0, (h + 0.02) / 2, 0, color);
     if (ground) gbox(g, w, FOUND, w, 0, -FOUND / 2, 0, color);
-    sbox(g, w + 0.06, 0.16, w + 0.06, 0, h + 0.1, 0, mat(P.ink));
-    if (h > 1) sbox(g, w + 0.04, 0.18, w + 0.04, 0, 0.09, 0, mat(P.slate));
+    sbox(g, w + 0.06, 0.16, w + 0.06, 0, h + 0.096, 0, mat(P.ink));
+    if (h > 1) sbox(g, w + 0.05, 0.18, w + 0.05, 0, 0.094, 0, mat(P.slate));
   } else if (kind === 'fence') add(g, cyl(0.065, 2.25, 12), mat(color), 0, 1.125, 0);
   else if (kind === 'picket') rbox(g, 0.13, 1.25, 0.13, 0, 0.625, 0, mat(P.slate), 0.03);
   else rbox(g, 0.09, 1.12, 0.09, 0, 0.56, 0, mat(color), 0.02);
@@ -779,7 +853,8 @@ function tower(n) {
       gbox(g, 4, 0.3, 3, 4, top + 0.15, -4.5, P.oat);
       gbox(g, 4, 0.3, 3, 4, top + 0.15, 4.5, P.oat);
       // flight: even storeys in column A (low end south), odd in column B (low end north)
-      const fl = place(g, stairs(accent, null, { rise: STOREY, run: 6, w: 2 }), k % 2 ? 5 : 3, y, 0, k % 2 ? Math.PI : 0);
+      // column B stops at the east wall's inner face instead of running into it
+      const fl = place(g, stairs(accent, null, { rise: STOREY, run: 6, w: k % 2 ? 1.84 : 2 }), k % 2 ? 4.93 : 3, y, 0, k % 2 ? Math.PI : 0);
       fl.userData.flight = true;
     }
     const roofY = n * STOREY;
@@ -853,9 +928,12 @@ function walkway(color) {
   gbox(g, 4, 0.3, 2.4, 0, -0.15, 0, color);
   for (const s of [-1, 1]) {
     sbox(g, 4, 0.08, 0.08, 0, 1.0, s * 1.16, mat(P.slate));
-    for (const x of [-1.9, 0, 1.9]) sbox(g, 0.07, 1.0, 0.07, x, 0.5, s * 1.16, mat(P.slate));
+    for (const x of [-1.9, 0, 1.9]) sbox(g, 0.07, 0.94, 0.07, x, 0.53, s * 1.16, mat(P.slate));
   }
-  sbox(g, 4, 0.12, 2.5, 0, -0.36, 0, mat(P.ink));
+  for (const s of [-1, 1]) sbox(g, 4, 0.36, 0.16, 0, -0.42, s * 1.12, mat(P.slate)); // girders
+  for (const x of [-1.5, 0, 1.5]) sbox(g, 0.12, 0.12, 2.1, x, -0.36, 0, mat(P.slate)); // cross ties
+  sbox(g, 4, 0.06, 0.08, 0, 0.03, -1.16, mat(P.ink));
+  sbox(g, 4, 0.06, 0.08, 0, 0.03, 1.16, mat(P.ink));
   return g;
 }
 
@@ -870,6 +948,64 @@ const neonMat = new Map();
 const glow = (c) => { if (!neonMat.has(c)) neonMat.set(c, new THREE.MeshBasicMaterial({ color: c, toneMapped: false })); return neonMat.get(c); };
 const hash = (x, y, z, salt) => { const v = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719 + salt * 4.137) * 43758.5453; return v - Math.floor(v); };
 const SIDES = [['N', 0, -1], ['S', 0, 1], ['W', -1, 0], ['E', 1, 0]];
+
+const SHUTTERS = [P.sage, P.sky, P.clay, P.olive, P.kraft];
+/**
+ * Small facade life on an outside wall (wall-local: along X, outward = +Z or -Z per side): shutters by
+ * windows, a canopy over doors, a striped awning over shopfronts, balconies, AC boxes and downpipes on
+ * blank walls. Decoration doesn't collide, except balconies, which you can stand on.
+ */
+function facade(w, color, kind, { side, level, balcony, roll }) {
+  const o = side === 'S' || side === 'E' ? 1 : -1, face = o * (WALL_T / 2);
+  const deco = (m) => { m.userData.noCollide = true; return m; };
+  const tint = SHUTTERS.find((c, i) => c !== color && roll(60 + i) < 0.5) ?? P.slate;
+  const sign = level > 0 && kind !== 'door' && roll(9) < 0.16; // room() hangs a blade sign here: keep clear
+  if (kind === 'window' && !sign && roll(50) < 0.55) {
+    for (const s of [-1, 1]) {
+      deco(rbox(w, 0.55, 1.36, 0.06, s * 1.0, 1.65, face + o * 0.04, mat(tint), 0.02));
+      for (let i = 0; i < 4; i++) deco(sbox(w, 0.46, 0.03, 0.03, s * 1.0, 1.15 + i * 0.32, face + o * 0.08, mat(P.ink)));
+    }
+  }
+  if (kind === 'door' && !balcony) {
+    deco(sbox(w, 1.9, 0.1, 0.9, 0, 2.58, face + o * 0.45, mat(P.slate)));
+    deco(sbox(w, 1.94, 0.04, 0.04, 0, 2.52, face + o * 0.88, mat(P.ink)));
+    // braces from the wall up to the canopy's front edge (outer end high)
+    for (const s of [-1, 1]) { const b = deco(sbox(w, 0.05, 0.05, 0.86, s * 0.85, 2.36, face + o * 0.4, mat(P.ink))); b.rotation.x = -o * 0.42; }
+  }
+  if (kind === 'shop') {
+    const a = 0.36;
+    for (let i = 0; i < 7; i++) {
+      const strip = deco(sbox(w, 0.5, 0.05, 1.3, -1.5 + i * 0.5, 2.62, face + o * 0.6, i % 2 ? mat(P.ivory) : mat(tint)));
+      strip.rotation.x = -o * a;
+    }
+    deco(sbox(w, 3.5, 0.24, 0.03, 0, 2.3, face + o * 1.22, mat(tint)));
+  }
+  if (balcony) {
+    sbox(w, 2.4, 0.14, 1.05, 0, -0.05, face + o * 0.52, mat(P.cloud));
+    const rail = mat(P.slate);
+    sbox(w, 2.4, 0.06, 0.06, 0, 1.0, face + o * 1.02, rail);
+    for (const s of [-1, 1]) sbox(w, 0.06, 0.06, 1.0, s * 1.17, 1.0, face + o * 0.52, rail);
+    const bars = [];
+    for (let x = -1.1; x <= 1.11; x += 0.22) bars.push(new THREE.BoxGeometry(0.03, 0.95, 0.03).translate(x, 0.5, face + o * 1.02));
+    for (const s of [-1, 1]) for (let z = 0.2; z < 1.0; z += 0.22) bars.push(new THREE.BoxGeometry(0.03, 0.95, 0.03).translate(s * 1.17, 0.5, face + o * z));
+    deco(add(w, mergeGeometries(bars), rail));
+    for (const s of [-1, 1]) { const b = deco(sbox(w, 0.08, 0.08, 0.7, s * 1.0, -0.32, face + o * 0.3, mat(P.ink))); b.rotation.x = -o * 0.6; }
+    if (roll(70) < 0.6) deco(add(w, ico(0.3, 1), mat(P.sage), 0.8, 0.35, face + o * 0.75));
+  }
+  if (kind === 'plain' && !sign) {
+    const r = roll(80);
+    if (r < 0.17) { // AC box with a grille and a drip pipe
+      const x = roll(81) < 0.5 ? -1.0 : 1.0, y = level === 0 ? 2.4 : 1.5;
+      deco(rbox(w, 0.8, 0.55, 0.36, x, y, face + o * 0.18, mat(roll(82) < 0.5 ? P.ivory : P.cloud), 0.04));
+      deco(sbox(w, 0.5, 0.36, 0.03, x - 0.08, y, face + o * 0.37, mat(P.slate)));
+      deco(add(w, cyl(0.02, y - 0.3, 6), mat(P.slate), x + 0.3, (y - 0.3) / 2, face + o * 0.1));
+    } else if (r < 0.32) { // downpipe from the roof edge to the ground
+      const x = roll(83) < 0.5 ? -1.75 : 1.75;
+      deco(add(w, cyl(0.06, WALL_H + 0.3, 8), mat(P.slate), x, (WALL_H + 0.3) / 2 - 0.05, face + o * 0.08));
+      for (const y of [0.9, 2.2]) deco(sbox(w, 0.16, 0.05, 0.16, x, y, face + o * 0.08, mat(P.ink)));
+    }
+  }
+}
 
 function room(color, ctx) {
   const g = new THREE.Group();
@@ -888,7 +1024,7 @@ function room(color, ctx) {
     if (nb) {
       // same building (same colour): open plan. A different building: one party wall, usually with a doorway
       if (nb.color === r.color || !(side === 'E' || side === 'S')) continue;
-      const kind = H(side.charCodeAt(0) + 21) < 0.6 ? 'door' : 'plain';
+      const kind = H(side.charCodeAt(0) + 21) < 0.35 ? 'door' : 'plain';
       place(g, wall(color, level === 0 ? ctx : null, { holes: HOLES[kind] }), dx * 2, 0, dz * 2, dx ? Math.PI / 2 : 0);
       continue;
     }
@@ -896,10 +1032,15 @@ function room(color, ctx) {
     const roll = H(side.charCodeAt(0));
     let kind;
     if (forced(side)) kind = 'door';
-    else if (level === 0) kind = roll < 0.32 ? 'door' : roll < 0.5 ? 'shop' : roll < 0.82 ? 'window' : 'plain';
-    else if (terrace) kind = roll < 0.55 ? 'door' : roll < 0.85 ? 'wide' : 'window';
-    else kind = roll < 0.45 ? 'window' : roll < 0.65 ? 'wide' : roll < 0.8 ? 'plain' : 'window';
+    // mostly blank walls: openings are rare enough to mean something
+    else if (level === 0) kind = roll < 0.1 ? 'door' : roll < 0.17 ? 'shop' : roll < 0.3 ? 'window' : 'plain';
+    else if (terrace) kind = roll < 0.25 ? 'door' : roll < 0.4 ? 'window' : 'plain';
+    else kind = roll < 0.22 ? 'window' : roll < 0.27 ? 'wide' : 'plain';
+    // upper walls on open air sometimes get a balcony: a door out onto a small railed slab
+    const balcony = level > 0 && !terrace && !forced(side) && kind === 'plain' && H(side.charCodeAt(0) + 44) < 0.12;
+    if (balcony) kind = 'door';
     const w = wall(color, level === 0 ? ctx : null, { holes: HOLES[kind] });
+    facade(w, color, kind, { side, level, balcony, roll: (s) => H(side.charCodeAt(0) + s) });
     place(g, w, dx * 2, 0, dz * 2, dx ? Math.PI / 2 : 0);
     // neon sign hung off an upper wall
     if (level > 0 && kind !== 'door' && H(side.charCodeAt(0) + 9) < 0.16) {
@@ -998,12 +1139,13 @@ export const ASSETS = [
 
   { id: 'floor', cat: 'Parts', name: 'Floor slab', note: '4 × 4 · storey 3.5 m', colors: [P.ivory, P.oat, P.manilla, P.slate, P.sage], build: (c, x) => floor(c, x) },
   { id: 'floor_strip', cat: 'Parts', name: 'Floor strip', note: '2 × 4', colors: [P.ivory, P.oat, P.manilla, P.slate, P.sage], build: (c, x) => floor(c, x, { w: 4, d: 2 }) },
-  { id: 'stairs', cat: 'Parts', name: 'Staircase', note: 'one storey', colors: [P.ivory, P.oat, P.kraft, P.slate], build: (c, x) => stairs(c, x) },
-  { id: 'stairs_open', cat: 'Parts', name: 'Open stairs', note: 'one storey · no rails', colors: [P.slate, P.ivory, P.oat, P.kraft], build: (c, x) => stairs(c, x, { rail: false }) },
+  { id: 'stairs', cat: 'Parts', name: 'Staircase', note: 'one storey', colors: [P.ivory, P.oat, P.kraft, P.cloud, P.slate], build: (c, x) => stairs(c, x) },
+  { id: 'stairs_open', cat: 'Parts', name: 'Open stairs', note: 'one storey · no rails', colors: [P.oat, P.ivory, P.kraft, P.cloud, P.slate], build: (c, x) => stairs(c, x, { rail: false }) },
   { id: 'steps', cat: 'Parts', name: 'Steps', note: 'rises 1.75 m', colors: [P.ivory, P.oat, P.kraft, P.slate], build: (c, x) => stairs(c, x, { rise: 1.75, run: 3, rail: false }) },
   { id: 'ramp', cat: 'Parts', name: 'Ramp', note: 'rises 2.4 m', colors: [P.manilla, P.sky, P.ivory, P.sage], build: ramp },
   { id: 'roof', cat: 'Parts', name: 'Roof slope', note: 'pair for 8 m', colors: [P.clay, P.slate, P.sage, P.kraft, P.sky], build: roofSlope },
   { id: 'gable', cat: 'Parts', name: 'Gable', note: '8 m end', colors: WALL_COLORS, build: gable },
+  { id: 'canopy', cat: 'Parts', name: 'Shade canopy', note: '4 × 4 · walk under', colors: [P.clay, P.sky, P.sage, P.kraft], tile: 4, build: canopy },
   { id: 'awning', cat: 'Parts', name: 'Awning', note: '4 m', colors: [P.clay, P.sage, P.sky, P.kraft], build: awning },
 
   { id: 'room', cat: 'Buildings', name: 'Room', note: 'stacks · auto-joins', colors: [P.manilla, P.ivory, P.sky, P.sage, P.kraft, P.clay, P.bookcloth, P.oat, P.slate], tile: 4, build: room },
@@ -1024,7 +1166,10 @@ export const ASSETS = [
   { id: 'crate', cat: 'Props', name: 'Crate', note: '1.2 m', colors: [P.kraft, P.sage, P.sky, P.oat], build: crate },
   { id: 'barrel', cat: 'Props', name: 'Drum', note: '0.9 m', colors: PAINT, build: barrel },
   { id: 'dumpster', cat: 'Props', name: 'Dumpster', note: '2.2 m', colors: [P.sage, P.sky, P.clay, P.slate], build: dumpster },
-  { id: 'sandbags', cat: 'Props', name: 'Sandbags', note: 'cover', colors: [P.kraft, P.oat, P.sage], build: sandbags },
+  { id: 'sandbags', cat: 'Props', name: 'Sandbags', note: 'cover · 2 m', colors: [P.kraft, P.oat, P.sage], build: sandbags },
+  { id: 'planter', cat: 'Props', name: 'Planter', note: '2 × 1 · cover', colors: [P.oat, P.ivory, P.cloud, P.kraft], build: planter },
+  { id: 'stall', cat: 'Props', name: 'Market stall', note: '2.4 m', colors: [P.clay, P.sky, P.sage, P.kraft], build: stall },
+  { id: 'pole', cat: 'Props', name: 'Utility pole', note: '7.5 m', colors: [P.kraft, P.bookcloth, P.cloud], build: pole },
   { id: 'bench', cat: 'Props', name: 'Bench', note: '1.8 m', colors: [P.kraft, P.sage, P.sky], build: bench },
   { id: 'lamp', cat: 'Props', name: 'Street lamp', note: '5 m', colors: [P.slate, P.ink, P.sage], build: lamp },
   { id: 'pump', cat: 'Props', name: 'Fuel pump', note: 'island', colors: [P.clay, P.sky, P.sage], build: fuelPump },

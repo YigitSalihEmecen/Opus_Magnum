@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Octree } from 'three/examples/jsm/math/Octree.js';
 import { PALETTE as P, toon, gridTexture, worldScaleBoxUVs, textTexture } from '../../core/toon.js';
 import { NavGrid } from './nav.js';
+import { applySky } from '../../world/sky.js';
 
 /*
   "Kiln" — a compact 5v5 arena, point-symmetric about the origin so both teams get the same map.
@@ -131,7 +132,7 @@ export class Arena {
 
   #atmosphere() {
     const s = this.scene;
-    s.background = new THREE.Color(P.pampas);
+    applySky(s);
     s.fog = new THREE.Fog(P.pampas, 60, 200);
     s.add(new THREE.HemisphereLight(0xfffaf0, P.kraft, 1.25));
     const sun = new THREE.DirectionalLight(0xfff4e6, 2.4);

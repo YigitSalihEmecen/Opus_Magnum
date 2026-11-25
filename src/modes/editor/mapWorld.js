@@ -3,7 +3,8 @@ import { Octree } from 'three/examples/jsm/math/Octree.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { PALETTE as P, toon } from '../../core/toon.js';
 import { buildPiece, buildJoints, makeContext } from './assets.js';
-import { terrainMesh, setHeights, heightsOf, heightAt, LIMIT } from './terrain.js';
+import { terrainMesh, setHeights, heightsOf, heightAt, LIMIT, terrainMaterial, tintGround } from './terrain.js';
+import { applySky } from '../../world/sky.js';
 
 /*
   Turns a saved map into a playable world. The result fits both level users:
@@ -111,6 +112,17 @@ class MapOctree extends Octree {
   }
 }
 
+/**
+ * three's capsule test misses boxes thinner than about the capsule radius once the capsule's centre is past
+ * their face (you slip through rails and fence panels). Collision-only fix: stand-up thin boxes get at least
+ * MIN_T of thickness; flat plates (roads, caps, the stairs' walk ramp) keep their exact height.
+ */
+const MIN_T = 0.2;
+function thicken(w, h, d) {
+  if (h < MIN_T && w > 0.25 && d > 0.25) return [w, h, d];
+  return [Math.max(w, MIN_T), Math.max(h, MIN_T), Math.max(d, MIN_T)];
+}
+
 const EXACT = new Set(['BoxGeometry', 'ExtrudeGeometry', 'PlaneGeometry', 'ShapeGeometry']);
 
 /**
@@ -131,7 +143,8 @@ function batch(root) {
       let b = buckets.get(key);
       if (!b) buckets.set(key, (b = { material: o.material, cast: o.castShadow, geos: [] }));
       const g = geo.index ? geo.toNonIndexed() : geo.clone();
-      for (const name of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(name)) g.deleteAttribute(name);
+      const keep = ['position', 'normal', 'uv', ...(o.material.vertexColors ? ['color'] : [])];
+      for (const name of Object.keys(g.attributes)) if (!keep.includes(name)) g.deleteAttribute(name);
       if (!g.attributes.normal) g.computeVertexNormals();
       if (!g.attributes.uv) g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
       g.morphAttributes = {};
@@ -144,11 +157,14 @@ function batch(root) {
     const tris = (geo.index ? geo.index.count : geo.attributes.position.count) / 3;
     // (RoundedBoxGeometry also reports 'BoxGeometry'; only a real 12-triangle box counts as exact)
     const exact = o.userData.collider || (EXACT.has(geo.type) && (geo.type !== 'BoxGeometry' || tris === 12));
-    if (exact) p = geo.index ? geo.toNonIndexed() : geo.clone();
+    if (exact && geo.type === 'BoxGeometry' && geo.parameters) {
+      const { width, height, depth } = geo.parameters;
+      p = new THREE.BoxGeometry(...thicken(width, height, depth)).toNonIndexed();
+    } else if (exact) p = geo.index ? geo.toNonIndexed() : geo.clone();
     else {
       geo.computeBoundingBox();
       const size = geo.boundingBox.getSize(new THREE.Vector3()), c = geo.boundingBox.getCenter(new THREE.Vector3());
-      p = new THREE.BoxGeometry(size.x, size.y, size.z).translate(c.x, c.y, c.z).toNonIndexed();
+      p = new THREE.BoxGeometry(...thicken(size.x, size.y, size.z)).translate(c.x, c.y, c.z).toNonIndexed();
     }
     const pos = new THREE.BufferGeometry();
     pos.setAttribute('position', p.attributes.position);
@@ -193,13 +209,16 @@ function outerLand(h, size, groundAt) {
     pos.setY(i, edge + rise * (hills + out * 0.06));
   }
   geo.computeVertexNormals();
-  const m = new THREE.Mesh(geo, toon(P.manilla, { rim: 0 }));
+  const uv = geo.attributes.uv;
+  for (let i = 0; i < pos.count; i++) uv.setXY(i, pos.getX(i) / 4, -pos.getZ(i) / 4);
+  tintGround(geo);
+  const m = new THREE.Mesh(geo, terrainMaterial());
   m.receiveShadow = true;
   return m;
 }
 
 function atmosphere(scene, group, half) {
-  scene.background = new THREE.Color(P.pampas);
+  applySky(scene);
   scene.fog = new THREE.Fog(P.pampas, 90, 360);
   group.add(new THREE.HemisphereLight(0xfffaf0, P.kraft, 1.25));
   const sun = new THREE.DirectionalLight(0xfff4e6, 2.4);
@@ -212,6 +231,6 @@ function atmosphere(scene, group, half) {
   c.near = 10;
   c.far = 260;
   sun.shadow.bias = -0.0004;
-  sun.shadow.normalBias = 0.04;
+  sun.shadow.normalBias = 0.09; // ~2 texels of the 4k map: no acne stripes on walls lit at grazing angles
   group.add(sun, sun.target);
 }

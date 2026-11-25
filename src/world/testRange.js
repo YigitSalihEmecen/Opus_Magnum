@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Octree } from 'three/examples/jsm/math/Octree.js';
 import { PALETTE as P, toon, gridTexture, worldScaleBoxUVs, textTexture } from '../core/toon.js';
+import { applySky } from './sky.js';
 
 /*
   Layout (metres). Player spawns at z = +40 looking toward -Z.
@@ -113,7 +114,7 @@ export class TestRange {
 
   #atmosphere() {
     const s = this.scene;
-    s.background = new THREE.Color(P.pampas);
+    applySky(s);
     s.fog = new THREE.Fog(P.pampas, 70, 230);
     s.add(new THREE.HemisphereLight(0xfffaf0, P.kraft, 1.25));
     const sun = new THREE.DirectionalLight(0xfff4e6, 2.4);
