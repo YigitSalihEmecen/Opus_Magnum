@@ -338,3 +338,77 @@ export function buildShotgunClips(P, lhRest = P.lhRest) {
     pump: shotgunPump(P, lhRest),
   };
 }
+
+/*
+  Bolt-action clips. The right hand leaves the grip to work the bolt; ch is [pull 0..1, lift 0..1].
+  boltCycle runs after every shot that leaves a round in the mag; the empty reload ends with one.
+*/
+function boltWork(P, t0) {
+  const grip = P.rightHand, knob = P.rhBolt;
+  const tilt = P.boltTilt ?? [-0.04, 0.05, 0.02, 4, -12, 25];
+  const lifted = add(knob, P.rhBoltLift ?? [0, 0.02, 0, 0, 0, 25]);
+  const back = add(lifted, [0, 0, P.boltPull ?? 0.075]);
+  const t = (d) => t0 + d;
+  return {
+    rh: [
+      [t(0), grip, 'hold'], [t(0.12), add(knob, [0.01, -0.012, 0.02, 0, 0, 0, -0.3])], [t(0.17), knob, 'hold'],
+      [t(0.23), lifted, 'hold'], [t(0.32), back, 'hold'], [t(0.42), lifted, 'hold'], [t(0.47), knob, 'hold'],
+      [t(0.6), add(grip, [0.006, -0.01, 0.012, 0, 0, 0, -0.4])], [t(0.68), grip, 'hold'],
+    ],
+    ch: [[t(0), [0, 0]], [t(0.17), [0, 0], 'hold'], [t(0.23), [0, 1], 'hold'], [t(0.32), [1, 1], 'hold'], [t(0.42), [0, 1], 'hold'], [t(0.47), [0, 0], 'hold']],
+    // the gun comes up and rolls its right side toward the eye so the bolt shows
+    gun: [
+      [t(0), GUN0], [t(0.14), add(tilt, [0, -0.004, 0, -1, 1, -2])], [t(0.32), add(tilt, [0, 0.004, 0.008, 1, 0, 2])],
+      [t(0.47), add(tilt, [0, 0, -0.004])], [t(0.68), GUN0],
+    ],
+    events: [
+      [t(0.2), 'click'],
+      [t(0.26), 'boltBack'],
+      [t(0.3), 'eject'],
+      [t(0.3), 'kick', { pos: [0, 0, 0.004], rot: [-0.6, -0.8, 0] }],
+      [t(0.44), 'boltForward'],
+      [t(0.47), 'kick', { pos: [0, 0.004, -0.006], rot: [1.2, 0.6, -1] }],
+    ],
+  };
+}
+
+function boltCycle(P, lhRest) {
+  const b = boltWork(P, 0.14);
+  return {
+    name: 'bolt',
+    duration: 0.86,
+    readyAt: 0.78,
+    tracks: {
+      gun: new Track([[0, GUN0], [0.07, [0.002, 0.014, 0.024, 6, -1, 2]], ...b.gun, [0.86, GUN0]]),
+      rh: new Track([[0, P.rightHand], ...b.rh, [0.86, P.rightHand]]),
+      lh: new Track([[0, lhRest], [0.86, lhRest]]),
+      ch: new Track([...b.ch, [0.86, [0, 0]]]),
+    },
+    events: b.events,
+  };
+}
+
+/** Empty: tactical mag swap, then work the bolt to chamber a round. */
+function boltReloadEmpty(P, lhRest) {
+  const r = reload(P, lhRest);
+  const T = r.duration - 0.1;
+  const b = boltWork(P, T);
+  const end = T + 0.82;
+  const gunKeys = r.tracks.gun.keys.filter(([t]) => t < T);
+  return {
+    name: 'reloadEmpty',
+    duration: end,
+    readyAt: end - 0.1,
+    tracks: {
+      gun: new Track([...gunKeys, ...b.gun, [end, GUN0]]),
+      lh: new Track([...r.tracks.lh.keys.filter(([t]) => t < T), [T, lhRest, 'hold'], [end, lhRest]]),
+      rh: new Track([[0, P.rightHand], ...b.rh, [end, P.rightHand]]),
+      ch: new Track([[0, [0, 0]], ...b.ch, [end, [0, 0]]]),
+    },
+    events: [...r.events, ...b.events],
+  };
+}
+
+export function buildBoltClips(P, lhRest = P.lhRest) {
+  return { ...buildClips(P, lhRest), bolt: boltCycle(P, lhRest), reloadEmpty: boltReloadEmpty(P, lhRest) };
+}

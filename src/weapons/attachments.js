@@ -398,10 +398,10 @@ function prism2x() {
   return g;
 }
 
-function scope3x() {
-  const g = group('scope3x');
+function scope3x({ L = 0, B = 1, name = 'scope3x', acc = MATS.accent, dot = true } = {}) {
+  const g = group(name);
   const y = 0.04;
-  for (const f of [-0.03, 0.045]) {
+  for (const f of [-0.03, 0.045 + L * 0.6]) {
     mesh(g, rbox(0.028, 0.012, 0.018, 0.002), MATS.black, 0, 0.006, f);
     mesh(g, rbox(0.02, 0.02, 0.016, 0.003), MATS.black, 0, 0.018, f);
     // clamp band: inner skin buried in the solid tube so only the outer band shows
@@ -415,18 +415,18 @@ function scope3x() {
   s.position.y = y;
   g.add(s);
   // solid main tube; the eyepiece portal hides its inside while aimed
-  mesh(s, tube(0.016, 0.016, -0.07, 0.078, 32), MATS.poly);
+  mesh(s, tube(0.016, 0.016, -0.07, 0.078 + L, 32), MATS.poly);
   // eyepiece: thick bell, taper into the tube, power ring and rubber cup
   // bands and caps overlap the bell with their inner skins tucked inside its wall, so no faces coincide
   thickTube(s, 0.0185, 0.0222, -0.11, -0.078, MATS.black, 36);
   shell(s, 0.0218, 0.0155, -0.079, -0.062, MATS.black, 0, 36);
-  thickTube(s, 0.0205, 0.0228, -0.1, -0.093, MATS.accent, 36);
+  thickTube(s, 0.0205, 0.0228, -0.1, -0.093, acc, 36);
   thickTube(s, 0.0192, 0.0236, -0.12, -0.108, MATS.rubber, 36);
   // objective: taper out to a thick bell with steel bezel and ivory band
-  shell(s, 0.0155, 0.0258, 0.076, 0.097, MATS.black, 0, 40);
-  thickTube(s, 0.0225, 0.0262, 0.096, 0.13, MATS.poly, 40);
-  thickTube(s, 0.0228, 0.0272, 0.127, 0.138, MATS.steel, 40);
-  ring(s, 0.0266, 0.104, 0.108, MATS.ivory, 40);
+  shell(s, 0.0155, 0.0258 * B, 0.076 + L, 0.097 + L, MATS.black, 0, 40);
+  thickTube(s, 0.0225 * B, 0.0262 * B, 0.096 + L, 0.13 + L, MATS.poly, 40);
+  thickTube(s, 0.0228 * B, 0.0272 * B, 0.127 + L, 0.138 + L, MATS.steel, 40);
+  ring(s, 0.0266 * B, 0.104 + L, 0.108 + L, MATS.ivory, 40);
   // turret saddle with elevation (top), windage (right), parallax (left)
   mesh(s, rbox(0.04, 0.04, 0.03, 0.013), MATS.black, 0, 0, 0.008);
   const turret = (rot, cap) => {
@@ -436,7 +436,7 @@ function scope3x() {
     mesh(t, new THREE.CylinderGeometry(0.0095, 0.0095, 0.007, 20).translate(0, 0.021, 0), MATS.black);
     mesh(t, new THREE.CylinderGeometry(0.011, 0.011, 0.01, 24).translate(0, 0.029, 0), MATS.steel);
     for (let i = 0; i < 3; i++) mesh(t, new THREE.CylinderGeometry(0.0113, 0.0113, 0.0012, 24).translate(0, 0.0255 + i * 0.0032, 0), MATS.black);
-    if (cap) mesh(t, new THREE.CylinderGeometry(0.009, 0.009, 0.002, 24).translate(0, 0.0345, 0), MATS.accent);
+    if (cap) mesh(t, new THREE.CylinderGeometry(0.009, 0.009, 0.002, 24).translate(0, 0.0345, 0), acc);
     s.add(t);
   };
   turret(0, true);
@@ -453,12 +453,45 @@ function scope3x() {
       c.beginPath(); c.moveTo(-7, s2 * i * 26); c.lineTo(7, s2 * i * 26); c.stroke();
       c.beginPath(); c.moveTo(s2 * i * 26, -7); c.lineTo(s2 * i * 26, 7); c.stroke();
     }
+    if (!dot) return;
     c.fillStyle = RED;
     c.beginPath(); c.arc(0, 0, 4, 0, Math.PI * 2); c.fill();
   }, 'rgba(140, 180, 200, 0.06)');
   glass(s, tex, 0.034, 0, 0, -0.116);
-  glass(s, reticle(() => {}, 'rgba(110, 160, 210, 0.16)'), 0.046, 0, 0, 0.132);
+  glass(s, reticle(() => {}, 'rgba(110, 160, 210, 0.16)'), 0.046 * B, 0, 0, 0.132 + L);
   portal(s, 0.0185, 0, -0.114);
+  return g;
+}
+
+/** Sniper glass: the 3× body stretched with a wide objective bell, a touch bigger overall. */
+const SCOPE6 = 1.3;
+function scope6x() {
+  const g = scope3x({ L: 0.09, B: 1.32, name: 'scope6x', acc: MATS.blue, dot: false });
+  g.scale.setScalar(SCOPE6);
+  return g;
+}
+
+/** Sniper brake: castellated block with side ports and a blue collar. */
+function sniperBrake() {
+  const g = group('sniperBrake');
+  mesh(g, tube(0.016, 0.016, 0, 0.02, 20), MATS.steel);
+  mesh(g, rbox(0.044, 0.044, 0.1, 0.006), MATS.poly, 0, 0, 0.07);
+  mesh(g, rbox(0.0455, 0.0455, 0.012, 0.004), MATS.blue, 0, 0, 0.03);
+  for (let i = 0; i < 3; i++) {
+    const f = 0.055 + i * 0.024;
+    mesh(g, rbox(0.047, 0.016, 0.012, 0.002), MATS.vent, 0, 0, f);
+    mesh(g, rbox(0.014, 0.047, 0.012, 0.002), MATS.vent, 0, 0, f);
+  }
+  mesh(g, new THREE.CircleGeometry(0.01, 20).rotateY(Math.PI), MATS.vent, 0, 0, 0.1205);
+  return { obj: g, tip: 0.12 };
+}
+
+/** Sniper box mag (origin at the seated top): dark body, ribbed sides, blue base plate. */
+function sniperMag(h) {
+  const g = group('sniperMag');
+  mesh(g, rbox(0.036, h, 0.07, 0.004), MATS.black, 0, -h / 2 + 0.01, 0);
+  for (let i = 0; i < 3; i++) mesh(g, rbox(0.0375, 0.004, 0.05, 0.001), MATS.poly, 0, -0.02 - i * (h - 0.03) / 3, 0);
+  mesh(g, rbox(0.04, 0.012, 0.076, 0.004), MATS.blue, 0, -h + 0.008, 0);
   return g;
 }
 
@@ -585,6 +618,7 @@ const ATTACHMENTS = {
     { id: 'suppressor', name: 'Suppressor', blurb: 'Big box can. Quiet, no flash, heavier.', stats: { vRecoil: 0.9, hRecoil: 0.92, flash: 0.0, ads: 1.12, suppressed: true }, build: suppressor },
     { id: 'smgcan', name: 'Suppressor', blurb: 'Fat round can. Quiet, no flash, heavier.', stats: { vRecoil: 0.9, hRecoil: 0.92, flash: 0.0, ads: 1.12, suppressed: true }, build: smgSuppressor },
     { id: 'pthread', name: 'Threaded Barrel', blurb: 'Bare muzzle. Light, bright flash.', stats: {} },
+    { id: 'sbrake', name: 'Muzzle Brake', blurb: 'Ported block. Tames the kick.', stats: { vRecoil: 0.85 }, build: sniperBrake },
     { id: 'pcan', name: 'Silent-12 Can', blurb: 'Big box can, longer than the pistol. Whisper quiet.', stats: { vRecoil: 0.85, hRecoil: 0.9, flash: 0.0, ads: 1.15, suppressed: true }, build: pistolSuppressor },
   ],
   scope: [
@@ -593,6 +627,7 @@ const ATTACHMENTS = {
     { id: 'holo', name: 'Holo', blurb: 'Fine ring and dot. Open window.', stats: { zoom: 1.32 }, build: holo, optic: { sight: HOLO_SIGHT.map((v) => v * HOLO_SCALE), adsDist: 0.17, vmFov: 40 } },
     { id: 'reddot', name: 'Red Dot', blurb: 'Tube sight, single crisp dot.', stats: { zoom: 1.32 }, build: redDot, optic: { sight: [0, 0.036, -0.031], adsDist: 0.16, vmFov: 40 } },
     { id: 'prism2', name: '2× Prism', blurb: 'Rising arrow reticle.', stats: { zoom: 2.0, ads: 1.1 }, build: prism2x, optic: { sight: [0, 0.03, -0.05], eyeR: 0.0145, shadow: 0.25, adsDist: 0.105, vmFov: 36 } },
+    { id: 'scope6', name: '6× Longshot', blurb: 'Fine cross, wide bell. Built for one shot.', stats: { zoom: 6.0, ads: 1.35 }, build: scope6x, optic: { sight: [0, 0.04 * SCOPE6, -0.116 * SCOPE6], eyeR: 0.0172 * SCOPE6, shadow: 0.55, adsDist: 0.1, vmFov: 30 } },
     { id: 'scope3', name: '3× Scout', blurb: 'Thin full-width cross. Long eye relief.', stats: { zoom: 3.0, ads: 1.22 }, build: scope3x, optic: { sight: [0, 0.04, -0.116], eyeR: 0.0172, shadow: 0.4, adsDist: 0.1, vmFov: 32 } },
   ],
   mag: [
@@ -602,6 +637,8 @@ const ATTACHMENTS = {
     { id: 'smg25', name: 'Compact Mag', blurb: '25 rounds. Flush with the grip.', stats: { magSize: 25, reload: 0.9 }, build: () => stickMag(0.12) },
     { id: 'smg35', name: 'Extended Mag', blurb: '35 rounds. The standard.', stats: { magSize: 35 }, build: () => stickMag(0.16) },
     { id: 'smg50', name: 'Long Stick', blurb: '50 rounds. Long and slower to swap.', stats: { magSize: 50, reload: 1.22, ads: 1.07 }, build: () => stickMag(0.215) },
+    { id: 's5', name: 'Box Mag', blurb: '5 rounds. Quick to swap.', stats: { magSize: 5 }, build: () => sniperMag(0.07) },
+    { id: 's10', name: 'Long Box', blurb: '10 rounds. Heavier, slower to swap.', stats: { magSize: 10, reload: 1.15, ads: 1.06 }, build: () => sniperMag(0.11) },
     { id: 'p15', name: 'Standard Mag', blurb: '15 rounds. Flush fit.', stats: { magSize: 15 }, build: () => pistolMag(0.092) },
     { id: 'p24', name: 'Extended Mag', blurb: '24 rounds with a grip sleeve.', stats: { magSize: 24, reload: 1.1, ads: 1.04 }, build: () => pistolMag(0.136) },
   ],

@@ -2,7 +2,8 @@ import { buildPanther } from './models/panther.js';
 import { buildSnake } from './models/snake.js';
 import { buildGrizzly } from './models/grizzly.js';
 import { buildLynx } from './models/lynx.js';
-import { buildShotgunClips } from './animations.js';
+import { buildKestrel } from './models/kestrel.js';
+import { buildShotgunClips, buildBoltClips } from './animations.js';
 
 /*
   Weapon definitions. Everything that differs between guns lives here:
@@ -35,7 +36,6 @@ export const WEAPONS = [
       headMultiplier: 1.75,
       range: 400,
       adsTime: 0.19,
-      adsSensitivity: 0.75,
       reloadRate: 1,
       spread: { hip: 1.4, ads: 0.05, move: 1.2, moveAds: 0.12, air: 2.4, airAds: 0.35, slide: 0.4 },
       bloom: { perShot: 0.2, max: 1.4, recovery: 4.5 },
@@ -74,7 +74,6 @@ export const WEAPONS = [
       headMultiplier: 1.5,
       range: 250,
       adsTime: 0.15,
-      adsSensitivity: 0.82,
       reloadRate: 1.15,
       spread: { hip: 1.0, ads: 0.1, move: 0.7, moveAds: 0.14, air: 1.7, airAds: 0.4, slide: 0.15 },
       bloom: { perShot: 0.11, max: 1.0, recovery: 6 },
@@ -118,7 +117,6 @@ export const WEAPONS = [
       headMultiplier: 1.5,
       range: 70,
       adsTime: 0.22,
-      adsSensitivity: 0.8,
       reloadRate: 1,
       spread: { hip: 0.5, ads: 0.1, move: 0.5, moveAds: 0.1, air: 1.2, airAds: 0.3, slide: 0.1 },
       bloom: { perShot: 0, max: 0, recovery: 1 },
@@ -161,7 +159,6 @@ export const WEAPONS = [
       headMultiplier: 2,
       range: 200,
       adsTime: 0.13,
-      adsSensitivity: 0.85,
       reloadRate: 1.3,
       spread: { hip: 0.8, ads: 0.08, move: 0.55, moveAds: 0.12, air: 1.4, airAds: 0.35, slide: 0.2 },
       bloom: { perShot: 0.22, max: 1.1, recovery: 6 },
@@ -190,5 +187,45 @@ export const WEAPONS = [
     slots: ['muzzle', 'scope', 'mag', 'stock'],
     attachments: { muzzle: ['pthread', 'pcan'], scope: ['piron', 'holo', 'reddot'], mag: ['p15', 'p24'], stock: ['pnone', 'pbrace'] },
     defaults: { muzzle: 'pthread', scope: 'piron', mag: 'p15', stock: 'pnone' },
+  },
+  {
+    id: 'kestrel',
+    name: 'Kestrel',
+    kind: 'Sniper',
+    build: buildKestrel,
+    clips: buildBoltClips,
+    sound: 'shotgunFire',
+    stats: {
+      rpm: 60, // the bolt cycle is the real limit
+      damage: 155, // one body shot drops a full-health (150) target
+      headMultiplier: 1.5,
+      range: 600,
+      adsTime: 0.3,
+      reloadRate: 1,
+      // wild from the hip and on the move; dead on when scoped and still
+      spread: { hip: 5, ads: 0, move: 3, moveAds: 1.6, air: 6, airAds: 4, slide: 2 },
+      bloom: { perShot: 0, max: 0, recovery: 1 },
+      recoil: { adsScale: 0.9, resetTime: 0.9, jitter: 0.1, punch: 2.4 },
+    },
+    // small lasting kick; the big jolt is the visual punch, which springs back onto the target
+    pattern: () => [1.1, 0.12],
+    poses: {
+      rightHand: [0.002, -0.06, 0.106, -14, -25, -90, 1.4],
+      triggerCurl: 0.85,
+      thumbAim: [[-0.038, -0.026, 0.055], [-0.038, -0.02, -0.01]],
+      // bolt work: hand pinches the knob from behind, rises with it as it lifts; the gun rolls to show it
+      rhBolt: [0.066, 0.022, 0.078, -35, -25, -90, 1.35],
+      rhBoltLift: [-0.034, 0.058, 0, 0, 0, 30],
+      boltTilt: [-0.02, 0.04, 0, 2, 4, 14],
+      boltPull: 0.075,
+      lhRest: [-0.04, -0.06, -0.46, 18, -78, 172, 1.15],
+      lhMag: [-0.044, -0.13, -0.115, 12, 0, 90, 1.15],
+      lhHandle: [-0.06, 0.03, 0.0, -6, -8, 95, 1.35],
+      lhOff: [-0.2, -0.42, 0.08, 40, 10, 60, 1.2],
+    },
+    vm: { hipPos: [0.16, -0.215, -0.5], hipRot: [0.4, 4, 3], inspectPos: [0.15, 0.0, -1.15], boltTravel: 0.075, chTravel: 0, kick: 2.2, bolt: true },
+    slots: ['muzzle', 'scope', 'mag'],
+    attachments: { muzzle: ['sbrake', 'suppressor'], scope: ['scope6', 'scope3', 'holo', 'iron'], mag: ['s5', 's10'] },
+    defaults: { muzzle: 'sbrake', scope: 'scope6', mag: 's5' },
   },
 ];

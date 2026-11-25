@@ -22,7 +22,8 @@ export class Gunplay {
     this.ammo = this.stats.magSize;
     this.vm.flashScale = this.stats.flash;
     this.pump = !!def.vm.pump;
-    this.modes = this.S.modes ?? (this.pump ? ['pump'] : ['auto', 'semi']);
+    this.bolt = !!def.vm.bolt;
+    this.modes = this.S.modes ?? (this.pump ? ['pump'] : this.bolt ? ['bolt'] : ['auto', 'semi']);
     this.mode = this.modes[0];
     this.burstLeft = 0;
     this.cooldown = 0;
@@ -84,11 +85,12 @@ export class Gunplay {
     if (this.sinceShot > this.S.recoil.resetTime) this.shotIndex = 0;
     this.bloom = Math.max(0, this.bloom - this.S.bloom.recovery * dt);
 
-    const canAct = mv.state !== 'mantle' && !blocked;
+    const canAct = mv.state !== 'mantle' && mv.state !== 'vault' && !blocked;
     const reloading = this.vm.reloading;
 
     // ADS
-    const wantAds = input.mouse(2) && !reloading && canAct;
+    // bolt guns drop out of the scope to cycle, then come back up if aim is still held
+    const wantAds = input.mouse(2) && !reloading && !this.vm.cycling && canAct;
     if (wantAds) mv.blockSprint(0.1);
     const step = dt / (this.S.adsTime * this.stats.ads);
     this.ads = THREE.MathUtils.clamp(this.ads + (wantAds ? step : -step * 1.3), 0, 1);
@@ -202,8 +204,9 @@ export class Gunplay {
 
     this.vm.fire(aimed, rp, ry);
     this.audio.fire({ ads: this.adsEased > 0.5, suppressed: this.stats.suppressed, sample: this.def.sound });
-    if (this.ammo === 0) this.vm.boltLocked = !this.pump;
+    if (this.ammo === 0) this.vm.boltLocked = !this.pump && !this.bolt;
     else if (this.pump) this.vm.playPump();
+    else if (this.bolt) this.vm.playClip('bolt');
     this.hud.recoilPulse();
   }
 

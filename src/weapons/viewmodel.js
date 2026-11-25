@@ -246,6 +246,7 @@ export class Viewmodel {
   // ───────────────────────── public API ─────────────────────────
 
   get busy() { return this.player.playing && this.player.time < (this.player.clip.readyAt ?? this.player.clip.duration); }
+  get cycling() { return this.player.playing && this.player.clip.name === 'bolt'; }
   get reloading() { return this.player.playing && this.player.clip.name.startsWith('reload'); }
   get swapping() { return Object.keys(this.swaps).length > 0; }
 
@@ -296,7 +297,7 @@ export class Viewmodel {
       const sc = (0.8 + Math.random() * 0.5) * this.flashScale;
       this.flash.scale.set(sc, sc, sc * (0.8 + Math.random() * 0.6));
     }
-    if (!this.def.vm.pump) this.#ejectShell();
+    if (!this.def.vm.pump && !this.def.vm.bolt) this.#ejectShell();
   }
 
   /** Approximate world-space muzzle position (for tracers), mapping viewmodel space through both cameras. */
@@ -358,8 +359,14 @@ export class Viewmodel {
     w.crouch = damp(w.crouch, mv.crouched ? 1 : 0, 10, dt);
     w.strafe = damp(w.strafe, axes.x, 8, dt);
     const mantle = mv.state === 'mantle' ? Math.sin(mv.mantleProgress * Math.PI) : 0;
+    // vault: the gun swings down and across while the free hand plants on the top
+    const vault = mv.state === 'vault' ? Math.sin(mv.mantleProgress * Math.PI) : 0;
     const sprint = w.sprint * (1 - ads) * (1 - ie);
-    const free = (1 - ads * 0.85) * (1 - ie * 0.75);
+    // magnified optics sit ~0.1 m from the eye, where a millimetre of sway throws the reticle off the
+    // bullets' line: aimed through one, bob, mouse lag and breathing switch off entirely
+    const o = this.optic;
+    const steady = o.shadow ? 1 : 0.85;
+    const free = (1 - ads * steady) * (1 - ie * 0.75);
     // movement poses (slide cant, air, wallrun, crouch, strafe lean) are hip-only: aimed, the sight stays dead centre
     const move = (1 - ads) * (1 - ie * 0.75);
 
@@ -370,13 +377,12 @@ export class Viewmodel {
     // gait bob (figure-8), stronger while sprinting
     const ph = mv.gaitPhase;
     const bobAmp = w.walk * free * (1 + w.sprint * 0.9);
-    const breathe = (1 - ads * 0.8) * (1 - w.walk);
+    const breathe = (1 - ads * (o.shadow ? 1 : 0.8)) * (1 - w.walk);
 
     const kp = this.kickPos.update(dt);
     const kr = this.kickRot.update(dt);
 
     // sight alignment for the mounted optic
-    const o = this.optic;
     if (o.iron) this.sightPoint.copy(this.parts.ironSight);
     else this.#mountPoint(o.sight, this.sightPoint);
     const adsPos = new THREE.Vector3(-this.sightPoint.x, -this.sightPoint.y, -o.adsDist - this.sightPoint.z);
@@ -394,7 +400,8 @@ export class Viewmodel {
     // slide: cant the gun inward on its side, pulled toward the centre and down (eased in and out)
     const sl = w.slide * w.slide * (3 - 2 * w.slide) * move;
     p.x -= sl * 0.03;
-    p.y += -0.13 * mantle - sl * 0.024;
+    p.y += -0.13 * mantle - sl * 0.024 - 0.09 * vault;
+    p.x -= 0.05 * vault;
     p.z += sl * 0.02;
     p.add(kp);
 
@@ -407,7 +414,7 @@ export class Viewmodel {
     rx += sl * (Math.atan2(-(p.y + SLIDE_BORE_H), aimDist) - HIP_ROT.x * hipK);
     const ry = HIP_ROT.y * hipK + SPRINT_ROT.y * sprint + this.swayLag.y * free + sl * (Math.atan2(p.x, aimDist) - HIP_ROT.y * hipK);
     const rz = HIP_ROT.z * hipK + SPRINT_ROT.z * sprint + this.swayLag.y * 0.8 * free + Math.sin(ph) * 1.8 * D2R * bobAmp - w.strafe * 3 * D2R * move
-      + sl * 28 * D2R + w.wall * 7 * D2R * move + 12 * D2R * mantle;
+      + sl * 28 * D2R + w.wall * 7 * D2R * move + 12 * D2R * mantle + 34 * D2R * vault;
     // while inspecting, the gun leans toward the cursor
     const cx = cursor ? cursor.x : 0, cy = cursor ? cursor.y : 0;
     this.sway.rotation.set(
@@ -465,7 +472,11 @@ export class Viewmodel {
     this.boltCycle = Math.min(1, this.boltCycle + dt / 0.075);
     const boltOpen = this.boltLocked ? 1 : Math.sin(Math.PI * this.boltCycle);
     const ch = this.player.get('ch', [0])[0];
-    if (this.def.vm.pump) {
+    if (this.def.vm.bolt) {
+      // bolt-action: the right hand lifts the handle (roll about the bolt axis), then draws it back
+      this.parts.bolt.position.z = this.boltRest + ch * this.def.vm.boltTravel;
+      this.parts.bolt.rotation.z = (this.player.get('ch', [0, 0])[1] ?? 0) * 1.05;
+    } else if (this.def.vm.pump) {
       // pump-action: fore-end and bolt only move when the left hand racks
       this.parts.bolt.position.z = this.boltRest + ch * this.def.vm.boltTravel;
       this.parts.chargingHandle.position.z = this.chRest + ch * this.def.vm.chTravel;

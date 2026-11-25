@@ -18,6 +18,8 @@ export const MATS = {
   vent: new THREE.MeshBasicMaterial({ color: 0x0c0c0d }),
   olive: toon(0x7c8659, { rim: 0.32, rimColor: 0xfff3e8 }),
   red: toon(0xc23a2e, { rim: 0.28, rimColor: 0xfff3e8 }), // Grizzly accent + shotgun shells
+  blue: toon(0x3f8ad6, { rim: 0.3, rimColor: 0xfff3e8 }), // Kestrel accent
+  slate: toon(0x4f5964, { rim: 0.3, rimColor: 0xfff3e8 }),
 };
 
 export const f2z = (f) => -f;
