@@ -51,7 +51,7 @@ export class AudioBank {
     await Promise.all(
       Object.entries(MANIFEST).map(async ([key, files]) => {
         this.buffers[key] = await Promise.all(
-          files.map(async (f) => ctx.decodeAudioData(await (await fetch(`/audio/${f}.wav`)).arrayBuffer())),
+          files.map(async (f) => ctx.decodeAudioData(await (await fetch(`${import.meta.env.BASE_URL}audio/${f}.wav`)).arrayBuffer())),
         );
       }),
     );
