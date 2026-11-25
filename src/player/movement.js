@@ -51,10 +51,20 @@ export const MOVE = {
   mantleRisePerMetre: 0.09,
   mantleForwardTime: 0.14,
   mantleExitSpeed: 4.2,
+
+  vaultMinHeight: 0.45,
+  vaultMaxHeight: 1.35, // cover, rails, half walls, window sills
+  vaultMaxDepth: 1.7, // anything thicker is climbed onto instead
+  vaultReach: 0.55, // + vaultReachPerSpeed × speed: sprinting spots the obstacle earlier
+  vaultReachPerSpeed: 0.11,
+  vaultMinSpeed: 5.4, // carried over the top; faster approaches keep their speed
+  vaultClear: 0.06, // feet over the top
+  vaultTuck: 1.0, // body height while vaulting (legs tucked): what has to fit through a window
 };
 
 const UP = new THREE.Vector3(0, 1, 0);
-const STEP_UP = 0.3; // ledges this low are walked up, not bumped into
+const STEP_UP = 0.45; // ledges this low are walked up, not bumped into (a stair, a kerb, a slab edge)
+const SNAP_DOWN = 0.45; // grounded, we stay glued to floors this far below (down stairs and slopes)
 const STEP = 1 / 120;
 const _ray = new THREE.Ray();
 const _v = new THREE.Vector3();
@@ -65,7 +75,7 @@ const horiz = (v, out = _v) => out.set(v.x, 0, v.z);
 
 /**
  * Pilot-style character controller on top of a triangle Octree.
- * States: ground · air · slide · wallrun · mantle
+ * States: ground · air · slide · wallrun · mantle · vault
  * Emits events via this.onEvent(name, data).
  */
 export class Movement {
@@ -101,12 +111,15 @@ export class Movement {
     this.stepDist = 0;
     this.steps = 0;
     this.mantle = null;
+    this.vault = null;
+    this.vaultWindowT = 0;
     this.airTime = 0;
     this.#syncCapsule();
   }
 
   get speed() { return Math.hypot(this.vel.x, this.vel.z); }
-  get eyeHeight() { return this.crouched ? MOVE.crouchEye : MOVE.standEye; }
+  // vaulting ducks the head, so a window's header never clips the view
+  get eyeHeight() { return this.crouched || this.state === 'vault' ? MOVE.crouchEye : MOVE.standEye; }
 
   /** Weapon calls this while aiming/firing so sprint drops out. */
   blockSprint(t = 0.2) { this.sprintBlockT = Math.max(this.sprintBlockT, t); this.sprinting = false; }
@@ -146,19 +159,31 @@ export class Movement {
     this.jumpLock -= dt;
     this.slideBoostT -= dt;
     this.wallrunCooldownT -= dt;
+    this.vaultWindowT -= dt;
 
     if (this.state === 'mantle') return this.#updateMantle(dt);
+    if (this.state === 'vault') return this.#updateVault(dt);
     if (this.state === 'wallrun') this.#updateWallrun(dt, c);
     else if (this.grounded) this.#updateGround(dt, c);
     else this.#updateAir(dt, c);
 
     if (this.state === 'mantle') return;
 
-    // jump (buffered + coyote)
-    if (this.jumpBufferT > 0 && this.state !== 'wallrun' && (this.grounded || this.coyote > 0)) this.#jump(c);
+    // jump (buffered + coyote); running at something low and thin turns the jump into a vault
+    if (this.jumpBufferT > 0 && this.state !== 'wallrun' && (this.grounded || this.coyote > 0)) {
+      if (this.#tryVault(c)) return;
+      this.#jump(c);
+    }
 
     const vh = Math.hypot(this.vel.x, this.vel.z);
     if (vh > MOVE.maxSpeed) { this.vel.x *= MOVE.maxSpeed / vh; this.vel.z *= MOVE.maxSpeed / vh; }
+
+    // on the ground, travel along the floor plane: down a slope rather than off it, up it without a
+    // leftover upward speed to launch us at the top
+    if (this.grounded && (this.state === 'ground' || this.state === 'slide') && this.jumpLock <= 0) {
+      const n = this.groundNormal;
+      this.vel.y = n.y > 0.55 ? -(this.vel.x * n.x + this.vel.z * n.z) / n.y : 0;
+    }
 
     this.#integrate(dt);
     this.#footsteps(dt);
@@ -236,6 +261,8 @@ export class Movement {
     this.#accelerate(c.wish, MOVE.airWishSpeed, MOVE.airAccel, dt);
     this.#setCrouch(c.crouchHeld);
 
+    // jumped a little early at something vaultable: the jump becomes the vault when we get there
+    if (this.vaultWindowT > 0 && c.axes.y > 0 && this.#tryVault(c, true)) return;
     if (c.axes.y > 0 && this.#tryMantle(c)) return;
     if (this.jumpLock <= 0 || this.airTime > 0.06) this.#tryWallrun(c);
   }
@@ -247,6 +274,7 @@ export class Movement {
     this.coyote = 0;
     this.jumpBufferT = 0;
     this.jumpLock = 0.12;
+    this.vaultWindowT = 0.45;
     this.state = 'air';
     if (wasSlide) this.onEvent('slideEnd');
     this.#setCrouch(c.crouchHeld && !wasSlide);
@@ -419,10 +447,119 @@ export class Movement {
     this.#syncCapsule();
   }
 
-  /** 0..1 progress for camera/viewmodel animation. */
+  /** 0..1 progress for camera/viewmodel animation (mantles and vaults). */
   get mantleProgress() {
-    const m = this.mantle;
+    const m = this.mantle, v = this.vault;
+    if (v) return Math.min(1, v.t / v.T);
     return m ? Math.min(1, m.t / (m.riseTime + m.fwdTime)) : 0;
+  }
+
+  // ───────────────────────── vault ─────────────────────────
+
+  /**
+   * Over, not onto: a low obstacle (cover, rail, half wall, window sill) with open floor beyond it.
+   * The path is planned up front as (distance along, height) keys — rise to the top, cross at the top,
+   * drop to the far floor — and checked with a crouched body along its length; off-centre approaches
+   * (a window you didn't line up) slide sideways onto the nearest clear line.
+   */
+  #tryVault(c, air = false) {
+    if (c.axes.y <= 0 || this.state === 'slide' && this.speed < 3) return false;
+    // airborne, heights count from the floor below us (an early jump mustn't make tall things vaultable)
+    const base = air ? this.#cast(_v2.copy(this.feet).setY(this.feet.y + 0.05), new THREE.Vector3(0, -1, 0), 3)?.position.y : this.feet.y;
+    if (base === undefined) return false;
+    const dir = horiz(c.wish.lengthSq() > 0 ? c.wish : c.fwd, new THREE.Vector3()).normalize();
+    const reach = MOVE.vaultReach + MOVE.radius + this.speed * MOVE.vaultReachPerSpeed;
+    // a facing surface at knee or hip height (a barrier's sloped foot hides its upright face from the knee ray)
+    const wallLike = (f) => f && Math.abs(f.normal.y) < 0.3 && -dir.dot(_v.copy(f.normal).setY(0).normalize()) >= 0.55;
+    let face = this.#cast(this.feet.clone().setY(base + 0.3), dir, reach);
+    if (!wallLike(face)) face = this.#cast(this.feet.clone().setY(base + 0.6), dir, reach);
+    if (!wallLike(face)) return false;
+    const sFace = face.distance;
+
+    // height: cast down just past the face from above the highest vaultable top (inside a window opening)
+    const probe = (s) => this.#cast(_v2.copy(this.feet).addScaledVector(dir, s).setY(base + MOVE.vaultMaxHeight + 0.12), new THREE.Vector3(0, -1, 0), MOVE.vaultMaxHeight + 3);
+    const topHit = probe(sFace + 0.08);
+    if (!topHit || topHit.normal.y < 0.7) return false;
+    const top = topHit.position.y, h = top - base;
+    if (h < MOVE.vaultMinHeight || h > MOVE.vaultMaxHeight) return false;
+
+    // depth: walk along until the top drops away
+    let depth = -1;
+    for (let d = 0.15; d <= MOVE.vaultMaxDepth + 0.01; d += 0.1) {
+      const hit = probe(sFace + d);
+      if (!hit || hit.position.y < top - 0.3) { depth = d; break; }
+    }
+    if (depth < 0) return false;
+
+    // landing: floor beyond, or open air (we drop off the far side)
+    const sLand = sFace + depth + MOVE.radius + 0.3;
+    const floor = probe(sLand);
+    const landY = floor && floor.normal.y > 0.7 && floor.position.y > top - 2.4 ? floor.position.y : null;
+    if (air && this.feet.y > top + 0.5) return false; // already sailing over it
+    if (landY !== null && landY > top - 0.05) return false; // a step up onto something, not over it
+
+    const yTop = top + MOVE.vaultClear;
+    const keys = [
+      [0, this.feet.y],
+      [Math.max(0.05, sFace - MOVE.radius - 0.04), yTop],
+      [sFace + depth + MOVE.radius * 0.5, yTop + 0.04],
+      [sLand, landY ?? yTop - 0.35],
+    ];
+    const side = new THREE.Vector3(-dir.z, 0, dir.x);
+    const at = (k, lateral, out) => out.copy(this.feet).addScaledVector(dir, k[0]).addScaledVector(side, lateral).setY(k[1]);
+    const clear = (lateral) => {
+      const pts = [];
+      for (let i = 1; i < keys.length; i++) for (let t = 0.25; t <= 1.001; t += 0.25) pts.push([keys[i - 1][0] + (keys[i][0] - keys[i - 1][0]) * t, Math.max(keys[i - 1][1], keys[i][1]) + 0.01]);
+      // ramp in from no offset to the full sideways shift over the rise
+      return pts.every((k, i) => !this.#blocked(at(k, lateral * Math.min(1, (i + 1) / 4), _v), MOVE.vaultTuck));
+    };
+    const lateral = [0, 0.12, -0.12, 0.24, -0.24, 0.36, -0.36].find(clear);
+    if (lateral === undefined) return false;
+
+    const v = Math.max(this.speed, MOVE.vaultMinSpeed);
+    const seg = keys.slice(1).map((k, i) => Math.hypot(k[0] - keys[i][0], k[1] - keys[i][1]) / v);
+    seg[0] = Math.max(seg[0], 0.1 + h * 0.1); // getting up there always takes a moment
+    seg[2] = Math.max(seg[2], 0.12);
+    const prev = this.state;
+    this.state = 'vault';
+    this.vault = { t: 0, T: seg[0] + seg[1] + seg[2], seg, keys, dir, side, lateral, from: this.feet.clone(), v, air: landY === null };
+    this.jumpBufferT = 0;
+    this.vaultWindowT = 0;
+    this.grounded = false;
+    if (prev === 'slide') this.onEvent('slideEnd');
+    this.onEvent('vault', { height: h, depth, window: lateral !== 0 || this.#blocked(at(keys[2], 0, _v), MOVE.standHeight) });
+    return true;
+  }
+
+  #updateVault(dt) {
+    const V = this.vault;
+    V.t += dt;
+    let t = V.t, i = 0;
+    while (i < 2 && t > V.seg[i]) t -= V.seg[i++];
+    const u = Math.min(1, t / V.seg[i]);
+    const a = V.keys[i], b = V.keys[i + 1];
+    // rise eases out (a hand plants and pushes), the crossing is flat, the drop eases in like a fall
+    const ky = i === 0 ? 1 - (1 - u) ** 2 : i === 2 ? u * u : u;
+    const s = a[0] + (b[0] - a[0]) * u;
+    const lat = V.lateral * Math.min(1, V.t / V.seg[0]);
+    this.feet.copy(V.from).addScaledVector(V.dir, s).addScaledVector(V.side, lat).setY(a[1] + (b[1] - a[1]) * ky);
+    this.#syncCapsule();
+    if (V.t < V.T) return;
+
+    this.vault = null;
+    this.vel.copy(V.dir).multiplyScalar(V.v * 0.96);
+    if (V.air) {
+      this.state = 'air';
+      this.grounded = false;
+      this.vel.y = -2.5;
+    } else {
+      this.state = 'ground';
+      this.grounded = true;
+      this.coyote = MOVE.coyoteTime;
+    }
+    this.airTime = 0;
+    if (this.#blocked(this.feet, MOVE.standHeight)) this.#setCrouch(true, true);
+    this.onEvent('vaultEnd');
   }
 
   // ───────────────────────── physics core ─────────────────────────
@@ -435,19 +572,22 @@ export class Movement {
 
     // stick to ground on slopes / step-downs
     // (also when cresting a ramp/stairs: the slope left some upward speed that would launch us)
-    if (!onFloor && wasGrounded && this.vel.y <= 4 && this.jumpLock <= 0) {
-      this.capsule.translate(_v.set(0, -0.35, 0));
-      if (this.#resolve()) { onFloor = true; if (this.vel.y > 0) this.vel.y = 0; }
-      else this.capsule.translate(_v.set(0, 0.35, 0));
+    if (!onFloor && wasGrounded && this.jumpLock <= 0) {
+      this.capsule.translate(_v.set(0, -SNAP_DOWN, 0));
+      if (this.#resolve(true)) { onFloor = true; if (this.vel.y > 0) this.vel.y = 0; }
+      else this.capsule.translate(_v.set(0, SNAP_DOWN, 0));
     }
 
     this.grounded = onFloor;
     this.feet.copy(this.capsule.start).y -= MOVE.radius;
 
     if (onFloor && !wasGrounded) {
-      this.justLanded = true;
       if (this.state === 'air') this.state = 'ground';
-      this.onEvent('land', { impact: fallSpeed, airTime: this.airTime });
+      // a frame or two off the ground (cresting a slope, a stair lip) is not a landing: no thud, no dip
+      if (this.airTime > 0.1) {
+        this.justLanded = true;
+        this.onEvent('land', { impact: fallSpeed, airTime: this.airTime });
+      }
       this.airTime = 0;
     }
   }
@@ -459,7 +599,8 @@ export class Movement {
    *    are ignored, the floor face beside them holds the capsule;
    *  · low ledges: while grounded, a vertical face up to STEP_UP tall lifts the capsule onto it.
    */
-  #resolve() {
+  /** snapping: a downward probe for the floor — walls met on the way down are ignored, not pushed against. */
+  #resolve(snapping = false) {
     let onFloor = false;
     const tris = [];
     for (let i = 0; i < 5; i++) {
@@ -471,6 +612,7 @@ export class Movement {
         const r = this.octree.triangleCapsuleIntersect(this.capsule, tri);
         if (!r || r.depth < 1e-5) continue;
         if (r.normal.y < 0.55) {
+          if (snapping) continue;
           const top = Math.max(tri.a.y, tri.b.y, tri.c.y) - feetY;
           if (top < 0.04 && r.normal.y > -0.3) continue; // seam at floor level
           if (this.grounded && top <= STEP_UP && r.normal.y > -0.2) { step = Math.max(step, top); continue; }
@@ -484,7 +626,15 @@ export class Movement {
       }
       if (!best) break;
       const n = best.normal;
-      if (n.y > 0.55) { onFloor = true; this.groundNormal.copy(n); }
+      if (n.y > 0.55) {
+        // walkable floor: lift straight up out of it, so slopes never push us sideways (no creeping
+        // downhill when standing still, no bounce off stair noses)
+        onFloor = true;
+        this.groundNormal.copy(n);
+        this.capsule.translate(_v.set(0, Math.min(best.depth / n.y, best.depth * 3), 0));
+        if (this.vel.y < 0) this.vel.y = 0;
+        continue;
+      }
       this.capsule.translate(_v.copy(n).multiplyScalar(best.depth));
       const vn = this.vel.dot(n);
       if (vn < 0) this.vel.addScaledVector(n, -vn);

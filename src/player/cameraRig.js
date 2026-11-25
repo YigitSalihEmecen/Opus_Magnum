@@ -34,6 +34,7 @@ export class CameraRig {
     this.punchYaw = new Spring(220, 18);
     this.punchRoll = new Spring(180, 14);
     this.dip = new Spring(150, 15);
+    this.stepY = 0;
     this.bob = new THREE.Vector2();
     this.bobWeight = 0;
   }
@@ -64,7 +65,7 @@ export class CameraRig {
     this.pendingRecoil.multiplyScalar(1 - r);
 
     // eye height
-    this.eye = damp(this.eye, mv.eyeHeight, mv.state === 'slide' ? 18 : 12, dt);
+    this.eye = damp(this.eye, mv.eyeHeight, mv.state === 'slide' || mv.state === 'vault' ? 20 : 12, dt);
 
     // head bob from gait
     const moving = (mv.state === 'ground' && mv.grounded) || mv.state === 'wallrun';
@@ -85,6 +86,8 @@ export class CameraRig {
     const mp = mv.mantleProgress;
     const mantlePitch = mv.state === 'mantle' ? -Math.sin(mp * Math.PI) * 5 * D2R : 0;
     const mantleRoll = mv.state === 'mantle' ? Math.sin(mp * Math.PI) * 2.5 * D2R : 0;
+    // vault: a quick dip of the head and a lean toward the planted hand
+    const vaultK = mv.state === 'vault' ? Math.sin(mp * Math.PI) : 0;
 
     const dipY = this.dip.update(dt);
     const pp = this.punchPitch.update(dt);
@@ -96,6 +99,9 @@ export class CameraRig {
     this.fovKick = damp(this.fovKick, fast * 7 + (mv.state === 'slide' ? 3 : 0), 5, dt);
     this.zoom = 1 + ads * (zoom - 1);
     const cam = this.camera;
+    // angular camera motion (punch, bob, roll, dips) is magnified on screen by the zoom: past a red dot's
+    // zoom, scale it down so a 6x scope shakes about as much on screen as a red dot does
+    const zk = Math.min(1, 1.32 / this.zoom);
     const hFov = (this.hFov + this.fovKick * (1 - ads)) * D2R;
     const vFov = 2 * Math.atan(Math.tan(hFov / 2) / cam.aspect / this.zoom);
     const fovDeg = vFov / D2R;
@@ -103,9 +109,15 @@ export class CameraRig {
 
     // compose
     const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+    // step smoothing: a sudden small height change while grounded (kerb, stair, ramp lip) is absorbed and
+    // eased out over a few frames instead of jolting the view; real falls and jumps pass straight through
+    const dy = this.lastFeetY === undefined ? 0 : mv.feet.y - this.lastFeetY;
+    if (mv.grounded && Math.abs(dy) > 0.09 && Math.abs(dy) < 0.6) this.stepY -= dy;
+    this.stepY = damp(this.stepY, 0, 16, dt);
+    this.lastFeetY = mv.feet.y;
     cam.position.copy(mv.feet);
-    cam.position.y += this.eye + this.bob.y + dipY * 0.08;
-    cam.position.addScaledVector(right, this.bob.x);
-    cam.rotation.set(this.pitch + pp + mantlePitch + dipY * 0.02, this.yaw + py, this.roll + pr + mantleRoll);
+    cam.position.y += this.eye + (this.bob.y + dipY * 0.08) * zk + this.stepY;
+    cam.position.addScaledVector(right, this.bob.x * zk);
+    cam.rotation.set(this.pitch + (pp + mantlePitch - vaultK * 3 * D2R + dipY * 0.02) * zk, this.yaw + py * zk, this.roll * zk + (pr + mantleRoll + vaultK * 4 * D2R) * zk);
   }
 }
