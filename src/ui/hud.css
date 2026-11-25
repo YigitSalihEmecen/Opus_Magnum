@@ -203,6 +203,7 @@ input[type='range']::-moz-range-thumb { width: 14px; height: 18px; background: v
 .chips .bad { background: var(--clay); color: var(--ink); }
 
 .vcursor { position: absolute; left: -8px; top: -8px; width: 16px; height: 16px; pointer-events: none; }
+.smith > .vcursor { transition: opacity 0.25s; } /* never ease the cursor's position: it must track the mouse 1:1 */
 .vcursor::before, .vcursor::after { content: ''; position: absolute; background: var(--ivory); outline: 1.5px solid var(--ink); }
 .vcursor::before { left: 7px; top: 0; width: 2px; height: 16px; }
 .vcursor::after { top: 7px; left: 0; width: 16px; height: 2px; }

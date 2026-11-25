@@ -202,7 +202,7 @@ function tick(dt) {
   rig.update(dt, mv, { ads: gun.adsEased, axes, zoom: gun.zoom });
   camera.updateMatrixWorld();
   if (live) gun.update(dt, { input, mv, camera, targets, now, blocked: vm.inspect || vm.inspectEase > 0.25 || vm.swapping || pendingSwitch !== null });
-  if (live) gunsmith.update(dt, input);
+  if (live) gunsmith.update(dt, input, rig.sensitivity);
 
   const ads = gun.adsEased;
   const vmFov = THREE.MathUtils.lerp(VM_FOV_HIP, vm.optic.vmFov, ads);

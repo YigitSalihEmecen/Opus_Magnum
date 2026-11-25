@@ -3,7 +3,7 @@ import { SLOT_LABEL, findAttachment, statChips, loadoutStats } from '../weapons/
 /** Where each callout card sits relative to its attachment point (px). */
 const OFFSETS = { muzzle: [-30, -150], scope: [0, -165], stock: [-40, -150], mag: [170, 70], grip: [-170, 80] };
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-/** Raw pointer-lock deltas are unaccelerated; scale them so the cursor crosses the screen quickly. */
+/** Cursor pixels per mouse count at sensitivity 1 (scaled by the look sensitivity setting). */
 const CURSOR_SPEED = 2.6;
 
 const STAT_ROWS = [
@@ -116,13 +116,14 @@ export class Gunsmith {
     this.refresh();
   }
 
-  update(dt, input) {
+  update(dt, input, sensitivity = 1) {
     if (!this.open) return;
     const w = innerWidth, h = innerHeight;
 
-    // virtual cursor
-    this.cursor.x = clamp(this.cursor.x + input.mouseDX * CURSOR_SPEED, 4, w - 4);
-    this.cursor.y = clamp(this.cursor.y + input.mouseDY * CURSOR_SPEED, 4, h - 4);
+    // virtual cursor: straight from the mouse deltas, same sensitivity as looking around
+    const k = CURSOR_SPEED * sensitivity;
+    this.cursor.x = clamp(this.cursor.x + input.mouseDX * k, 4, w - 4);
+    this.cursor.y = clamp(this.cursor.y + input.mouseDY * k, 4, h - 4);
     this.el.cursor.style.transform = `translate(${this.cursor.x}px, ${this.cursor.y}px)`;
 
     // callouts follow their parts on screen
