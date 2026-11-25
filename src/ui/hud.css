@@ -250,3 +250,26 @@ input[type='range']::-moz-range-thumb { width: 14px; height: 18px; background: v
 .title-sheet .mode:active { box-shadow: 1px 1px 0 var(--accent); }
 .mode-chip { width: 22px; height: 10px; background: var(--accent); border: 2px solid var(--ink); }
 .title-sheet .mode-go { color: var(--ink); }
+
+/* title lobby: the 3D scene shows through; menus sit along the bottom */
+.menu.title { background: none; backdrop-filter: none; place-items: end center; padding: 28px 32px; pointer-events: none; }
+.menu.title > * { pointer-events: auto; }
+.menu.title > .title-sheet.home { pointer-events: none; }
+.title-sheet.home .mode-pick { pointer-events: auto; }
+.title-sheet.home { padding: 0; background: none; border: none; box-shadow: none; }
+.title-sheet.home h1 { position: fixed; top: 30px; left: 36px; margin: 0; display: grid; gap: 12px; text-shadow: 3px 3px 0 var(--ivory); }
+.title-sheet.home h1 .label { color: var(--ink); text-shadow: none; }
+.title-sheet.home .mode { background: color-mix(in srgb, var(--ivory) 94%, transparent); }
+@media (max-width: 720px) { .title-sheet.home h1 { position: static; margin-bottom: 18px; } }
+
+/* character picker (title lobby) */
+.char-pick { position: fixed; top: 28px; right: 32px; width: 230px; display: grid; gap: 10px; z-index: 5; }
+body:has(#title[hidden]) .char-pick { display: none; }
+.char-pick > .label { color: var(--ink); }
+.char { display: grid; gap: 4px; text-align: left; padding: 12px 14px 11px; cursor: pointer; color: var(--ink); font: inherit; background: color-mix(in srgb, var(--ivory) 92%, transparent); transition: transform 0.1s, box-shadow 0.1s; }
+.char b { font: italic 600 24px/1 var(--serif); }
+.char .char-blurb { font: 400 12.5px/1.4 var(--sans); color: #3d3d3a; }
+.char:hover { transform: translate(-2px, -2px); box-shadow: 7px 7px 0 var(--ink); }
+.char.on { background: var(--ivory); box-shadow: 5px 5px 0 var(--clay); outline: 2.5px solid var(--clay); outline-offset: -2.5px; }
+.char-pick .hint { margin-top: 2px; }
+@media (max-width: 720px) { .char-pick { top: auto; bottom: 16px; right: 16px; width: 170px; } .char .char-blurb, .char-pick .hint { display: none; } }

@@ -12,8 +12,8 @@ export class Title {
 
   #home() {
     this.root.innerHTML = `
-      <section class="sheet card title-sheet" role="dialog" aria-label="Opus Magnum">
-        <h1>Opus Magnum</h1>
+      <section class="sheet title-sheet home" role="dialog" aria-label="Opus Magnum">
+        <h1>Opus Magnum<span class="label">Scrapyard build · 0.3</span></h1>
         <div class="mode-pick">
           ${this.modes.map((m) => `
             <button class="mode card" type="button" data-id="${m.id}" style="--accent:${m.accent ?? 'var(--clay)'}">

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { MATS, f2z, shotShell } from './models/parts.js';
-import { makeHand, Forearm } from './arms.js';
+import { poseArm } from '../character/robot.js';
+import { characterById } from '../character/characters.js';
 import { ClipPlayer } from './anim.js';
 import { buildClips } from './animations.js';
 import { SLOTS } from './attachments.js';
@@ -45,6 +46,8 @@ const SLIDE_AIM_DIST = 2.5; // m in front of the eye where the canted bore cross
 const SLIDE_BORE_H = 0.05; // bore height above the gun origin (approx., all guns)
 const SHELL_PUSH = 0.016; // how far the thumb slides the shell out of the fingers
 const _back = new THREE.Vector3(), _hq = new THREE.Quaternion(), _bq = new THREE.Quaternion();
+const _anchor = new THREE.Vector3(), _wr = new THREE.Vector3(), _hwq = new THREE.Quaternion(), _dir = new THREE.Vector3();
+const _el = new THREE.Vector3(), _sh = new THREE.Vector3(), _pl = new THREE.Vector3(), _down = new THREE.Vector3(0, -1, 0);
 
 /** How each slot's part leaves/arrives when swapped (gun space metres / radians, seconds). */
 const SWAP = {
@@ -150,14 +153,15 @@ export class Viewmodel {
     this.swaps = {};
     this.ironFold = 0;
 
+    // the player robot's arms: rightHand / leftHand are grip targets in gun space (mags and shells ride on
+    // them); each frame the arm chain is laid so its hand bone lands exactly on its target
     this.lhRest = this.poses.lhRest;
-    this.rightHand = makeHand({ curl: this.poses.rightHand[6] });
+    this.rightHand = new THREE.Group();
+    this.leftHand = new THREE.Group();
     setPose(this.rightHand, this.poses.rightHand);
-    this.leftHand = makeHand({ left: true, curl: this.lhRest[6] });
     setPose(this.leftHand, this.lhRest);
     this.anim.add(this.rightHand, this.leftHand);
-    this.rightArm = new Forearm(scene);
-    this.leftArm = new Forearm(scene);
+    this.setCharacter('rivet');
 
     // magazine-fed guns: mag transform relative to the left hand when gripping it at the magwell
     if (parts.magSocket) {
@@ -215,10 +219,27 @@ export class Viewmodel {
     this.twoHand = 0;
   }
 
+  /** Swap the arm chains for another character's (same hand frame, so every grip pose still fits). */
+  setCharacter(id) {
+    const ch = characterById(id);
+    if (this.character === ch.id) return;
+    const visible = this.rightArm?.upper.visible ?? true;
+    if (this.rightArm) this.scene.remove(this.rightArm.upper, this.leftArm.upper);
+    this.character = ch.id;
+    this.rightArm = ch.arm(-1);
+    this.leftArm = ch.arm(1);
+    this.rightArm.upper.visible = this.leftArm.upper.visible = visible;
+    this.scene.add(this.rightArm.upper, this.leftArm.upper);
+    this.rightHand.userData = this.rightArm.hand.userData;
+    this.leftHand.userData = this.leftArm.hand.userData;
+    this.rightHand.userData.setCurl(this.poses.rightHand[6]);
+    this.leftHand.userData.setCurl(this.lhRest[6]);
+  }
+
   /** Show/hide this weapon entirely (weapon switching). */
   setActive(on) {
     this.sway.visible = on;
-    this.rightArm.mesh.visible = this.leftArm.mesh.visible = on;
+    this.rightArm.upper.visible = this.leftArm.upper.visible = on;
     if (!on) { for (const sh of this.shells) sh.visible = false; this.flashT = 0; this.flash.visible = false; this.muzzleLight.intensity = 0; }
   }
 
@@ -466,7 +487,7 @@ export class Viewmodel {
     // one-handed guns park the support hand out of frame; hide it there so sprint tilts can't swing it into view
     const parked = this.def.vm.oneHand && this.twoHand < 0.02 && run < 0.05;
     this.leftHand.visible = ie < 0.5 && !parked;
-    this.leftArm.mesh.visible = ie < 0.5 && !parked;
+    this.leftArm.upper.visible = ie < 0.5 && !parked;
 
     // mechanical parts
     this.boltCycle = Math.min(1, this.boltCycle + dt / 0.075);
@@ -516,8 +537,10 @@ export class Viewmodel {
 
     this.#updatePools(dt);
 
-    // forearms follow wrists toward fixed elbow anchors (off-screen)
+    // arms follow the hands toward fixed shoulder anchors (off-screen); thumbs aim once the hands are placed
     this.scene.updateMatrixWorld();
+    this.#arm(this.rightHand, this.rightArm, _anchor.set(0.26, -0.42, 0.18));
+    this.#arm(this.leftHand, this.leftArm, _anchor.set(-0.2, -0.5, 0.1));
     if (this.poses.thumbAim && !this.player.get('rh', null)) this.#aimThumb(this.rightHand, this.poses.thumbAim);
     // shell loading: the left thumb sits behind the shell's brass head and drives it forward out of the fingers
     const push = this.handShell && this.player.get('lthumb', null);
@@ -527,8 +550,6 @@ export class Viewmodel {
       this.handShell.updateWorldMatrix(true, false);
       this.leftHand.userData.aimThumb(this.handShell.localToWorld(_tk.set(...THUMB_KNUCKLE)), this.handShell.localToWorld(_tt.set(...THUMB_TIP)));
     }
-    this.#arm(this.rightHand, this.rightArm, new THREE.Vector3(0.26, -0.42, 0.18));
-    this.#arm(this.leftHand, this.leftArm, new THREE.Vector3(-0.2, -0.5, 0.1));
   }
 
   // ───────────────────────── attachments ─────────────────────────
@@ -608,16 +629,22 @@ export class Viewmodel {
     hand.userData.aimThumb(this.anim.localToWorld(_tk.set(...k)), this.anim.localToWorld(_tt.set(...t)));
   }
 
-  /** Forearm from the wrist toward an elbow anchor, swung toward the back of the hand so the wrist never bends past MAX_BEND. */
+  /**
+   * Lay an arm chain onto its hand target: the forearm runs from the wrist toward the shoulder anchor, swung
+   * toward the back of the hand so the wrist never bends past MAX_BEND; the upper arm heads for the anchor.
+   */
   #arm(hand, arm, anchor) {
-    const wrist = hand.getWorldPosition(new THREE.Vector3());
-    const dir = anchor.sub(wrist).normalize();
-    const back = _back.set(0, 0, 1).applyQuaternion(hand.getWorldQuaternion(_hq));
+    const wrist = hand.getWorldPosition(_wr);
+    const handQ = hand.getWorldQuaternion(_hwq);
+    const dir = _dir.subVectors(anchor, wrist).normalize();
+    const back = _back.set(0, 0, 1).applyQuaternion(handQ);
     const bend = dir.angleTo(back);
     // inspect turns the gun sideways: let the arm hang toward its anchor (off screen) instead
     const max = MAX_BEND + this.inspectEase * Math.PI;
     if (bend > max) dir.applyQuaternion(_hq.identity().slerp(_bq.setFromUnitVectors(dir, back), 1 - max / bend));
-    arm.set(wrist, wrist.clone().addScaledVector(dir, 0.5));
+    const elbow = _el.copy(wrist).addScaledVector(dir, arm.dims.fore);
+    const shoulder = _sh.subVectors(anchor, elbow).normalize().multiplyScalar(arm.dims.upper).add(elbow);
+    poseArm(arm, shoulder, elbow, wrist, handQ, _pl.copy(elbow).add(_down));
   }
 
   #clipEvent(name, data) {

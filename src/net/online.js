@@ -43,7 +43,7 @@ function connect(url, hello) {
 
 export async function createOnline({ opts, getMap, buildWorld, ...ctx }) {
   const local = getMap(opts.mapId);
-  const hello = { name: opts.name, room: opts.room, mapId: opts.mapId, map: local && !local.builtin ? local : undefined };
+  const hello = { name: opts.name, room: opts.room, char: opts.char, mapId: opts.mapId, map: local && !local.builtin ? local : undefined };
   const { ws, welcome, queue } = await connect(opts.server, hello);
   const map = welcome.map ?? getMap(welcome.mapId) ?? local;
   const arena = await buildWorld(map);
@@ -53,7 +53,7 @@ export async function createOnline({ opts, getMap, buildWorld, ...ctx }) {
 /** Another player: the TDM bot body, posed from snapshots; hits on it are reported to the server. */
 class Remote extends Bot {
   constructor(net, info) {
-    super(net, { team: info.team === net.team ? 'ally' : 'enemy', name: info.name, gun: 'rifle', skill: 0 });
+    super(net, { team: info.team === net.team ? 'ally' : 'enemy', name: info.name, gun: 'rifle', skill: 0, char: info.char });
     Object.assign(this, { id: info.id, hopY: 0, phase: 0, reloadT: 0, buf: [], h: STAND });
     this.alive = info.alive;
     this.root.visible = false; // until the first snapshot places it
@@ -67,7 +67,7 @@ class Remote extends Bot {
 
   push(s, t) {
     if (s.al && !this.alive) this.revive();
-    this.buf.push({ t, p: new THREE.Vector3(...s.p), v: new THREE.Vector3(...s.v), y: s.y, pi: s.pi, h: s.h ?? STAND });
+    this.buf.push({ t, p: new THREE.Vector3(...s.p), v: new THREE.Vector3(...s.v), y: s.y, pi: s.pi, h: s.h ?? STAND, w: s.w });
     if (this.buf.length > 30) this.buf.shift();
     this.root.visible ||= this.alive;
   }
@@ -99,6 +99,7 @@ class Remote extends Bot {
       this.aimPitch = a.pi + (b.pi - a.pi) * k;
       this.h = THREE.MathUtils.damp(this.h, b.h, 14, dt);
       this.root.scale.y = this.h / STAND; // crouch / slide squash keeps the hitboxes honest
+      if (WEAPONS[b.w]) this.holdWeapon(WEAPONS[b.w]);
     }
     this.pose(dt);
   }

@@ -7,7 +7,7 @@ import { WebSocketServer } from 'ws';
   Clients own their movement and hit detection (friends-only trust model); the server owns HP, kills, score,
   respawns and the clock, and relays poses at TICK Hz.
 
-  client → server   hello { name, room, mapId, map? } · s { p, v, y, pi, w, st, h } · fire { o, d, w, sup }
+  client → server   hello { name, room, char, mapId, map? } · s { p, v, y, pi, w, st, h } · fire { o, d, w, sup }
                     hit { id, zone, dmg } · ping { c }
   server → client   welcome { id, team, mapId, map, players, score, limit, time } · join { player } · leave { id }
                     snap { ps } · fire { id, ... } · hurt { hp, by, dmg } · kill { k, v, head, score }
@@ -33,7 +33,7 @@ function broadcast(room, msg, except) {
   for (const p of room.players.values()) if (p !== except && p.ws.readyState === 1) p.ws.send(data);
 }
 
-const pub = (p) => ({ id: p.id, name: p.name, team: p.team, alive: p.alive });
+const pub = (p) => ({ id: p.id, name: p.name, char: p.char, team: p.team, alive: p.alive });
 
 function join(ws, msg) {
   const code = clean(msg.room, 16).toLowerCase() || 'duel';
@@ -45,7 +45,7 @@ function join(ws, msg) {
   if (room.players.size >= MAX_PLAYERS) return send(ws, { t: 'error', msg: 'Room is full' }), null;
   const count = (t) => [...room.players.values()].filter((p) => p.team === t).length;
   const p = {
-    ws, room, id: nextId++, name: clean(msg.name, 16) || 'Player', team: count('a') <= count('b') ? 'a' : 'b',
+    ws, room, id: nextId++, name: clean(msg.name, 16) || 'Player', char: clean(msg.char, 12).toLowerCase() || 'rivet', team: count('a') <= count('b') ? 'a' : 'b',
     alive: true, hp: MAX_HP, lastHurt: -99, shieldUntil: now() + SHIELD, respawnAt: 0, state: null,
   };
   room.players.set(p.id, p);

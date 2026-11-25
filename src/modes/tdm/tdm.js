@@ -58,7 +58,7 @@ class TDM {
     this.bots = [];
     for (const team of ['ally', 'enemy']) {
       for (const [name, gun, skill] of ROSTER[team]) {
-        const b = new Bot(this, { team, name, gun, skill });
+        const b = new Bot(this, { team, name, gun, skill, char: this.bots.length % 2 ? 'kite' : 'rivet' });
         scene.add(b.root);
         this.bots.push(b);
       }

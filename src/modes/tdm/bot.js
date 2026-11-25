@@ -1,6 +1,9 @@
 import * as THREE from 'three';
-import { PALETTE as P, toon } from '../../core/toon.js';
+import { PALETTE as P } from '../../core/toon.js';
 import { FX_LAYER } from '../../core/renderer.js';
+import { gripGun } from '../../character/robot.js';
+import { buildCharacter } from '../../character/characters.js';
+import { WEAPONS } from '../../weapons/weapons.js';
 
 /*
   TDM bot: a stylised pilot body plus a small state machine. What makes it feel human:
@@ -17,26 +20,14 @@ export const MAX_HP = 150;
 const REGEN_DELAY = 5, REGEN_RATE = 30;
 const EYE = 1.62;
 const D2R = Math.PI / 180;
+const STANCE = -0.5; // torso bladed (left shoulder forward) behind the rifle
 
 export const BOT_GUNS = {
-  rifle: { label: 'Carbine', rpm: 600, dmg: 15, head: 1.6, mag: 30, reload: 2.3, spread: 1.0, burst: [5, 11], range: [10, 30], sample: 'fire' },
-  smg: { label: 'SMG', rpm: 860, dmg: 11, head: 1.5, mag: 32, reload: 1.9, spread: 1.7, burst: [8, 16], range: [4, 15], sample: 'smgFire' },
+  rifle: { label: 'Carbine', model: 'panther', rpm: 600, dmg: 15, head: 1.6, mag: 30, reload: 2.3, spread: 1.0, burst: [5, 11], range: [10, 30], sample: 'fire' },
+  smg: { label: 'SMG', model: 'snake', rpm: 860, dmg: 11, head: 1.5, mag: 32, reload: 1.9, spread: 1.7, burst: [8, 16], range: [4, 15], sample: 'smgFire' },
 };
 
 const G = {
-  pelvis: new THREE.CapsuleGeometry(0.16, 0.14, 4, 12).rotateZ(Math.PI / 2),
-  thigh: new THREE.CapsuleGeometry(0.095, 0.3, 4, 10).translate(0, -0.22, 0),
-  shin: new THREE.CapsuleGeometry(0.08, 0.3, 4, 10).translate(0, -0.2, 0),
-  boot: new THREE.BoxGeometry(0.15, 0.1, 0.26).translate(0, -0.42, 0.04),
-  torso: new THREE.CapsuleGeometry(0.22, 0.3, 6, 14).translate(0, 0.3, 0),
-  plate: new THREE.BoxGeometry(0.36, 0.3, 0.1).translate(0, 0.36, 0.17),
-  pack: new THREE.BoxGeometry(0.32, 0.36, 0.16).translate(0, 0.34, -0.22),
-  pad: new THREE.SphereGeometry(0.1, 12, 8),
-  head: new THREE.SphereGeometry(0.16, 18, 12),
-  visor: new THREE.BoxGeometry(0.24, 0.07, 0.1),
-  arm: new THREE.CapsuleGeometry(0.065, 0.26, 4, 8),
-  gun: new THREE.BoxGeometry(0.07, 0.11, 0.62).translate(0, 0, 0.2),
-  mag: new THREE.BoxGeometry(0.05, 0.16, 0.08).translate(0, -0.12, 0.12),
   flash: new THREE.PlaneGeometry(0.34, 0.34),
   marker: new THREE.OctahedronGeometry(0.1, 0),
 };
@@ -64,8 +55,8 @@ export function raySegment(ray, a, b) {
 }
 
 export class Bot {
-  constructor(world, { team, name, gun, skill }) {
-    Object.assign(this, { world, team, name, skill });
+  constructor(world, { team, name, gun, skill, char = 'rivet' }) {
+    Object.assign(this, { world, team, name, skill, char });
     this.gun = BOT_GUNS[gun];
     this.pos = new THREE.Vector3();
     this.vel = new THREE.Vector3();
@@ -82,7 +73,7 @@ export class Bot {
   /** Analytic hit volumes (head sphere + body capsule) for shots fired by other bots. */
   hitTest(ray) {
     if (!this.alive) return null;
-    _sph.center.copy(this.pos).setY(this.pos.y + 1.62 + this.hopY);
+    _sph.center.copy(this.pos).setY(this.pos.y + 1.7 + this.hopY);
     _sph.radius = 0.17;
     const h = ray.intersectSphere(_sph, _hv);
     if (h) return { dist: h.distanceTo(ray.origin), zone: 'head' };
@@ -486,91 +477,63 @@ export class Bot {
   // ── visuals ──
 
   #build() {
-    const team = this.team === 'ally' ? P.sky : P.clay;
-    const m = (this.mats = {
-      shell: toon(P.ivory, { rim: 0.25 }),
-      team: toon(team, { rim: 0.22 }),
-      dark: toon(P.slate, { rim: 0.15 }),
-      ink: toon(P.ink, { rim: 0.1 }),
-    });
-    const mesh = (geo, mat, parent, zone, x = 0, y = 0, z = 0) => {
-      const o = new THREE.Mesh(geo, mat);
-      o.position.set(x, y, z);
-      o.castShadow = true;
-      if (zone) o.userData = { dummy: this, zone };
-      parent.add(o);
-      return o;
-    };
+    const r = (this.robot = buildCharacter(this.char, this.team));
+    this.mats = Object.values(r.mats).filter((m) => m.emissive);
     this.root = new THREE.Group();
     this.body = new THREE.Group(); // tips over on death
     this.root.add(this.body);
+    this.body.add(r.root);
+    const b = r.bones;
+    Object.assign(this, { hips: b.hips, spine: b.spine, neck: b.neck, hipsY: b.hips.position.y });
+    this.legs = ['L', 'R'].map((s) => ({ thigh: r.legs[s].thigh, knee: r.legs[s].shin }));
 
-    this.hips = new THREE.Group();
-    this.hips.position.y = 0.92;
-    this.body.add(this.hips);
-    mesh(G.pelvis, m.dark, this.hips, 'body');
-    this.legs = [-1, 1].map((s) => {
-      const thigh = new THREE.Group();
-      thigh.position.set(s * 0.12, 0, 0);
-      this.hips.add(thigh);
-      mesh(G.thigh, m.dark, thigh, 'body');
-      const knee = new THREE.Group();
-      knee.position.y = -0.45;
-      thigh.add(knee);
-      mesh(G.shin, m.dark, knee, 'body');
-      mesh(G.boot, m.ink, knee, 'body');
-      return { thigh, knee };
-    });
-
-    this.spine = new THREE.Group();
-    this.spine.position.y = 0.92;
-    this.body.add(this.spine);
-    mesh(G.torso, m.shell, this.spine, 'body');
-    mesh(G.plate, m.team, this.spine, 'body');
-    mesh(G.pack, m.dark, this.spine, 'body');
-    for (const s of [-1, 1]) mesh(G.pad, m.team, this.spine, 'body', s * 0.26, 0.56, 0);
-
-    this.neck = new THREE.Group();
-    this.neck.position.y = 0.7;
-    this.spine.add(this.neck);
-    mesh(G.head, m.shell, this.neck, 'head');
-    mesh(G.visor, m.team, this.neck, 'head', 0, 0.01, 0.12);
-
-    // arms + gun pitch together from the shoulders
+    // the gun pitches with the aim from the right shoulder; both hands are solved onto its grips every frame
     this.arms = new THREE.Group();
-    this.arms.position.set(0, 0.5, 0.05);
-    this.spine.add(this.arms);
-    const gun = new THREE.Group();
-    gun.position.set(0.14, -0.08, 0.2);
-    this.arms.add(gun);
-    mesh(G.gun, m.dark, gun, 'body');
-    mesh(G.mag, m.ink, gun, null);
-    const ra = mesh(G.arm, m.shell, this.arms, 'body', 0.2, -0.08, 0.08);
-    ra.rotation.x = Math.PI / 2.4;
-    const la = mesh(G.arm, m.shell, this.arms, 'body', 0.02, -0.1, 0.24);
-    la.rotation.set(Math.PI / 2.2, 0, -0.7);
+    this.arms.position.set(-0.1, 0.24, 0.02);
+    b.chest.add(this.arms);
+    this.gunFrame = new THREE.Group();
+    this.gunFrame.position.set(0.02, -0.04, 0.34);
+    this.gunFrame.rotation.y = Math.PI - STANCE;
+    this.arms.add(this.gunFrame);
     this.muzzle = new THREE.Object3D();
-    this.muzzle.position.set(0, 0.01, 0.53);
-    gun.add(this.muzzle);
     this.flashMesh = new THREE.Mesh(G.flash, new THREE.MeshBasicMaterial({ color: 0xffd9a0, transparent: true, opacity: 0.95, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, toneMapped: false }));
     this.flashMesh.layers.set(FX_LAYER);
     this.flashMesh.visible = false;
     this.muzzle.add(this.flashMesh);
     this.flashT = 0;
+    this.guns = new Map();
+    this.holdWeapon(WEAPONS.find((w) => w.id === this.gun.model) ?? WEAPONS[0]);
 
     if (this.team === 'ally') {
       const mk = new THREE.Mesh(G.marker, new THREE.MeshBasicMaterial({ color: P.sky, depthTest: false, transparent: true, opacity: 0.9, toneMapped: false }));
       mk.scale.y = 1.4;
-      mk.position.y = 2.25;
+      mk.position.y = 2.3;
       mk.renderOrder = 10;
       mk.layers.set(FX_LAYER);
       this.root.add(mk);
       this.marker = mk;
     }
 
-    this.hitboxes = [];
-    this.root.traverse((o) => { if (o.userData?.zone) this.hitboxes.push(o); });
+    this.hitboxes = r.hitboxes;
+    for (const h of this.hitboxes) h.userData.dummy = this;
     this.root.visible = false;
+  }
+
+  /** Swap the third-person gun model (built once per weapon, kept for later swaps). */
+  holdWeapon(def) {
+    if (this.weapon === def) return;
+    if (this.weapon) this.guns.get(this.weapon.id).visible = false;
+    let gun = this.guns.get(def.id);
+    if (!gun) {
+      const { root, parts } = def.build();
+      root.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+      root.userData.muzzle = parts.muzzleMount;
+      this.gunFrame.add(root);
+      this.guns.set(def.id, (gun = root));
+    }
+    gun.visible = true;
+    gun.userData.muzzle.add(this.muzzle);
+    this.weapon = def;
   }
 
   #animate(dt) {
@@ -578,7 +541,7 @@ export class Bot {
     this.root.position.y += this.hopY;
     this.root.rotation.y = this.aimYaw;
 
-    // lower body turns toward travel; the legs run backwards when backpedalling
+    // lower body turns toward travel; the legs run backwards when backpedalling; the torso stays bladed
     const sp = Math.hypot(this.vel.x, this.vel.z);
     let legYaw = 0, dirSign = 1;
     if (sp > 0.4) {
@@ -590,25 +553,26 @@ export class Bot {
     const k = Math.min(1, sp / 4);
     this.legs.forEach((l, i) => {
       const ph = this.phase + i * Math.PI;
-      l.thigh.rotation.x = Math.sin(ph) * 0.65 * k - (this.hopY > 0 ? 0.5 : 0);
-      l.knee.rotation.x = Math.max(0, Math.cos(ph)) * 0.9 * k + (this.hopY > 0 ? 0.9 : 0);
+      l.thigh.rotation.x = -Math.sin(ph) * 0.65 * k - (this.hopY > 0 ? 0.5 : 0) - 0.08;
+      l.knee.rotation.x = Math.max(0, Math.cos(ph)) * 0.9 * k + (this.hopY > 0 ? 0.9 : 0) + 0.14;
     });
     const bob = Math.abs(Math.sin(this.phase)) * 0.04 * k;
-    this.hips.position.y = 0.92 + bob;
-    this.spine.position.y = 0.92 + bob;
-    this.spine.rotation.x = -this.aimPitch * 0.35 + 0.08 * k;
-    this.arms.rotation.x = -this.aimPitch * 0.65;
-    this.neck.rotation.x = -this.aimPitch * 0.3;
-    // reload: gun dips and rolls
+    this.hips.position.y = this.hipsY - 0.035 + bob;
+    this.spine.rotation.set(-this.aimPitch * 0.35 + 0.08 * k, -this.hips.rotation.y + STANCE, 0, 'YXZ');
+    this.arms.rotation.set(-this.aimPitch * 0.65, 0, 0);
+    this.neck.rotation.set(-this.aimPitch * 0.3, -STANCE * 0.8, 0, 'YXZ');
+    // reload: gun dips and rolls, the support hand goes to the magazine
     const rl = this.reloadT > 0 ? Math.sin(Math.min(1, this.reloadT / this.gun.reload) * Math.PI) : 0;
     this.arms.rotation.x += rl * 0.6;
     this.arms.rotation.z = rl * 0.5;
+    const poses = this.weapon.poses;
+    gripGun(this.robot, this.gunFrame, poses, { left: rl > 0.3 ? poses.lhMag ?? poses.lhRest : poses.lhRest });
 
     this.flashT -= dt;
     this.flashMesh.visible = this.flashT > 0;
     this.flash = Math.max(0, (this.flash ?? 0) - dt);
     const e = this.flash > 0 ? 0.5 : 0;
-    for (const mt of Object.values(this.mats)) mt.emissive.setScalar(e);
+    for (const mt of this.mats) mt.emissive.setScalar(e);
   }
 
   #animateDeath(dt) {
@@ -620,12 +584,13 @@ export class Bot {
     this.body.rotation.set(-Math.cos(this.fallDir) * ease * 1.45, 0, Math.sin(this.fallDir) * ease * 1.45);
     this.legs.forEach((l) => { l.knee.rotation.x = damp(l.knee.rotation.x, 1.2, 8, dt); });
     this.arms.rotation.x = damp(this.arms.rotation.x, 0.8, 6, dt);
+    gripGun(this.robot, this.gunFrame, this.weapon.poses);
     this.body.position.y = this.deathT > 2.6 ? -(this.deathT - 2.6) * 0.5 : 0;
     this.flashMesh.visible = false;
     if (this.marker) this.marker.visible = false;
     if (this.deathT > 3.6) this.root.visible = false;
     this.flash = 0;
-    for (const mt of Object.values(this.mats)) mt.emissive.setScalar(0);
+    for (const mt of this.mats) mt.emissive.setScalar(0);
   }
 
   showMarker() { if (this.marker) this.marker.visible = true; }

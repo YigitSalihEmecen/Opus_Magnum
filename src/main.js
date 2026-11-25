@@ -16,6 +16,8 @@ import { HUD } from './ui/hud.js';
 import { Menu } from './ui/menu.js';
 import { Gunsmith } from './ui/gunsmith.js';
 import { Title } from './ui/title.js';
+import { Lobby } from './ui/lobby.js';
+import { selectedCharacter } from './character/characters.js';
 import { listMaps, getMap, hasSpawns } from './modes/editor/storage.js';
 
 const canvas = document.getElementById('game');
@@ -63,7 +65,7 @@ const MODES = [
     lobby: { server: /^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? 'ws://localhost:8787' : 'wss://bitter-canavar.tailb7f1ff.ts.net:8443', map: 'builtin-duel' },
     load: async (mapId, opts) => (await import('./net/online.js')).createOnline({
       scene, camera, audio, mv, rig, arsenal, getMap,
-      opts: { name: 'Player', room: 'duel', server: MODES.find((m) => m.id === 'online').lobby.server, ...opts, mapId: mapId ?? 'builtin-duel' },
+      opts: { name: 'Player', room: 'duel', server: MODES.find((m) => m.id === 'online').lobby.server, char: selectedCharacter(), ...opts, mapId: mapId ?? 'builtin-duel' },
       buildWorld: async (map) => (await import('./modes/editor/mapWorld.js')).buildMapWorld(scene, map),
     }),
   },
@@ -203,11 +205,15 @@ menu.show(false);
 async function startMode(id, mapId = null, opts) {
   const mode = MODES.find((m) => m.id === id) ?? MODES[0];
   title.show(false);
+  lobby?.dispose();
+  lobby = null;
+  for (const a of arsenal) a.vm.setCharacter(selectedCharacter());
   document.querySelector('#hud .brand .label').textContent = mapId ? `${mode.title} · ${getMap(mapId)?.name ?? ''}` : `${mode.title} · 0.3`;
   try {
     level = await mode.load(mapId, opts);
   } catch (err) {
     if (document.pointerLockElement) document.exitPointerLock();
+    lobby = new Lobby(scene, camera, canvas);
     title.show(true);
     title.notice(err.message);
     return;
@@ -279,7 +285,7 @@ let wasAlive = true;
 function tick(dt) {
   now += dt;
   if (level?.frame) { level.frame(dt); input.endFrame(); return; }
-  if (!level) { renderer.render(scene, camera, emptyScene, vmCamera, {}); return; } // title: no gun yet
+  if (!level) { lobby?.update(dt); renderer.render(scene, camera, emptyScene, vmCamera, {}); return; } // title: no gun yet
   const alive = level?.playerAlive ?? true;
   const live = input.locked && !!level && alive && !level.ended;
   // a mode can take the player out (TDM death): lower the gun, bring it back on respawn
@@ -345,10 +351,11 @@ drawWeapon(0);
 
 window.OM = {
   get vm() { return vm; }, get gun() { return gun; }, arsenal, switchWeapon,
-  mv, rig, get level() { return level; }, scene, vmScene, input, gunsmith, setInspect, startMode,
+  mv, rig, get level() { return level; }, get lobby() { return lobby; }, scene, vmScene, input, gunsmith, setInspect, startMode,
   step: (n = 1, dt = 1 / 60) => { for (let i = 0; i < n; i++) tick(dt); },
 };
 const params = new URLSearchParams(location.search);
+let lobby = params.has('dev') ? null : new Lobby(scene, camera, canvas);
 if (params.has('dev')) {
   title.show(false);
   startMode(params.get('mode') ?? 'range', params.get('map'));
