@@ -875,8 +875,8 @@ function podium(color, ctx) {
   gbox(g, 10, T - base, 12, 1, (T + base) / 2, 0, color);
   gbox(g, 2, T - base, 6, -5, (T + base) / 2, -3, color);
   if (base < 0) gbox(g, 2, -base, 6, -5, base / 2, 3, color);
-  sbox(g, 10, 0.12, 12, 1, H - 0.06, 0, mat(P.ink));
-  sbox(g, 2, 0.12, 6, -5, H - 0.06, -3, mat(P.ink));
+  gbox(g, 10, 0.12, 12, 1, H - 0.06, 0, P.manilla);
+  gbox(g, 2, 0.12, 6, -5, H - 0.06, -3, P.manilla);
   place(g, stairs(P.ivory, null, { rise: H, run: 6, w: 2, rail: false }), -5, 0, 3, 0);
   return g;
 }

@@ -3,10 +3,11 @@
     { [id]: { id, name, updated, size, pieces: [{ type, x, y, z, rot, color }] } }
 */
 import { settlement } from './maps/settlement.js';
+import { duel } from './maps/duel.js';
 
 const KEY = 'om.maps';
 let builtins;
-const BUILTIN = () => (builtins ??= [settlement()]);
+const BUILTIN = () => (builtins ??= [settlement(), duel()]);
 
 function readAll() {
   try { return JSON.parse(localStorage.getItem(KEY) ?? '{}'); } catch { return {}; }
