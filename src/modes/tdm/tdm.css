@@ -1,0 +1,58 @@
+/* TDM overlay — sits on top of the shared HUD (uses its tokens and .card/.label/.btn). */
+.tdm { position: fixed; inset: 0; pointer-events: none; user-select: none; --ally: #9fb4c7; --enemy: #d97757; }
+.tdm[hidden] { display: none; }
+
+.tdm-score { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); display: flex; align-items: stretch; }
+.tdm-score .side { display: flex; align-items: center; gap: 12px; padding: 8px 16px; }
+.tdm-score .side b { font: 800 30px/1 var(--mono); min-width: 2ch; text-align: center; }
+.tdm-score .ally { background: var(--ally); border-right: var(--border); }
+.tdm-score .enemy { background: var(--enemy); border-left: var(--border); }
+.tdm-score .side .label { color: var(--ink); }
+.tdm-score .mid { display: grid; place-items: center; gap: 4px; padding: 8px 18px; min-width: 96px; }
+.tdm-score .clock { font: italic 600 22px/1 var(--serif); }
+
+.tdm-feed { position: absolute; top: 66px; right: 20px; display: grid; gap: 6px; justify-items: end; }
+.tdm-feed .card { display: flex; gap: 8px; align-items: center; padding: 6px 10px 5px; font: 700 12px/1 var(--mono); box-shadow: 3px 3px 0 var(--ink); transition: opacity 0.5s, transform 0.5s; }
+.tdm-feed .card.out { opacity: 0; transform: translateX(12px); }
+.tdm-feed .ally { color: #5b7590; }
+.tdm-feed .enemy { color: #b4532f; }
+.tdm-feed em { font-style: normal; color: var(--cloud); }
+
+.tdm-hp { position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); width: 300px; padding: 10px 14px 12px; }
+.tdm-hp .row { display: flex; justify-content: space-between; align-items: baseline; }
+.tdm-hp .num { font: 800 20px/1 var(--mono); }
+.tdm-hp .bar { position: relative; margin-top: 8px; height: 12px; border: 2px solid var(--ink); background: var(--pampas); overflow: hidden;
+  background-image: repeating-linear-gradient(90deg, transparent 0 calc(20% - 2px), var(--ink) calc(20% - 2px) 20%); }
+.tdm-hp .bar b, .tdm-hp .bar i { position: absolute; left: 0; top: 0; bottom: 0; }
+.tdm-hp .bar i { background: var(--clay); }
+.tdm-hp .bar b { background: var(--ink); z-index: 1; transition: width 0.08s; }
+.tdm-hp .bar.low b { background: var(--clay); animation: tdm-pulse 0.7s ease-in-out infinite alternate; }
+@keyframes tdm-pulse { to { opacity: 0.55; } }
+
+.tdm-vignette { position: absolute; inset: 0; opacity: 0; background: radial-gradient(ellipse at center, transparent 52%, rgba(217, 119, 87, 0.55) 100%); }
+
+.tdm-dirs { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
+.tdm-dirs i { position: absolute; left: -11px; top: -11px; width: 22px; height: 22px; transform-origin: 11px 11px; animation: tdm-dir 1.1s ease-out forwards; }
+.tdm-dirs i::before { content: ''; position: absolute; left: 0; top: -108px; width: 0; height: 0; border-left: 11px solid transparent; border-right: 11px solid transparent; border-bottom: 18px solid var(--clay); filter: drop-shadow(0 0 0 var(--ink)) drop-shadow(2px 2px 0 var(--ink)); }
+@keyframes tdm-dir { from { opacity: 1; } to { opacity: 0; } }
+
+.tdm-toast { position: absolute; left: 50%; top: 62%; transform: translateX(-50%); padding: 7px 12px 6px; font: 800 13px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--ivory); background: var(--ink); opacity: 0; }
+.tdm-toast.head { background: var(--clay); color: var(--ink); }
+.tdm-toast.show { animation: tdm-toast 1.6s ease-out forwards; }
+@keyframes tdm-toast { 0% { opacity: 0; transform: translate(-50%, 8px); } 12% { opacity: 1; transform: translate(-50%, 0); } 75% { opacity: 1; } 100% { opacity: 0; } }
+
+.tdm-death { position: absolute; left: 50%; top: 34%; transform: translateX(-50%); display: grid; justify-items: center; gap: 8px; padding: 16px 28px 14px; }
+.tdm-death[hidden] { display: none; }
+.tdm-death .who { font: italic 600 34px/1 var(--serif); color: #b4532f; }
+
+.tdm-end { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; background: rgba(240, 238, 230, 0.55); pointer-events: auto; z-index: 5; }
+.tdm-end[hidden] { display: none; }
+.tdm-end section { padding: 34px 40px 30px; min-width: min(460px, 100%); text-align: center; }
+.tdm-end .verdict { font: italic 600 64px/1 var(--serif); margin: 14px 0 10px; }
+.tdm-end[data-r='win'] .verdict { color: #5b7590; }
+.tdm-end[data-r='loss'] .verdict { color: #b4532f; }
+.tdm-end .final { display: flex; justify-content: center; gap: 14px; font: 800 30px/1 var(--mono); margin-bottom: 26px; }
+.tdm-end .final .ally { color: #5b7590; }
+.tdm-end .final .enemy { color: #b4532f; }
+.tdm-end .actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.tdm-end .btn.ghost { background: var(--ivory); }

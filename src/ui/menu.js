@@ -15,7 +15,7 @@ function save(s) {
 
 /** Start / pause sheet with controls and settings. Calls onDeploy when the player clicks in. */
 export class Menu {
-  constructor(root, { onDeploy, onSettings }) {
+  constructor(root, { onDeploy, onSettings, onTitle }) {
     this.root = root;
     this.settings = load();
     root.innerHTML = `
@@ -32,12 +32,14 @@ export class Menu {
         </div>
         <div class="actions">
           <button class="btn" type="button">Loading…</button>
+          ${onTitle ? '<button class="btn ghost to-title" type="button">Main menu</button>' : ''}
           <span class="note">Click to lock the mouse · Esc or P to return here</span>
         </div>
       </section>`;
     this.button = root.querySelector('.btn');
     this.button.disabled = true;
     this.button.addEventListener('click', () => onDeploy());
+    root.querySelector('.to-title')?.addEventListener('click', () => onTitle());
     root.querySelectorAll('input[type=range]').forEach((input) => {
       const out = root.querySelector(`output[for=${input.id}]`);
       input.value = this.settings[input.id];

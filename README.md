@@ -6,7 +6,7 @@ outline pass. The style direction lives in [Design.md](Design.md).
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173  (append ?dev to skip the menu/pointer lock for scripted testing)
+npm run dev        # http://localhost:5173  (append ?dev to skip the title/pointer lock for scripted testing, ?dev&mode=tdm for TDM, &map=<id> for a saved map, ?dev&mode=editor)
 npm run build      # production bundle in dist/
 ```
 
@@ -26,6 +26,19 @@ src/
   world/
     testRange.js          the range: lane, wallrun, mantle, slide ramp, pillars (+ collision octree)
     dummies.js            static / strafing / orbiting targets with hit zones
+  modes/tdm/              Team Deathmatch, loaded only when picked (see below)
+    tdm.js                match rules, player health/respawn, score, TDM HUD overlay
+    arena.js              "Kiln" 5v5 map, point-symmetric (+ collision octree, nav grid)
+    nav.js                layered walkable grid (floors, stairs, roofs) from the octree, A* + smoothing
+    bot.js                bot body/animation + AI (perception, reaction, aim error, cover)
+  modes/editor/           map editor, loaded only when picked
+    editor.js             grid, orbit camera, place/select/drag, inspector, undo, open/save UI
+    assets.js             ★ placeable pieces + prefab buildings; connectors (pillars/posts) and adaptive
+                          road/sidewalk tiles, rounded bends; world-aligned grid UVs
+    terrain.js            heightfield ground + sculpt brushes (raise/lower/smooth/flatten)
+    mapWorld.js           saved map → playable world: batched draw calls, slim collision proxy, outer hills
+    maps/settlement.js    "Saltgrass", the built-in 192 m city (generated from the kit)
+    storage.js            maps in localStorage (om.maps)
   player/
     movement.js           ★ character controller — all tuning in MOVE
     cameraRig.js          look, recoil drain, FOV, bob, roll, landing/mantle feedback
@@ -47,7 +60,8 @@ src/
   ui/
     hud.js, hud.css       HUD + gunsmith styles (neo-brutalist)
     gunsmith.js           in-world attachment editor
-    menu.js               start / pause menu and settings
+    title.js              title screen: pick a mode
+    menu.js               pause menu and settings
 public/audio/             CC0 sounds — see public/audio/CREDITS.md
 tools/audio/              scripts used to slice the source recordings
 ```
@@ -55,6 +69,14 @@ tools/audio/              scripts used to slice the source recordings
 Dependencies only point downward: `core` knows nothing about the game, `world`/`player`/`weapons`
 build on `core`, `ui` reads game state, and `main.js` wires everything. Movement and gunplay never
 import each other.
+
+**Modes:** `MODES` in `main.js` lists what the title screen offers. Each builds a level
+`{ octree, spawn, targets, update(), playerAlive?, ended? }` on demand. To remove Team Deathmatch,
+delete `src/modes/tdm/` and its `MODES` entry; nothing else imports it. To remove the editor, delete
+`src/modes/editor/`, its `MODES` entry, `customWorld` and the storage import in `main.js`.
+
+**Adding an editor piece:** write a `build(color)` in `modes/editor/assets.js` (origin on the floor,
+forward −Z) and list it in `ASSETS`; it gets a library thumbnail and collision automatically.
 
 **Adding a weapon:** write a model in `weapons/models/` (scale it with an inner body group if
 needed), add a definition to `weapons.js`, and give it a fire sound in `core/audio.js`.

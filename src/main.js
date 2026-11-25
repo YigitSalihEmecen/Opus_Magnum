@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { Octree } from 'three/examples/jsm/math/Octree.js';
 import { Renderer } from './core/renderer.js';
 import { Input } from './core/input.js';
 import { AudioBank } from './core/audio.js';
@@ -13,27 +14,64 @@ import { WorldFX } from './weapons/effects.js';
 import { HUD } from './ui/hud.js';
 import { Menu } from './ui/menu.js';
 import { Gunsmith } from './ui/gunsmith.js';
+import { Title } from './ui/title.js';
+import { listMaps, getMap, hasSpawns } from './modes/editor/storage.js';
 
 const canvas = document.getElementById('game');
 const renderer = new Renderer(canvas);
 
 const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xf0eee6); // behind the title until a level sets its own
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 500);
 const vmScene = new THREE.Scene();
+const emptyScene = new THREE.Scene();
 const vmCamera = new THREE.PerspectiveCamera(54, innerWidth / innerHeight, 0.01, 10);
 
-const range = new TestRange(scene);
-const dummies = new Dummies(scene, range.dummySpots);
-const targets = [...range.raycastTargets, ...dummies.hitboxes];
+/*
+  Modes build their world on demand. A level is either
+    play:  { octree, spawn, targets, update(dt, ctx), playerAlive?, ended? }
+    owner: { frame(dt) }  — takes over the whole frame (the map editor)
+  load(mapId) gets a saved custom map's id, or null for the mode's own map.
+  TDM (src/modes/tdm/) and the editor (src/modes/editor/) are only loaded when picked: delete a folder and
+  its entry here (plus the storage import above, for the editor) to remove it.
+*/
+const customWorld = async (mapId) => (await import('./modes/editor/mapWorld.js')).buildMapWorld(scene, getMap(mapId));
+const MODES = [
+  {
+    id: 'range', index: '01 / PRACTICE', title: 'Shooting Range', short: 'Warm up and tune', builtin: 'Test Range', blurb: 'Targets, wallrun lanes, mantle steps and a slide ramp. Tune your feel and your loadout.',
+    load: async (mapId) => {
+      if (mapId && getMap(mapId)) {
+        const w = await customWorld(mapId);
+        return { octree: w.octree, spawn: w.spawn, targets: w.raycastTargets, update: () => {} };
+      }
+      const range = new TestRange(scene);
+      const dummies = new Dummies(scene, range.dummySpots);
+      return { range, dummies, octree: range.octree, spawn: range.spawn, targets: [...range.raycastTargets, ...dummies.hitboxes], update: (dt, c) => dummies.update(dt, c.camera, c.now) };
+    },
+  },
+  {
+    id: 'tdm', index: '02 / MATCH', title: 'Team Deathmatch', short: '5 v 5 against bots', builtin: 'Kiln', needsSpawns: hasSpawns,
+    blurb: 'You and four allies against five enemy bots. First team to 40 eliminations wins.',
+    load: async (mapId) => {
+      const arena = mapId && getMap(mapId) ? await customWorld(mapId) : undefined;
+      return (await import('./modes/tdm/tdm.js')).createTDM({ scene, camera, audio, mv, rig, arsenal, arena });
+    },
+  },
+  {
+    id: 'editor', index: '03 / CREATE', title: 'Map Editor', short: 'Build your own map', lock: false, blurb: 'Lay out walls, containers, cars and fences on a grid. Saved maps show up here to play.',
+    load: async () => (await import('./modes/editor/editor.js')).createEditor({ renderer, scene, canvas, onExit: () => { location.href = location.pathname; } }),
+  },
+];
+let level = null;
+let targets = [];
 
 const input = new Input(canvas);
 const audio = new AudioBank();
 const hud = new HUD(document.getElementById('hud'));
 const fx = new WorldFX(scene);
 
-const mv = new Movement(range.octree, range.spawn);
+const mv = new Movement(new Octree(), { position: new THREE.Vector3(), yaw: 0 }); // real world arrives with the level
 const rig = new CameraRig(camera);
-rig.yaw = range.spawn.yaw;
 addViewmodelLights(vmScene);
 
 // one viewmodel + gunplay per weapon; only the active one updates and renders
@@ -113,8 +151,8 @@ mv.onEvent = (name, d = {}) => {
       rig.punch(-2, 0, 2);
       break;
     case 'fellOut':
-      mv.respawn(range.spawn);
-      rig.yaw = range.spawn.yaw;
+      mv.respawn(level.spawn);
+      rig.yaw = level.spawn.yaw;
       rig.pitch = 0;
       break;
   }
@@ -130,10 +168,36 @@ const menu = new Menu(document.getElementById('menu'), {
     rig.hFov = s.fov;
     audio.setVolume(s.volume);
   },
+  onTitle: () => { location.href = location.pathname; },
 });
 menu.ready();
+menu.show(false);
+
+async function startMode(id, mapId = null) {
+  const mode = MODES.find((m) => m.id === id) ?? MODES[0];
+  title.show(false);
+  document.querySelector('#hud .brand .label').textContent = mapId ? `${mode.title} · ${getMap(mapId)?.name ?? ''}` : `${mode.title} · 0.3`;
+  level = await mode.load(mapId);
+  if (level.frame) return; // the editor drives its own frame
+  mv.octree = level.octree;
+  mv.respawn(level.spawn);
+  rig.yaw = level.spawn.yaw;
+  rig.pitch = 0;
+  targets = level.targets;
+}
+
+const title = new Title(document.getElementById('title'), {
+  modes: MODES,
+  getMaps: listMaps,
+  onPick: (id, mapId) => {
+    if (MODES.find((m) => m.id === id)?.lock !== false) input.lock(); // inside the click gesture, before the level loads
+    audio.init();
+    startMode(id, mapId);
+  },
+});
 
 function showPaused() {
+  if (!level || level.ended || level.frame) return;
   input.devMode = false;
   input.locked = false;
   menu.show(true);
@@ -156,13 +220,13 @@ document.addEventListener('pointerlockchange', () => {
 addEventListener('keydown', (e) => {
   if ((e.code === 'Escape' || e.code === 'KeyP') && input.locked && !e.repeat) pause();
 });
-input.onLockError = (err) => menu.notice(
+input.onLockError = (err) => (level ? menu : title).notice(
   err?.name === 'WrongDocumentError'
     ? `This view can't capture the mouse — open ${location.origin} in Chrome, Safari or Firefox.`
     : 'Mouse lock was blocked — wait a second and click again.',
 );
 // clicking the game view while it isn't captured (dev mode, or lock lost) recaptures the mouse
-canvas.addEventListener('click', () => { if (!input.pointerLocked) { input.lock(); audio.init(); } });
+canvas.addEventListener('click', () => { if (level && !level.frame && !level.ended && !input.pointerLocked) { input.lock(); audio.init(); } });
 
 function resize() {
   renderer.resize(innerWidth, innerHeight);
@@ -177,9 +241,18 @@ const clock = new THREE.Clock();
 const VM_FOV_HIP = 54;
 
 let now = 0;
+let wasAlive = true;
 function tick(dt) {
   now += dt;
-  const live = input.locked;
+  if (level?.frame) { level.frame(dt); input.endFrame(); return; }
+  if (!level) { renderer.render(scene, camera, emptyScene, vmCamera, {}); return; } // title: no gun yet
+  const alive = level?.playerAlive ?? true;
+  const live = input.locked && !!level && alive && !level.ended;
+  // a mode can take the player out (TDM death): lower the gun, bring it back on respawn
+  if (alive !== wasAlive) {
+    wasAlive = alive;
+    if (!alive) { vm.cancelClip(); vm.holster(true); setInspect(false); } else { vm.holster(false); gun.activate(); }
+  }
 
   if (pendingSwitch !== null && vm.lowered) {
     vm.setActive(false);
@@ -210,7 +283,7 @@ function tick(dt) {
   const cursor = vm.inspect ? { x: gunsmith.cursor.x / innerWidth * 2 - 1, y: gunsmith.cursor.y / innerHeight * 2 - 1 } : null;
   vm.update(dt, { mv, axes, mouseDX: vm.inspect ? 0 : input.mouseDX, mouseDY: vm.inspect ? 0 : input.mouseDY, ads, triggerHeld: gun.triggerHeld, cursor });
 
-  dummies.update(dt, camera, now);
+  level?.update(dt, { camera, now, gun });
   fx.update(dt, camera);
   hud.update(dt, { mv, gun, camera });
   audio.setLoops({
@@ -234,12 +307,15 @@ drawWeapon(0);
 
 window.OM = {
   get vm() { return vm; }, get gun() { return gun; }, arsenal, switchWeapon,
-  mv, rig, range, dummies, scene, vmScene, input, gunsmith, setInspect,
+  mv, rig, get level() { return level; }, scene, vmScene, input, gunsmith, setInspect, startMode,
   step: (n = 1, dt = 1 / 60) => { for (let i = 0; i < n; i++) tick(dt); },
 };
-if (new URLSearchParams(location.search).has('dev')) {
+const params = new URLSearchParams(location.search);
+if (params.has('dev')) {
+  title.show(false);
+  startMode(params.get('mode') ?? 'range', params.get('map'));
   input.devMode = true;
   input.locked = true;
   menu.show(false);
-  hud.show(true);
+  hud.show(params.get('mode') !== 'editor');
 }
