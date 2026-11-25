@@ -138,10 +138,11 @@ class Editor {
     if (this.selected === rec) this.selBox.setFromObject(this.objects.get(rec));
   }
 
-  /** Recompute everything that depends on neighbours: adaptive tiles and connectors. */
+  /** Recompute everything that depends on neighbours: adaptive tiles, floors and walls, and connectors. */
   #refresh() {
     this._ctx = null;
-    for (const r of this.map.pieces) if (assetById(r.type)?.tile) this.#rebuild(r);
+    // adaptive tiles, plus floors and walls (slab edges and wall feet adapt to each other)
+    for (const r of this.map.pieces) { const as = assetById(r.type); if (as?.tile || r.type === 'floor' || as?.link?.kind === 'wall') this.#rebuild(r); }
     this.joints.clear();
     const j = buildJoints(this.map.pieces, this.groundAt);
     if (j.children.length) this.joints.add(...j.children);

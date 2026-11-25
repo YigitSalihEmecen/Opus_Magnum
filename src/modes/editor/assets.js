@@ -87,12 +87,15 @@ export function alignUVs(obj) {
 // ───────────────────────────── walls ─────────────────────────────
 
 const WALL_H = 3.2, WALL_T = 0.3, FOUND = 2;
+/** Floor slab thickness. Walls standing on a slab reach down over its edge; slabs reach out to a wall's outer face. */
+const SLAB = 0.3;
+const FLUSH = WALL_T / 2 - 0.006; // a slab's reach past a wall's centre line: just inside its outer face (no coplanar faces)
 
 /**
  * Wall along X, exactly `len` long. holes: [{ x0, x1, y0, y1 }] (non-overlapping in x), each framed.
  * On terrain it grows a foundation so slopes never show a gap underneath.
  */
-function wall(color, ctx, { len = 4, h = WALL_H, t = WALL_T, holes = [] } = {}) {
+function wall(color, ctx, { len = 4, h = WALL_H, t = WALL_T, holes = [], drop = 0 } = {}) {
   const g = new THREE.Group();
   const L = len / 2;
   const piece = (x0, x1, y0, y1) => { if (x1 - x0 > 0.005 && y1 - y0 > 0.005) gbox(g, x1 - x0, y1 - y0, t, (x0 + x1) / 2, (y0 + y1) / 2, 0, color); };
@@ -112,6 +115,8 @@ function wall(color, ctx, { len = 4, h = WALL_H, t = WALL_T, holes = [] } = {}) 
     if (o.y0 > 0) sbox(g, o.x1 - o.x0 + 0.2, 0.09, t + 0.2, (o.x0 + o.x1) / 2, o.y0 + SILL - 0.045, 0, mat(P.ink));
   }
   if (ctx?.ground) piece(-L, L, -FOUND, 0);
+  // standing on a floor slab: cover the slab's edge so the facade runs on from the storey below
+  else if (drop || ctx?.slabUnderWall?.()) piece(-L, L, -(drop || SLAB), 0);
   // cap and kick stop a few mm short of the wall's ends, jambs and underside, so no face lies on a wall face
   const E = 0.004;
   sbox(g, len - 2 * E, 0.12, t + 0.08, 0, h + 0.06 - E, 0, mat(P.ink)); // just below a ceiling slab's underside
@@ -147,7 +152,17 @@ function pillar(color, ctx) {
 
 function floor(color, ctx, { w = 4, d = 4 } = {}) {
   const g = new THREE.Group();
-  gbox(g, w, 0.3, d, 0, 0.15, 0, color);
+  // sides with no floor next door reach out to the outer face of the wall that runs along them (or close a
+  // roof/terrace edge), so no slab edge ever shows recessed between storeys
+  let x0 = -w / 2, x1 = w / 2, z0 = -d / 2, z1 = d / 2;
+  if (ctx?.openSides && w === 4 && d === 4) {
+    const open = ctx.openSides();
+    if (open.px) x1 += FLUSH;
+    if (open.nx) x0 -= FLUSH;
+    if (open.pz) z1 += FLUSH;
+    if (open.nz) z0 -= FLUSH;
+  }
+  gbox(g, x1 - x0, SLAB, z1 - z0, (x0 + x1) / 2, SLAB / 2, (z0 + z1) / 2, color);
   if (ctx?.ground) gbox(g, w, FOUND, d, 0, -FOUND / 2, 0, color);
   return g;
 }
@@ -727,12 +742,13 @@ function spawn(color) {
 
 const LINK_PRIORITY = { wall: 4, rail: 3, picket: 2, fence: 1 };
 
-function jointPost(kind, h, t, color, ground) {
+function jointPost(kind, h, t, color, ground, onSlab = false) {
   const g = new THREE.Group();
   if (kind === 'wall') {
     const w = t + 0.16;
     gbox(g, w, h + 0.02, w, 0, (h + 0.02) / 2, 0, color);
     if (ground) gbox(g, w, FOUND, w, 0, -FOUND / 2, 0, color);
+    else if (onSlab) gbox(g, w, SLAB, w, 0, -SLAB / 2, 0, color);
     sbox(g, w + 0.06, 0.16, w + 0.06, 0, h + 0.096, 0, mat(P.ink));
     if (h > 1) sbox(g, w + 0.05, 0.18, w + 0.05, 0, 0.094, 0, mat(P.slate));
   } else if (kind === 'fence') add(g, cyl(0.065, 2.25, 12), mat(color), 0, 1.125, 0);
@@ -741,9 +757,12 @@ function jointPost(kind, h, t, color, ground) {
   return g;
 }
 
+const slabKey = (x, y, z) => `${Math.round(x * 2)}|${Math.round(y * 5)}|${Math.round(z * 2)}`;
+
 /** Endpoints of every linear piece → connectors (pillars at wall corners/tees, posts along fences). */
 export function buildJoints(records, groundAt) {
   const out = new THREE.Group();
+  const slabs = new Set(records.filter((r) => r.type === 'floor').map((r) => slabKey(r.x, r.y ?? 0, r.z)));
   const lines = [];
   for (const r of records) {
     const a = assetById(r.type);
@@ -788,7 +807,8 @@ export function buildJoints(records, groundAt) {
     const same = ends.filter((e) => e.l.kind === kind);
     const h = Math.max(...same.map((e) => e.l.h)), t = Math.max(...same.map((e) => e.l.t));
     const ground = groundAt ? Math.abs(gp.y - groundAt(gp.x, gp.z)) < 0.35 : gp.y < 0.05;
-    const post = jointPost(kind, h, t, top.l.r.color ?? top.l.a.colors[0], ground);
+    const onSlab = !ground && kind === 'wall' && [-2, 2].some((dx) => [-2, 2].some((dz) => slabs.has(slabKey(gp.x + dx, gp.y - SLAB, gp.z + dz))));
+    const post = jointPost(kind, h, t, top.l.r.color ?? top.l.a.colors[0], ground, onSlab);
     post.position.set(gp.x, gp.y, gp.z);
     post.rotation.y = Math.atan2(-top.l.dz, top.l.dx);
     alignUVs(post);
@@ -814,12 +834,13 @@ function place(g, child, x, y, z, rot = 0) { child.position.set(x, y, z); child.
 /** Ring of 4 m wall bays around a w × d footprint (centred); sides list hole presets in travel order. */
 function shell(g, color, ctx, w, d, y, { N, S, W, E }, h = WALL_H) {
   const run = (list, len, fn) => list.forEach((kind, i) => fn(-len / 2 + 2 + i * 4, kind));
-  const bay = (kind) => wall(color, y === 0 ? ctx : null, { h, holes: HOLES[kind] ?? [] }); // only ground bays get foundations
+  // only ground bays get foundations; bays standing on a slab reach down over its edge
+  const bay = (kind) => wall(color, y === 0 ? ctx : null, { h, holes: HOLES[kind] ?? [], drop: y > 0 ? SLAB : 0 });
   run(N, w, (x, k) => place(g, bay(k), x, y, -d / 2, 0));
   run(S, w, (x, k) => place(g, bay(k), x, y, d / 2, 0));
   run(W, d, (z, k) => place(g, bay(k), -w / 2, y, z, Math.PI / 2));
   run(E, d, (z, k) => place(g, bay(k), w / 2, y, z, Math.PI / 2));
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) place(g, jointPost('wall', h, WALL_T, color, ctx?.ground && y === 0), sx * w / 2, y, sz * d / 2);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) place(g, jointPost('wall', h, WALL_T, color, ctx?.ground && y === 0, y > 0), sx * w / 2, y, sz * d / 2);
 }
 
 /** Flat roof slab + parapet ring with corner posts. */
@@ -1014,6 +1035,8 @@ function room(color, ctx) {
   const H = (salt) => hash(r.x, r.y ?? 0, r.z, salt);
   const above = has(0, 0, STOREY), below = has(0, 0, -STOREY), level = Math.round((r.y ?? 0) / STOREY);
   const forced = (side) => (r.door ?? '').includes(side);
+  // a room above ground stands on a slab (the room below's ceiling, or its own floor over air): walls cover its edge
+  const onSlab = !ctx?.ground && (below || (r.y ?? 0) > 0.05);
 
   // slab overhead (the floor of the room above, or the roof), and a floor if this room overhangs air
   gbox(g, 4, 0.3, 4, 0, WALL_H + 0.15, 0, P.oat);
@@ -1025,7 +1048,7 @@ function room(color, ctx) {
       // same building (same colour): open plan. A different building: one party wall, usually with a doorway
       if (nb.color === r.color || !(side === 'E' || side === 'S')) continue;
       const kind = H(side.charCodeAt(0) + 21) < 0.35 ? 'door' : 'plain';
-      place(g, wall(color, level === 0 ? ctx : null, { holes: HOLES[kind] }), dx * 2, 0, dz * 2, dx ? Math.PI / 2 : 0);
+      place(g, wall(color, level === 0 ? ctx : null, { holes: HOLES[kind], drop: onSlab ? SLAB : 0 }), dx * 2, 0, dz * 2, dx ? Math.PI / 2 : 0);
       continue;
     }
     const terrace = has(dx * 4, dz * 4, -STOREY); // the room beside us is a storey lower: its roof is our doorstep
@@ -1039,7 +1062,7 @@ function room(color, ctx) {
     // upper walls on open air sometimes get a balcony: a door out onto a small railed slab
     const balcony = level > 0 && !terrace && !forced(side) && kind === 'plain' && H(side.charCodeAt(0) + 44) < 0.12;
     if (balcony) kind = 'door';
-    const w = wall(color, level === 0 ? ctx : null, { holes: HOLES[kind] });
+    const w = wall(color, level === 0 ? ctx : null, { holes: HOLES[kind], drop: onSlab ? SLAB : 0 });
     facade(w, color, kind, { side, level, balcony, roll: (s) => H(side.charCodeAt(0) + s) });
     place(g, w, dx * 2, 0, dz * 2, dx ? Math.PI / 2 : 0);
     // neon sign hung off an upper wall
@@ -1066,7 +1089,7 @@ function room(color, ctx) {
     if (n === 2 && !(on[0].dx !== on[1].dx && on[0].dz !== on[1].dz)) continue; // straight run: no post
     const owner = on.reduce((m, c) => (c.dx < m.dx || (c.dx === m.dx && c.dz < m.dz) ? c : m));
     if (owner.dx !== 0 || owner.dz !== 0) continue;
-    place(g, jointPost('wall', WALL_H, WALL_T, color, level === 0 && ctx?.ground), sx * 2, 0, sz * 2);
+    place(g, jointPost('wall', WALL_H, WALL_T, color, level === 0 && ctx?.ground, onSlab), sx * 2, 0, sz * 2);
   }
 
   if (!above) {
@@ -1074,11 +1097,11 @@ function room(color, ctx) {
     const top = STOREY;
     for (const [side, dx, dz] of SIDES) {
       if (has(dx * 4, dz * 4) || (r.open ?? '').includes(side)) continue;
-      place(g, wall(color, null, { h: 0.75 }), dx * 2, top, dz * 2, dx ? Math.PI / 2 : 0);
+      place(g, wall(color, null, { h: 0.75, drop: SLAB }), dx * 2, top, dz * 2, dx ? Math.PI / 2 : 0);
     }
     for (const [sx, sz, a, b] of [[-1, -1, 'W', 'N'], [1, -1, 'E', 'N'], [-1, 1, 'W', 'S'], [1, 1, 'E', 'S']]) {
       const open = (side, dx, dz) => !has(dx, dz) && !(r.open ?? '').includes(side);
-      if (open(a, sx * 4, 0) && open(b, 0, sz * 4)) place(g, jointPost('wall', 0.75, WALL_T, color, false), sx * 2, top, sz * 2);
+      if (open(a, sx * 4, 0) && open(b, 0, sz * 4)) place(g, jointPost('wall', 0.75, WALL_T, color, false, true), sx * 2, top, sz * 2);
     }
     // rooftop clutter
     const pickRoof = r.clear ? 1 : H(77);
@@ -1205,6 +1228,7 @@ export function makeContext(records, groundAt) {
   for (const r of records) {
     const a = assetById(r.type);
     if (a?.tile) tiles.set(k(r.type, r.x, r.y ?? 0, r.z), r);
+    if (r.type === 'floor') tiles.set(k('floor', r.x, r.y ?? 0, r.z), r);
     // bends expose their two end cells as road so straights snap onto them
     if (a?.ports) {
       const t = ((r.rot ?? 0) * Math.PI) / 180, c = Math.cos(t), sn = Math.sin(t);
@@ -1216,6 +1240,18 @@ export function makeContext(records, groundAt) {
     ground: groundAt ? Math.abs((rec.y ?? 0) - groundAt(rec.x, rec.z)) < 0.35 : (rec.y ?? 0) < 0.05,
     /** The neighbouring record (or true for a bend's end cell), else undefined. */
     near: (fam, dx, dz, dy = 0) => tiles.get(k(fam, rec.x + dx, (rec.y ?? 0) + dy, rec.z + dz)),
+    /** Floor only: which local sides (±x, ±z) have no floor beside them at the same level. */
+    openSides() {
+      const t = ((rec.rot ?? 0) * Math.PI) / 180, c = Math.round(Math.cos(t)), sn = Math.round(Math.sin(t));
+      const free = (lx, lz) => !tiles.get(k('floor', rec.x + lx * c + lz * sn, rec.y ?? 0, rec.z - lx * sn + lz * c));
+      return { px: free(4, 0), nx: free(-4, 0), pz: free(0, 4), nz: free(0, -4) };
+    },
+    /** Wall-family pieces only: is there a floor slab on either side whose top this wall stands on? */
+    slabUnderWall() {
+      if (assetById(rec.type)?.link?.kind !== 'wall') return false;
+      const t = ((rec.rot ?? 0) * Math.PI) / 180, nx = Math.sin(t) * 2, nz = Math.cos(t) * 2, y = (rec.y ?? 0) - SLAB;
+      return [1, -1].some((s) => tiles.get(k('floor', rec.x + nx * s, y, rec.z + nz * s)));
+    },
   });
 }
 
