@@ -78,6 +78,7 @@ export class CameraRig {
     let targetRoll = -axes.x * 1.1 * D2R;
     if (mv.state === 'wallrun') targetRoll = mv.wallSide * 12 * D2R;
     else if (mv.state === 'slide') targetRoll = 3.5 * D2R;
+    targetRoll *= 1 - ads * 0.75; // aimed, keep the horizon nearly level
     this.roll = damp(this.roll, targetRoll, mv.state === 'wallrun' ? 7 : 9, dt);
 
     // mantle dip

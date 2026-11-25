@@ -99,6 +99,8 @@ export function buildLynx() {
     parts: {
       magSocket,
       muzzleMount: k.group('muzzleMount', 0, BORE, 0.193),
+      // optic plate on the frame just over the slide top, so the slide cycles under a still sight
+      scopeMount: k.group('scopeMount', 0, 0.049, 0.035),
       stockMount: k.group('stockMount', 0, 0, 0),
       bolt, chargingHandle: slide, trigger, selector, ejectPort,
       ironRear, ironFront, ironSight: new THREE.Vector3(0, 0.0585, 0.064).multiplyScalar(SCALE),

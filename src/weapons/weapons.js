@@ -57,7 +57,7 @@ export const WEAPONS = [
       rackTravel: 0.097,
     },
     gripPoses: { none: 'lhRest', vertical: 'lhVertical', angled: 'lhAngled' },
-    vm: { hipPos: [0.105, -0.13, -0.32], hipRot: [-0.4, -0.7, 2], inspectPos: [0.07, 0.005, -0.92], boltTravel: 0.042, chTravel: 0.086, kick: 1 },
+    vm: { hipPos: [0.175, -0.19, -0.4], hipRot: [0.5, 6, 3], inspectPos: [0.07, 0.005, -0.92], boltTravel: 0.042, chTravel: 0.086, kick: 1 },
     slots: ['muzzle', 'scope', 'mag', 'grip', 'stock'],
     attachments: { muzzle: MUZZLES, scope: ALL_OPTICS, mag: ['small', 'big', 'drum'], grip: ['none', 'vertical', 'angled'], stock: STOCKS },
     defaults: { muzzle: 'comp', scope: 'holo', mag: 'big', grip: 'none', stock: 'skeleton' },
@@ -99,7 +99,7 @@ export const WEAPONS = [
       sprintPos: [0.05, 0.035, 0.04], sprintRot: [40, -14, -10], oneHand: true, // high-ready: up and out to the right
     },
     slots: ['muzzle', 'scope', 'mag', 'stock'],
-    attachments: { muzzle: MUZZLES, scope: ALL_OPTICS, mag: ['smg25', 'smg35', 'smg50'], stock: STOCKS },
+    attachments: { muzzle: ['comp', 'flash', 'smgcan'], scope: ALL_OPTICS, mag: ['smg25', 'smg35', 'smg50'], stock: STOCKS },
     defaults: { muzzle: 'flash', scope: 'reddot', mag: 'smg35', stock: 'skeleton' },
   },
   {
@@ -138,7 +138,7 @@ export const WEAPONS = [
     },
     // pump: fore-end/bolt follow the rack track; pivot = bore axis for the reload toss
     vm: {
-      hipPos: [0.114, -0.118, -0.3], hipRot: [-1.2, 0.7, 4], inspectPos: [0.08, 0.0, -0.92], boltTravel: 0.04, chTravel: 0.06, kick: 2.6,
+      hipPos: [0.18, -0.18, -0.38], hipRot: [-0.3, 6.5, 4], inspectPos: [0.08, 0.0, -0.92], boltTravel: 0.04, chTravel: 0.06, kick: 2.6,
       pump: true, pivot: [0, 0.03, 0],
     },
     slots: ['scope'],
@@ -187,8 +187,8 @@ export const WEAPONS = [
       sprintPos: [0.11, 0.04, 0.04], sprintRot: [45, -14, -10], oneHand: true, twoHandHip: true, ironAds: 0.36,
       // two-handed and centred at the hip; sprinting frees the support hand and lifts the gun up and out to the right
     },
-    slots: ['muzzle', 'mag', 'stock'],
-    attachments: { muzzle: ['pthread', 'pcan'], mag: ['p15', 'p24'], stock: ['pnone', 'pbrace'] },
-    defaults: { muzzle: 'pthread', mag: 'p15', stock: 'pnone' },
+    slots: ['muzzle', 'scope', 'mag', 'stock'],
+    attachments: { muzzle: ['pthread', 'pcan'], scope: ['piron', 'holo', 'reddot'], mag: ['p15', 'p24'], stock: ['pnone', 'pbrace'] },
+    defaults: { muzzle: 'pthread', scope: 'piron', mag: 'p15', stock: 'pnone' },
   },
 ];

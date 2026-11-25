@@ -192,12 +192,15 @@ export class Gunplay {
     const k = THREE.MathUtils.lerp(1, this.S.recoil.adsScale, this.adsEased);
     const j = this.S.recoil.jitter;
     const kv = k * this.stats.vRecoil, kh = k * this.stats.hRecoil;
-    this.rig.addRecoil((p + (Math.random() * 2 - 1) * j) * kv, -(y + (Math.random() * 2 - 1) * j) * kh);
-    this.rig.punch(p * this.S.recoil.punch * k, 0, (Math.random() * 2 - 1) * 0.5);
+    // one recoil impulse drives the aim, the camera punch and the gun kick, so what you see is where shots go
+    const rp = (p + (Math.random() * 2 - 1) * j) * kv, ry = (y + (Math.random() * 2 - 1) * j) * kh;
+    this.rig.addRecoil(rp, -ry);
+    const aimed = this.adsEased > 0.5;
+    this.rig.punch(rp * this.S.recoil.punch, -ry * this.S.recoil.punch * 0.6, aimed ? 0 : -ry * 0.5);
     this.shotIndex++;
     this.bloom = Math.min(this.S.bloom.max, this.bloom + this.S.bloom.perShot);
 
-    this.vm.fire(this.adsEased > 0.5);
+    this.vm.fire(aimed, rp, ry);
     this.audio.fire({ ads: this.adsEased > 0.5, suppressed: this.stats.suppressed, sample: this.def.sound });
     if (this.ammo === 0) this.vm.boltLocked = !this.pump;
     else if (this.pump) this.vm.playPump();

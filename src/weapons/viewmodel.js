@@ -41,6 +41,8 @@ const MAX_BEND = 42 * D2R;
 const _tk = new THREE.Vector3(), _tt = new THREE.Vector3();
 // shell-local thumb targets (shell axis +z points back at the shooter; brass head at z +0.03)
 const THUMB_KNUCKLE = [-0.014, -0.012, 0.052], THUMB_TIP = [0, -0.004, 0.034];
+const SLIDE_AIM_DIST = 2.5; // m in front of the eye where the canted bore crosses the crosshair
+const SLIDE_BORE_H = 0.05; // bore height above the gun origin (approx., all guns)
 const SHELL_PUSH = 0.016; // how far the thumb slides the shell out of the fingers
 const _back = new THREE.Vector3(), _hq = new THREE.Quaternion(), _bq = new THREE.Quaternion();
 
@@ -276,10 +278,16 @@ export class Viewmodel {
     this.onEvent('attachOut', slot);
   }
 
-  fire(ads) {
+  /**
+   * Gun kick for one shot, driven by the same recoil the aim takes (pitch up, yaw right in degrees).
+   * Aimed, the gun only slams straight back along the sight line, so the reticle stays on the shot;
+   * from the hip it also tips the way the recoil pulls.
+   */
+  fire(ads, pitch = 1, yaw = 0) {
     const s = (ads ? 0.5 : 1) * this.def.vm.kick;
-    this.kickPos.kick(rand(0.05) * s, (0.1 + Math.random() * 0.08) * s, 1.15 * s);
-    this.kickRot.kick((0.85 + Math.random() * 0.35) * s, rand(0.3) * s, rand(0.7) * s);
+    const hip = ads ? 0 : 1;
+    this.kickPos.kick(yaw * 0.035 * s * hip, 0.13 * s * hip, 1.15 * s);
+    this.kickRot.kick(0.9 * pitch * s * hip, -yaw * 0.5 * s * hip, -yaw * 0.6 * s * hip);
     this.boltCycle = 0;
     this.trigger = 1;
     if (this.flashScale > 0.01) {
@@ -352,6 +360,8 @@ export class Viewmodel {
     const mantle = mv.state === 'mantle' ? Math.sin(mv.mantleProgress * Math.PI) : 0;
     const sprint = w.sprint * (1 - ads) * (1 - ie);
     const free = (1 - ads * 0.85) * (1 - ie * 0.75);
+    // movement poses (slide cant, air, wallrun, crouch, strafe lean) are hip-only: aimed, the sight stays dead centre
+    const move = (1 - ads) * (1 - ie * 0.75);
 
     // mouse sway lags behind the view
     this.swayLag.x = damp(this.swayLag.x, THREE.MathUtils.clamp(-mouseDY * 0.0011, -0.07, 0.07), 14, dt);
@@ -379,19 +389,25 @@ export class Viewmodel {
     p.lerp(_inspect.set(this.inspectPos.x, this.inspectPos.y, this.inspectPos.z * fit), ie);
     p.y -= 0.24 * ho;
     p.y += arc * 0.05;
-    p.x += Math.sin(ph) * 0.009 * bobAmp + this.swayLag.y * -0.05 * free - w.strafe * 0.006 * free;
-    p.y += (Math.cos(ph * 2) - 1) * 0.006 * bobAmp + Math.sin(this.time * 1.7) * 0.0014 * breathe - w.air * 0.012 * free - w.crouch * 0.006 * free;
-    p.y += -0.13 * mantle - w.slide * 0.012 * free;
-    p.z += w.slide * 0.012 * free;
+    p.x += Math.sin(ph) * 0.009 * bobAmp + this.swayLag.y * -0.05 * free - w.strafe * 0.006 * move;
+    p.y += (Math.cos(ph * 2) - 1) * 0.006 * bobAmp + Math.sin(this.time * 1.7) * 0.0014 * breathe - w.air * 0.012 * move - w.crouch * 0.006 * move;
+    // slide: cant the gun inward on its side, pulled toward the centre and down (eased in and out)
+    const sl = w.slide * w.slide * (3 - 2 * w.slide) * move;
+    p.x -= sl * 0.03;
+    p.y += -0.13 * mantle - sl * 0.024;
+    p.z += sl * 0.02;
     p.add(kp);
 
     const hipK = 1 - ads;
     const HIP_ROT = this.hipRot;
     const SPRINT_ROT = this.sprintRot;
-    const rx = -42 * D2R * ho + HIP_ROT.x * hipK + SPRINT_ROT.x * sprint + this.swayLag.x * free + (Math.cos(ph * 2) * 0.6 * D2R) * bobAmp + w.air * 3 * D2R * free - 26 * D2R * mantle + Math.sin(this.time * 1.1) * 0.25 * D2R * breathe;
-    const ry = HIP_ROT.y * hipK + SPRINT_ROT.y * sprint + this.swayLag.y * free;
-    const rz = HIP_ROT.z * hipK + SPRINT_ROT.z * sprint + this.swayLag.y * 0.8 * free + Math.sin(ph) * 1.8 * D2R * bobAmp - w.strafe * 3 * D2R * free
-      - w.slide * 11 * D2R * free + w.wall * 7 * D2R * free + 12 * D2R * mantle;
+    let rx = -42 * D2R * ho + HIP_ROT.x * hipK + SPRINT_ROT.x * sprint + this.swayLag.x * free + (Math.cos(ph * 2) * 0.6 * D2R) * bobAmp + w.air * 3 * D2R * move - 26 * D2R * mantle + Math.sin(this.time * 1.1) * 0.25 * D2R * breathe;
+    // while canted for a slide, swap the hip angles for ones that point the bore at the crosshair
+    const aimDist = SLIDE_AIM_DIST + p.z;
+    rx += sl * (Math.atan2(-(p.y + SLIDE_BORE_H), aimDist) - HIP_ROT.x * hipK);
+    const ry = HIP_ROT.y * hipK + SPRINT_ROT.y * sprint + this.swayLag.y * free + sl * (Math.atan2(p.x, aimDist) - HIP_ROT.y * hipK);
+    const rz = HIP_ROT.z * hipK + SPRINT_ROT.z * sprint + this.swayLag.y * 0.8 * free + Math.sin(ph) * 1.8 * D2R * bobAmp - w.strafe * 3 * D2R * move
+      + sl * 28 * D2R + w.wall * 7 * D2R * move + 12 * D2R * mantle;
     // while inspecting, the gun leans toward the cursor
     const cx = cursor ? cursor.x : 0, cy = cursor ? cursor.y : 0;
     this.sway.rotation.set(
@@ -443,7 +459,7 @@ export class Viewmodel {
     // one-handed guns park the support hand out of frame; hide it there so sprint tilts can't swing it into view
     const parked = this.def.vm.oneHand && this.twoHand < 0.02 && run < 0.05;
     this.leftHand.visible = ie < 0.5 && !parked;
-    this.leftArm.mesh.visible = ie < 0.5 && !parked && !this.aimedHidden;
+    this.leftArm.mesh.visible = ie < 0.5 && !parked;
 
     // mechanical parts
     this.boltCycle = Math.min(1, this.boltCycle + dt / 0.075);
@@ -472,17 +488,13 @@ export class Viewmodel {
 
     this.#updateSwaps(dt);
 
-    // magnified optics: hide the scope body beyond the eyepiece once fully aimed
-    const aimed = ads > 0.92 && !this.swaps.scope && !!o.shadow;
-    if (aimed !== this.aimedHidden) {
-      this.aimedHidden = aimed;
-      const scopeObj = this.attached.scope?.obj;
-      for (const r of [this.model, this.rightHand, this.leftHand, this.rightArm.mesh, this.leftArm.mesh]) r.traverse((c) => {
-        if (!c.isMesh) return;
-        let inScope = false;
-        for (let p = c; p; p = p.parent) if (p === scopeObj) { inScope = true; break; }
-        if (!inScope || c.userData.adsHide) c.visible = !aimed;
-      });
+    // magnified optics: open the eyepiece portal once mostly aimed so the view runs clean through the scope
+    const aimed = ads > 0.5 && !this.swaps.scope && !!o.shadow;
+    const scopeObj = this.attached.scope?.obj;
+    if (aimed !== this.portalOpen || scopeObj !== this.portalScope) {
+      this.portalOpen = aimed;
+      this.portalScope = scopeObj;
+      scopeObj?.traverse((c) => { if (c.userData.adsPortal) c.visible = aimed; });
     }
 
     // flash
