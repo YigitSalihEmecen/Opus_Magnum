@@ -157,25 +157,78 @@ export class AudioBank {
     }
   }
 
-  /** Hit confirmation blips. kind: 'body' | 'head' | 'kill' */
-  hit(kind) {
+  /** Gently saturating bus for hit feedback: glues the layers into one solid transient. */
+  #hitBus() {
+    if (this.bus) return this.bus;
+    const ctx = this.ctx;
+    const shaper = ctx.createWaveShaper();
+    const curve = new Float32Array(1024);
+    for (let i = 0; i < curve.length; i++) { const x = (i / 511.5) - 1; curve[i] = Math.tanh(x * 1.6) / Math.tanh(1.6); }
+    shaper.curve = curve;
+    shaper.oversample = '2x';
+    const out = ctx.createGain();
+    out.gain.value = 1.1;
+    shaper.connect(out).connect(this.master);
+    return (this.bus = shaper);
+  }
+
+  /**
+   * Hit confirmation, made only from shaped noise (no pitched partials, so nothing rings like a can):
+   *   body — "thwip": a ~35 ms noise burst whose band-pass sweeps fast downward, over a short meaty thud
+   *   head — the thwip plus a crisp, dry high tick, so it reads differently at a glance-free listen
+   *   kill — "thwip-THUD": a heavier, lower thwip, a big low-passed body impact with a sub drop, a grainy
+   *          crunch (a few micro-bursts), and a short airy tail that makes it feel final
+   * Approach after Call of Duty's hit sound (moved from "tick" toward "a bullet hitting somebody") and
+   * Valorant's distinct headshot / kill layers.
+   */
+  hit(kind, head = kind === 'head') {
     if (!this.ready) return;
     const ctx = this.ctx;
     const t = ctx.currentTime;
-    const blip = (freq, at, dur, amp, type = 'triangle') => {
-      const o = ctx.createOscillator();
+    const bus = this.#hitBus();
+    const kill = kind === 'kill';
+    const burst = (at, dur, type, f0, f1, q, amp, attack = 0.001) => {
+      const src = ctx.createBufferSource();
+      src.buffer = this.noise;
+      const f = ctx.createBiquadFilter();
+      f.type = type;
+      f.Q.value = q;
+      f.frequency.setValueAtTime(f0, t + at);
+      f.frequency.exponentialRampToValueAtTime(f1, t + at + dur);
       const g = ctx.createGain();
-      o.type = type;
-      o.frequency.value = freq;
-      g.gain.setValueAtTime(amp, t + at);
+      g.gain.setValueAtTime(0.0001, t + at);
+      g.gain.exponentialRampToValueAtTime(amp, t + at + attack);
       g.gain.exponentialRampToValueAtTime(0.0001, t + at + dur);
-      o.connect(g).connect(this.master);
-      o.start(t + at);
-      o.stop(t + at + dur + 0.01);
+      src.connect(f).connect(g).connect(bus);
+      src.start(t + at, Math.random() * 1.5);
+      src.stop(t + at + dur + 0.02);
     };
-    if (kind === 'head') { blip(2600, 0, 0.05, 0.16); blip(3900, 0.03, 0.08, 0.12); }
-    else if (kind === 'kill') { blip(520, 0, 0.18, 0.25, 'square'); blip(1560, 0.04, 0.2, 0.12); }
-    else blip(1900, 0, 0.04, 0.12);
+    const sub = (at, f0, f1, dur, amp) => {
+      const o = ctx.createOscillator();
+      o.frequency.setValueAtTime(f0, t + at);
+      o.frequency.exponentialRampToValueAtTime(f1, t + at + dur);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t + at);
+      g.gain.exponentialRampToValueAtTime(amp, t + at + 0.003);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + at + dur);
+      o.connect(g).connect(bus);
+      o.start(t + at);
+      o.stop(t + at + dur + 0.02);
+    };
+    const v = 0.9 + Math.random() * 0.2; // small per-hit variation
+
+    if (kill) {
+      burst(0, 0.05, 'bandpass', 3000 * v, 600, 1.3, 0.9);          // heavy thwip
+      burst(0.012, 0.13, 'lowpass', 900, 160, 0.8, 1.1, 0.003);     // body impact (meat of it)
+      sub(0.012, 95 * v, 38, 0.2, 0.75);                             // weight
+      for (let i = 0; i < 4; i++) burst(0.02 + i * 0.011, 0.012, 'bandpass', 1700 + i * 260, 1200, 1.8, 0.55 - i * 0.1); // crunch grains
+      burst(0.03, 0.26, 'highpass', 2400, 1600, 0.5, 0.12, 0.01);   // short airy tail
+    } else {
+      burst(0, 0.035, 'bandpass', 3600 * v, 1000, 1.5, 1.05);       // thwip
+      burst(0.006, 0.05, 'lowpass', 700, 220, 0.8, 0.85, 0.002);     // thud under it
+      sub(0.006, 120, 70, 0.045, 0.5);
+    }
+    if (head) burst(0.002, 0.009, 'highpass', 5200, 5200, 0.8, 0.7); // dry tick
   }
 
   setVolume(v) {

@@ -1,10 +1,11 @@
 const CONTROLS = [
   ['WASD', 'Move'], ['Mouse', 'Look'], ['Space', 'Jump · wall-jump'], ['Shift', 'Sprint (toggle)'],
   ['C / Ctrl', 'Crouch · slide'], ['LMB', 'Fire'], ['RMB', 'Aim down sights'], ['R', 'Reload'],
-  ['1 – 4', 'Switch weapon'], ['F', 'Gunsmith'], ['B', 'Fire mode'], ['Esc / P', 'Pause · settings'],
+  ['1 – 5', 'Switch weapon'], ['F', 'Gunsmith'], ['B', 'Fire mode'], ['Tab', 'Scoreboard'], ['Esc / P', 'Pause · settings'],
 ];
 
-const DEFAULTS = { sensitivity: 1.0, fov: 104, volume: 0.8 };
+const DEFAULTS = { sensitivity: 1.0, fov: 104, volume: 0.8, graphics: 'high' };
+const GRAPHICS = ['low', 'medium', 'high'];
 
 function load() {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('om.settings') ?? '{}') }; } catch { return { ...DEFAULTS }; }
@@ -29,6 +30,8 @@ export class Menu {
           ${slider('sensitivity', 'Sensitivity', 0.2, 3, 0.05)}
           ${slider('fov', 'Field of view', 80, 120, 1)}
           ${slider('volume', 'Volume', 0, 1, 0.05)}
+          <div class="seg-field"><span class="label"><span>Graphics</span><output class="gfx-note">Visuals only</output></span>
+            <div class="seg" role="radiogroup" aria-label="Graphics">${GRAPHICS.map((g) => `<button type="button" role="radio" data-gfx="${g}">${g}</button>`).join('')}</div></div>
         </div>
         <div class="actions">
           <button class="btn" type="button">Loading…</button>
@@ -51,6 +54,16 @@ export class Menu {
         onSettings(this.settings);
       });
     });
+    const segs = root.querySelectorAll('[data-gfx]');
+    const mark = () => segs.forEach((b) => b.setAttribute('aria-checked', String(b.dataset.gfx === this.settings.graphics)));
+    segs.forEach((b) => b.addEventListener('click', () => {
+      this.settings.graphics = b.dataset.gfx;
+      mark();
+      save(this.settings);
+      onSettings(this.settings);
+    }));
+    if (!GRAPHICS.includes(this.settings.graphics)) this.settings.graphics = 'high';
+    mark();
     onSettings(this.settings);
   }
 

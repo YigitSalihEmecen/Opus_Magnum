@@ -45,16 +45,29 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--pampas
 
 .hitmarker { position: absolute; left: 50%; top: 50%; width: 0; height: 0; opacity: 0; }
 .hitmarker i { position: absolute; width: 11px; height: 2.5px; left: -5.5px; top: -1.25px; background: var(--ivory); outline: 1.5px solid var(--ink); }
-.hitmarker i:nth-child(1) { transform: rotate(45deg) translateX(-10px); }
-.hitmarker i:nth-child(2) { transform: rotate(135deg) translateX(-10px); }
-.hitmarker i:nth-child(3) { transform: rotate(225deg) translateX(-10px); }
-.hitmarker i:nth-child(4) { transform: rotate(315deg) translateX(-10px); }
-.hitmarker.on { animation: hit 0.22s ease-out; }
-.hitmarker.head i { background: var(--clay); }
-.hitmarker.kill i { background: var(--clay); width: 16px; left: -8px; }
-.hitmarker.kill.on { animation: kill 0.42s cubic-bezier(.2,1.6,.4,1); }
-@keyframes hit { 0% { opacity: 1; transform: scale(1.35); } 100% { opacity: 0; transform: scale(1); } }
-@keyframes kill { 0% { opacity: 1; transform: scale(0.6) rotate(0deg); } 60% { opacity: 1; transform: scale(1.25) rotate(8deg); } 100% { opacity: 0; transform: scale(1.1) rotate(8deg); } }
+.hitmarker i:nth-of-type(1) { transform: rotate(45deg) translateX(-10px); }
+.hitmarker i:nth-of-type(2) { transform: rotate(135deg) translateX(-10px); }
+.hitmarker i:nth-of-type(3) { transform: rotate(225deg) translateX(-10px); }
+.hitmarker i:nth-of-type(4) { transform: rotate(315deg) translateX(-10px); }
+/* hit: white tick that pops in · head: amber · kill: thick red X with a shock ring · head kill: amber X + ring */
+.hitmarker { --hm: var(--ivory); }
+.hitmarker.head { --hm: #f4b740; }
+.hitmarker.kill { --hm: #e8462e; }
+.hitmarker.kill.head { --hm: #f4b740; }
+.hitmarker i { background: var(--hm); }
+.hitmarker b { position: absolute; left: -14px; top: -14px; width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--hm); box-shadow: 0 0 0 1.5px var(--ink), inset 0 0 0 1.5px var(--ink); opacity: 0; }
+.hitmarker.on { animation: hit 0.24s cubic-bezier(.2,1.8,.4,1); }
+.hitmarker.head i { width: 13px; left: -6.5px; height: 3px; }
+.hitmarker.kill i { width: 18px; left: -9px; height: 4px; top: -2px; outline-width: 2px; }
+.hitmarker.kill.on { animation: kill 0.55s cubic-bezier(.2,1.6,.4,1); }
+.hitmarker.kill.on b { animation: killring 0.45s ease-out; }
+@keyframes hit { 0% { opacity: 1; transform: scale(1.6); } 35% { opacity: 1; transform: scale(0.95); } 100% { opacity: 0; transform: scale(1); } }
+@keyframes kill { 0% { opacity: 1; transform: scale(0.5) rotate(-10deg); } 30% { opacity: 1; transform: scale(1.35) rotate(6deg); } 70% { opacity: 1; transform: scale(1.15) rotate(6deg); } 100% { opacity: 0; transform: scale(1.1) rotate(6deg); } }
+@keyframes killring { 0% { opacity: 1; transform: scale(0.4); } 100% { opacity: 0; transform: scale(2.2); } }
+.killflash { position: absolute; inset: 0; pointer-events: none; opacity: 0; background: radial-gradient(ellipse at center, transparent 55%, rgba(232, 70, 46, 0.32) 100%); }
+.killflash.head { background: radial-gradient(ellipse at center, transparent 55%, rgba(244, 183, 64, 0.34) 100%); }
+.killflash.on { animation: killflash 0.5s ease-out; }
+@keyframes killflash { 0% { opacity: 1; } 100% { opacity: 0; } }
 
 .dmg { position: absolute; font: 800 17px/1 var(--mono); color: var(--ivory); -webkit-text-stroke: 1px var(--ink); paint-order: stroke fill; text-shadow: 2px 2px 0 var(--ink); white-space: nowrap; transform: translate(-50%, -50%); }
 .dmg.head { color: var(--clay); font-size: 21px; }
@@ -116,6 +129,12 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--pampas
 .settings label { display: grid; gap: 8px; }
 .settings .label { display: flex; justify-content: space-between; color: var(--ink); }
 .settings output { color: var(--clay); }
+.seg-field { display: grid; gap: 8px; }
+.seg-field .label { display: flex; justify-content: space-between; color: var(--ink); }
+.seg { display: grid; grid-template-columns: repeat(3, 1fr); border: 2px solid var(--ink); }
+.seg button { font: 700 11px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; padding: 7px 0; background: var(--pampas); color: var(--ink); border: none; border-left: 2px solid var(--ink); cursor: pointer; }
+.seg button:first-child { border-left: none; }
+.seg button[aria-checked='true'] { background: var(--ink); color: var(--ivory); }
 input[type='range'] { -webkit-appearance: none; appearance: none; width: 100%; height: 8px; background: var(--pampas); border: 2px solid var(--ink); }
 input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 20px; background: var(--clay); border: 2px solid var(--ink); cursor: pointer; }
 input[type='range']::-moz-range-thumb { width: 14px; height: 18px; background: var(--clay); border: 2px solid var(--ink); border-radius: 0; }
@@ -273,3 +292,21 @@ body:has(#title[hidden]) .char-pick { display: none; }
 .char.on { background: var(--ivory); box-shadow: 5px 5px 0 var(--clay); outline: 2.5px solid var(--clay); outline-offset: -2.5px; }
 .char-pick .hint { margin-top: 2px; }
 @media (max-width: 720px) { .char-pick { top: auto; bottom: 16px; right: 16px; width: 170px; } .char .char-blurb, .char-pick .hint { display: none; } }
+
+/* hold-Tab scoreboard */
+.scoreboard { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none; z-index: 20; }
+.scoreboard[hidden] { display: none; }
+.scoreboard section { width: min(640px, calc(100% - 32px)); padding: 18px 20px 16px; display: grid; gap: 14px; }
+.sb-head { display: flex; justify-content: space-between; }
+.sb-team { display: grid; gap: 2px; }
+.sb-team-head { display: flex; justify-content: space-between; align-items: baseline; padding: 0 10px 6px; border-bottom: 2.5px solid var(--ink); margin-bottom: 4px; }
+.sb-team-head b { font: italic 600 22px/1 var(--serif); }
+.sb-team.ally .sb-team-head { border-color: var(--sky, #9fb4c7); }
+.sb-team.enemy .sb-team-head { border-color: var(--clay); }
+.sb-score { font: 800 26px/1 var(--mono); }
+.sb-row { display: grid; grid-template-columns: 1fr 52px 52px; padding: 6px 10px; font: 500 14px/1 var(--sans); }
+.sb-row span:not(:first-child) { text-align: right; font: 700 14px/1 var(--mono); }
+.sb-cols { font: 600 10px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--cloud); padding-top: 2px; padding-bottom: 4px; }
+.sb-cols span:not(:first-child) { font: 600 10px/1 var(--mono); }
+.sb-row.you { background: var(--ink); color: var(--ivory); }
+.sb-row.dead { opacity: 0.5; }

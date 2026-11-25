@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { PALETTE as P, toon } from '../core/toon.js';
 
 /*
@@ -101,8 +102,8 @@ export function buildHand(m, { left = false, name = left ? 'hand_L' : 'hand_R', 
   part(body, ball(0.027), m.metal); // wrist ball
   part(body, rb(0.084, 0.032, 0.074, 0.01), m.dark, [0, 0, -0.06]);
   part(body, rb(0.078, 0.012, 0.056, 0.005), skin, [0, 0.02, -0.062]); // back plate
-  part(body, rb(0.07, 0.01, 0.02, 0.004), m.trim, [0, 0.018, -0.094]); // knuckle bar
-  part(body, cyl(0.012, 0.08, 10, 'x'), m.metal, [0, -0.002, -0.094]); // knuckle axle
+  part(body, rb(0.07, 0.012, 0.02, 0.004), m.trim, [0, 0.025, -0.094]); // knuckle bar
+  part(body, cyl(0.0062, 0.064, 10, 'x'), m.metal, [0, 0.002, -0.094]); // knuckle axle
 
   const fingers = [];
   [-0.028, -0.0095, 0.0095, 0.028].forEach((x, i) => {
@@ -112,7 +113,7 @@ export function buildHand(m, { left = false, name = left ? 'hand_L' : 'hand_R', 
     lens.forEach((len, j) => {
       const jt = bone(`finger${i}_${j}${left ? '_L' : '_R'}`, parent, j === 0 ? x : 0, j === 0 ? 0.002 : 0, z);
       part(jt, rb(0.019 - j * 0.0015, 0.019 - j * 0.0015, len + 0.004, 0.005), j === 2 ? skin : m.dark, [0, 0, -len / 2]);
-      if (j < 2) part(jt, cyl(0.0075, 0.021, 8, 'x'), m.metal, [0, 0, -len - 0.003]);
+      if (j < 2) part(jt, cyl(0.0058, 0.012, 8, 'x'), m.metal, [0, 0, -len - 0.003]); // pin, ends tucked inside the segment
       joints.push(jt);
       parent = jt;
       z = -len - 0.006;
@@ -157,17 +158,21 @@ const _la = new THREE.Vector3();
  * the rod pivots on B and points back into the barrel, so it telescopes as the joint moves.
  * Returns the per-frame update (needs current world matrices).
  */
-export function ram(m, a, pa, b, pb, { r = 0.015, len = 0.18, lug = [0, 0] } = {}) {
+/**
+ * Size `len` (barrel) under the joint's shortest anchor spacing and `rodLen` + `len` over its longest, so the
+ * rod never leaves the barrel and never pokes out of its far end.
+ */
+export function ram(m, a, pa, b, pb, { r = 0.015, len = 0.18, rodLen = len, lug = [0, 0] } = {}) {
   // mounting lugs bridge each pivot eye to the surface it's bolted to (dz toward that surface)
   [[a, pa, lug[0]], [b, pb, lug[1]]].forEach(([bn, p, l]) => {
     const [dx, dz] = Array.isArray(l) ? l : [0, l];
-    if (dx) part(bn, rb(Math.abs(dx) + r, r * 2.4, r * 1.6, 0.004), m.dark, [p[0] + dx / 2, p[1], p[2]]);
-    if (dz) part(bn, rb(r * 1.6, r * 2.4, Math.abs(dz) + r, 0.004), m.dark, [p[0], p[1], p[2] + dz / 2]);
+    if (dx) part(bn, rb(Math.abs(dx) + r * 0.4, r * 2.4, r * 1.6, 0.004), m.dark, [p[0] + dx / 2, p[1], p[2]]);
+    if (dz) part(bn, rb(r * 1.6, r * 2.4, Math.abs(dz) + r * 0.4, 0.004), m.dark, [p[0], p[1], p[2] + dz / 2]);
   });
   const barrel = part(a, cyl(r, len, 14).translate(0, len / 2, 0), m.dark, pa);
   part(barrel, ball(r * 1.3), m.metal);
-  part(barrel, cyl(r * 1.15, 0.016, 14), m.trim, [0, len - 0.008, 0]); // gland
-  const rod = part(b, cyl(r * 0.5, len, 10).translate(0, len / 2, 0), m.metal, pb);
+  part(barrel, cyl(r * 1.15, 0.016, 14), m.trim, [0, len - 0.005, 0]); // gland, standing proud of the barrel end
+  const rod = part(b, cyl(r * 0.5, rodLen, 10).translate(0, rodLen / 2, 0), m.metal, pb);
   part(rod, ball(r * 1.2), m.metal);
   return () => {
     for (const [from, to, other, otherAt] of [[a, barrel, b, pb], [b, rod, a, pa]]) {
@@ -189,7 +194,7 @@ export function buildArm(m, side) {
   part(upper, ext([[-0.0505, -0.07], [0.0505, -0.07], [0.0495, -0.1], [-0.0495, -0.1]], 0.104, { axis: 'z', bevel: 0.005 }), m.trim);
   // elbow clevis: two cheek plates hang off the upper arm, the axle caps close them
   for (const x of [-1, 1]) {
-    part(upper, rb(0.014, 0.1, 0.08, 0.006), m.dark, [x * 0.049, -0.255, 0]);
+    part(upper, rb(0.014, 0.1, 0.068, 0.006), m.dark, [x * 0.049, -0.255, 0]);
     part(upper, cyl(0.04, 0.018, 18, 'x'), m.trim, [x * 0.049, -DIMS.upper, 0]);
   }
 
@@ -212,6 +217,7 @@ export function buildArm(m, side) {
 const _x = new THREE.Vector3(), _y = new THREE.Vector3(), _z = new THREE.Vector3();
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _pq = new THREE.Quaternion();
 const _S = new THREE.Vector3(), _E = new THREE.Vector3(), _d = new THREE.Vector3(), _u = new THREE.Vector3();
+const _W = new THREE.Vector3(), _Wr = new THREE.Vector3(), _S2 = new THREE.Vector3(), _E2 = new THREE.Vector3(), _hq = new THREE.Quaternion();
 
 /** World rotation for a limb bone running from a to b (its local -Y) that hinges about `hinge` (its local X). */
 function limbQuat(a, b, hinge, out) {
@@ -249,7 +255,7 @@ export function poseArm(arm, shoulder, elbow, wrist, handQuat, pole) {
 export function reachArm(arm, target, pole) {
   const a = arm.dims.upper, b = arm.dims.fore;
   arm.upper.getWorldPosition(_S);
-  const W = new THREE.Vector3().setFromMatrixPosition(target);
+  const W = _W.setFromMatrixPosition(target);
   const dir = _d.subVectors(W, _S);
   const dist = THREE.MathUtils.clamp(dir.length(), 0.05, a + b - 1e-4);
   dir.normalize();
@@ -257,9 +263,9 @@ export function reachArm(arm, target, pole) {
   const u = _u.subVectors(pole, _S);
   u.addScaledVector(dir, -u.dot(dir)).normalize();
   _E.copy(_S).addScaledVector(dir, a * cosA).addScaledVector(u, a * Math.sqrt(Math.max(0, 1 - cosA * cosA)));
-  const wrist = new THREE.Vector3().copy(_S).addScaledVector(dir, dist);
-  target.decompose(_x, _q, _y);
-  poseArm(arm, _S.clone(), _E.clone(), wrist, _q.clone(), pole);
+  const wrist = _Wr.copy(_S).addScaledVector(dir, dist);
+  target.decompose(_x, _hq, _y);
+  poseArm(arm, _S2.copy(_S), _E2.copy(_E), wrist, _hq, pole);
 }
 
 // ───────────────────────────── body ─────────────────────────────
@@ -287,7 +293,7 @@ export function buildRobot({ scheme = SCHEMES.player } = {}) {
   // pelvis: chamfered block, waist turntable on top, a salvaged pouch bolted to the right hip
   part(hips, ext([[-0.1, 0.03], [0.09, 0.03], [0.105, -0.02], [0.07, -0.1], [-0.08, -0.1], [-0.105, -0.04]], 0.3, { bevel: 0.02 }), m.shell);
   part(hips, cyl(0.1, 0.05, 28), m.dark, [0, 0.055, 0]);
-  part(hips, cyl(0.104, 0.014, 28), m.trim, [0, 0.038, 0]);
+  part(hips, cyl(0.104, 0.014, 28), m.trim, [0, 0.043, 0]);
   part(hips, rb(0.05, 0.085, 0.13, 0.014), m.patch, [-0.172, -0.03, -0.01]);
 
   // abdomen: load column inside an accordion boot
@@ -337,7 +343,7 @@ export function buildRobot({ scheme = SCHEMES.player } = {}) {
     const s = side > 0 ? 'L' : 'R';
     const thigh = bone(`thigh_${s}`, hips, side * D.hipX, -0.07, 0);
     part(thigh, ball(0.058), m.metal);
-    part(thigh, rb(0.1, 0.26, 0.12, 0.02), m.dark, [0, -0.2, 0]);
+    part(thigh, rb(0.1, 0.24, 0.11, 0.02), m.dark, [0, -0.2, 0]);
     part(thigh, ext([[-0.08, -0.05], [0.085, -0.05], [0.095, -0.2], [0.07, -0.34], [-0.06, -0.34], [-0.085, -0.2]], 0.13, {
       bevel: 0.016, holes: [slot(-0.03, 0.045, -0.235, 0.011), slot(-0.03, 0.045, -0.275, 0.011)],
     }), m.shell);
@@ -351,12 +357,12 @@ export function buildRobot({ scheme = SCHEMES.player } = {}) {
     part(shin, cyl(0.042, 0.096, 18, 'x'), m.dark);
     part(shin, ext([[-0.045, -0.03], [0.06, -0.03], [0.088, -0.12], [0.07, -0.25], [0.058, -0.35], [-0.042, -0.35], [-0.05, -0.2]], 0.096, { bevel: 0.014 }), side > 0 ? m.patch : m.shell);
     part(shin, cyl(0.04, 0.05, 16), m.dark, [0, -0.37, 0]);
-    links.push(ram(m, thigh, [0, -0.13, -0.11], shin, [0, -0.13, -0.075], { r: 0.02, len: 0.24, lug: [0.028, 0.03] }));
+    links.push(ram(m, thigh, [0, -0.13, -0.11], shin, [0, -0.13, -0.075], { r: 0.02, len: 0.22, rodLen: 0.22, lug: [0.028, 0.03] }));
 
     const foot = bone(`foot_${s}`, shin, 0, -D.shin, 0);
     part(foot, ball(0.038), m.metal);
     part(foot, ext([[-0.085, -0.02], [0.17, -0.02], [0.185, 0.004], [0.09, 0.033], [-0.07, 0.03], [-0.09, 0.01]], 0.13, { bevel: 0.012 }), m.shell);
-    part(foot, ext([[0.115, -0.02], [0.172, -0.02], [0.187, 0.004], [0.13, 0.024]], 0.134, { bevel: 0.005 }), m.trim);
+    part(foot, ext([[0.115, -0.018], [0.176, -0.018], [0.192, 0.006], [0.13, 0.027]], 0.136, { bevel: 0.005 }), m.trim);
     part(foot, ext([[-0.09, -0.035], [0.18, -0.035], [0.19, -0.016], [-0.095, -0.016]], 0.14, { bevel: 0.005 }), m.rubber);
     legs[s] = { thigh, shin, foot };
   }
@@ -364,8 +370,70 @@ export function buildRobot({ scheme = SCHEMES.player } = {}) {
   return finishRobot({ root, arms, legs, links, mats: m, dims: D });
 }
 
-/** Common tail of every character builder: bone map, skeleton, hit zones (head = neck and above), rams. */
+// ───────────────────────────── baking ─────────────────────────────
+
+const _bm = new THREE.Matrix4();
+
+/** Geometry in `space`'s frame with the material colour written per vertex (so differently coloured parts share one material). */
+function coloured(mesh, matrix) {
+  const g = (mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone()).applyMatrix4(matrix);
+  for (const k of Object.keys(g.attributes)) if (!['position', 'normal'].includes(k)) g.deleteAttribute(k);
+  const c = mesh.material.color, n = g.attributes.position.count, col = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) col.set([c.r, c.g, c.b], i * 3);
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return g;
+}
+
+/**
+ * Draw-call reduction for a whole character: every rigid leaf mesh is merged into one mesh per parent (bone,
+ * mirror group, or ram barrel/rod), coloured per vertex through one shared toon material. Same triangles in
+ * the same places, so silhouettes and hitboxes are unchanged; only the draw count drops (~230 → ~80 a robot).
+ * Glowing (unlit) parts are left as they are.
+ */
+export function bakeParts(root) {
+  const mat = toon(0xffffff, { rim: 0.25, vertexColors: true });
+  const nodes = [];
+  root.traverse((o) => nodes.push(o));
+  for (const node of nodes) {
+    const leaves = node.children.filter((c) => c.isMesh && !c.children.length && c.material.isMeshToonMaterial && c.visible);
+    const self = node.isMesh && node.material.isMeshToonMaterial;
+    if (leaves.length + (self ? 1 : 0) < 2) continue;
+    const geos = leaves.map((m) => { m.updateMatrix(); return coloured(m, m.matrix); });
+    if (self) geos.unshift(coloured(node, _bm.identity()));
+    const merged = mergeGeometries(geos);
+    for (const m of leaves) node.remove(m);
+    if (self) { node.geometry = merged; node.material = mat; }
+    else { const m = new THREE.Mesh(merged, mat); m.castShadow = true; node.add(m); }
+  }
+  // every lit material still in use (for the hit flash)
+  const mats = new Set();
+  root.traverse((o) => { if (o.isMesh && o.material.emissive) mats.add(o.material); });
+  return [...mats];
+}
+
+/**
+ * Flatten a static model (a third-person gun) into one vertex-coloured mesh in `root`'s frame. Non-mesh nodes
+ * (mounts, the muzzle socket) stay where they are; hidden, unlit and FX-layer meshes are left alone.
+ */
+export function bakeFlat(root) {
+  root.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
+  const meshes = [];
+  root.traverse((o) => { if (o.isMesh && o.material.isMeshToonMaterial && !o.material.transparent && o.layers.mask === 1 && o.visible && !o.children.length) meshes.push(o); });
+  let vis = true;
+  for (const m of meshes) { vis = true; for (let p = m; p && p !== root; p = p.parent) if (!p.visible) vis = false; m.userData.bakeVisible = vis; }
+  const keep = meshes.filter((m) => m.userData.bakeVisible);
+  if (keep.length < 2) return;
+  const merged = mergeGeometries(keep.map((m) => coloured(m, _bm.multiplyMatrices(inv, m.matrixWorld))));
+  for (const m of keep) m.parent.remove(m);
+  const mesh = new THREE.Mesh(merged, toon(0xffffff, { rim: 0.3, rimColor: 0xfff3e8, vertexColors: true }));
+  mesh.castShadow = true;
+  root.add(mesh);
+}
+
+/** Common tail of every character builder: bake, bone map, skeleton, hit zones (head = neck and above), rams. */
 export function finishRobot({ root, links, ...rest }) {
+  const baked = bakeParts(root);
   const bones = {};
   root.traverse((o) => { if (o.isBone) bones[o.name] = o; });
   const skeleton = new THREE.Skeleton(Object.values(bones));
@@ -379,7 +447,7 @@ export function finishRobot({ root, links, ...rest }) {
   });
   const update = () => { root.updateMatrixWorld(true); for (const l of links) l(); };
   update();
-  return { root, bones, skeleton, hitboxes, update, ...rest };
+  return { root, bones, skeleton, hitboxes, update, flashMats: baked, ...rest };
 }
 
 // ───────────────────────────── holding a gun ─────────────────────────────

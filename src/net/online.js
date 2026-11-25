@@ -3,7 +3,6 @@ import { Bot, MAX_HP } from '../modes/tdm/bot.js';
 import { TdmHud } from '../modes/tdm/tdm.js';
 import { WorldFX } from '../weapons/effects.js';
 import { WEAPONS } from '../weapons/weapons.js';
-import { MOVE } from '../player/movement.js';
 
 /*
   Online match against other players through the match server (server/index.js). Same level interface as TDM:
@@ -15,7 +14,6 @@ import { MOVE } from '../player/movement.js';
 
 const SEND_HZ = 30;
 const INTERP = 100;
-const STAND = MOVE.standHeight;
 
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3();
 const _ray = new THREE.Ray();
@@ -43,7 +41,7 @@ function connect(url, hello) {
 
 export async function createOnline({ opts, getMap, buildWorld, ...ctx }) {
   const local = getMap(opts.mapId);
-  const hello = { name: opts.name, room: opts.room, char: opts.char, mapId: opts.mapId, map: local && !local.builtin ? local : undefined };
+  const hello = { name: opts.name, room: opts.room, char: opts.char, weapons: WEAPONS.length, mapId: opts.mapId, map: local && !local.builtin ? local : undefined };
   const { ws, welcome, queue } = await connect(opts.server, hello);
   const map = welcome.map ?? getMap(welcome.mapId) ?? local;
   const arena = await buildWorld(map);
@@ -54,7 +52,7 @@ export async function createOnline({ opts, getMap, buildWorld, ...ctx }) {
 class Remote extends Bot {
   constructor(net, info) {
     super(net, { team: info.team === net.team ? 'ally' : 'enemy', name: info.name, gun: 'rifle', skill: 0, char: info.char });
-    Object.assign(this, { id: info.id, hopY: 0, phase: 0, reloadT: 0, buf: [], h: STAND });
+    Object.assign(this, { id: info.id, hopY: 0, phase: 0, reloadT: 0, buf: [], lastStep: 0, poseTarget: {} });
     this.alive = info.alive;
     this.root.visible = false; // until the first snapshot places it
   }
@@ -67,7 +65,7 @@ class Remote extends Bot {
 
   push(s, t) {
     if (s.al && !this.alive) this.revive();
-    this.buf.push({ t, p: new THREE.Vector3(...s.p), v: new THREE.Vector3(...s.v), y: s.y, pi: s.pi, h: s.h ?? STAND, w: s.w });
+    this.buf.push({ t, p: new THREE.Vector3(...s.p), v: new THREE.Vector3(...s.v), y: s.y, pi: s.pi, w: s.w, st: s.st, cr: s.cr, ws: s.ws, ads: s.ads, rl: s.rl });
     if (this.buf.length > 30) this.buf.shift();
     this.root.visible ||= this.alive;
   }
@@ -97,17 +95,30 @@ class Remote extends Bot {
       this.vel.lerpVectors(a.v, b.v, k);
       this.aimYaw = lerpAngle(a.y, b.y, k);
       this.aimPitch = a.pi + (b.pi - a.pi) * k;
-      this.h = THREE.MathUtils.damp(this.h, b.h, 14, dt);
-      this.root.scale.y = this.h / STAND; // crouch / slide squash keeps the hitboxes honest
       if (WEAPONS[b.w]) this.holdWeapon(WEAPONS[b.w]);
+      // mirror the movement state: the body poses (and so the hitboxes) follow what the player is doing
+      const p = this.poseTarget;
+      p.crouch = b.cr && b.st !== 'slide' ? 1 : 0;
+      p.slide = b.st === 'slide' ? 1 : 0;
+      p.wall = b.st === 'wallrun' ? b.ws || 0 : 0;
+      p.air = b.st === 'air' ? 1 : 0;
+      p.mantle = b.st === 'mantle' || b.st === 'vault' ? 1 : 0;
+      p.ads = b.ads ? 1 : 0;
+      this.reloadT = b.rl ? this.gun.reload * 0.5 : 0;
+      // footsteps on the gait, only while running on something
+      const step = Math.floor(this.phase / Math.PI);
+      if (step !== this.lastStep) {
+        this.lastStep = step;
+        if ((b.st === 'ground' || b.st === 'wallrun') && this.vel.lengthSq() > 1) this.world.footstep(this.pos, b.st === 'wallrun');
+      }
     }
     this.pose(dt);
   }
 }
 
 class Online {
-  constructor({ scene, camera, audio, mv, rig, arsenal, ws, welcome, queue, arena }) {
-    Object.assign(this, { scene, camera, audio, mv, rig, arsenal, ws, arena });
+  constructor({ scene, camera, audio, hud, mv, rig, arsenal, ws, welcome, queue, arena }) {
+    Object.assign(this, { scene, camera, audio, hud, mv, rig, arsenal, ws, arena });
     this.id = welcome.id;
     this.team = welcome.team;
     this.foe = this.team === 'a' ? 'b' : 'a';
@@ -117,6 +128,7 @@ class Online {
     this.limit = welcome.limit;
     this.score = welcome.score;
     this.time = welcome.time;
+    this.round = welcome.round;
     this.ended = false;
     this.alive = true;
     this.hp = MAX_HP;
@@ -125,6 +137,7 @@ class Online {
     this.pingT = 0;
     this.rtt = null;
     this.names = new Map([[this.id, 'You']]);
+    this.stats = new Map(welcome.players.map((p) => [p.id, { kills: p.kills ?? 0, deaths: p.deaths ?? 0 }]));
     this.remotes = new Map();
     this.ui = new TdmHud({ ally: 'You', enemy: 'Them', limit: this.limit });
     this.mid = this.ui.root.querySelector('.mid .label');
@@ -140,6 +153,8 @@ class Online {
   }
 
   get playerAlive() { return this.alive; }
+  /** Gun-game: main.js keeps the player on this weapon (and blocks switching) while it's set. */
+  get forcedWeapon() { return this.round?.weapon ?? null; }
 
   send(msg) { if (this.ws.readyState === 1) this.ws.send(JSON.stringify(msg)); }
 
@@ -151,7 +166,23 @@ class Online {
     this.ui.root.remove();
   }
 
+  /** Hold-Tab scoreboard rows (your side, then theirs). */
+  scoreRows() {
+    const st = (id) => this.stats.get(id) ?? { kills: 0, deaths: 0 };
+    const me = { name: 'You', ...st(this.id), you: true, dead: !this.alive };
+    const rows = (enemy) => [...this.remotes.values()].filter((r) => (r.team === 'enemy') === enemy).map((r) => ({ name: r.name, ...st(r.id), dead: !r.alive }));
+    const wpn = WEAPONS[this.round?.weapon]?.name;
+    return {
+      title: `Multiplayer · ${this.mapName}${this.round ? ` · Round ${this.round.n}${wpn ? ` · ${wpn}` : ''}` : ''}`,
+      teams: [
+        { label: 'You', team: 'ally', score: this.score[this.team], rows: [me, ...rows(false)] },
+        { label: 'Them', team: 'enemy', score: this.score[this.foe], rows: rows(true) },
+      ],
+    };
+  }
+
   #add(info) {
+    this.stats.set(info.id, { kills: info.kills ?? 0, deaths: info.deaths ?? 0 });
     const r = new Remote(this, info);
     this.remotes.set(info.id, r);
     this.names.set(info.id, info.name);
@@ -208,6 +239,7 @@ class Online {
         this.score = m.score;
         this.#score();
         const killer = this.#who(m.k), victim = this.#who(m.v);
+        for (const [id, k] of [[m.k, 'kills'], [m.v, 'deaths']]) { const s = this.stats.get(id) ?? { kills: 0, deaths: 0 }; s[k]++; this.stats.set(id, s); }
         this.ui.feed(killer, victim, m.head);
         if (m.v === this.id) {
           this.alive = false;
@@ -218,13 +250,24 @@ class Online {
           const r = this.remotes.get(m.v);
           const from = m.k === this.id ? this.camera.position : this.remotes.get(m.k)?.pos;
           r?.kill(from ? _a.subVectors(r.pos, from).setY(0).normalize() : null);
-          if (m.k === this.id) this.ui.toast(`Eliminated ${victim.name}`, m.head);
+          if (m.k === this.id) {
+            this.ui.toast(`Eliminated ${victim.name}`, m.head);
+            this.hud?.hitmarker('kill', m.head);
+            this.audio.hit('kill', m.head);
+          }
         }
         break;
       }
-      case 'respawn': this.#respawn(); break;
+      case 'round':
+        this.round = m;
+        this.score = m.score;
+        this.#score();
+        this.#respawn();
+        this.ui.toast(`Round ${m.n} · ${WEAPONS[m.weapon]?.name ?? ''}`);
+        break;
       case 'end': this.#end(m.score); break;
       case 'restart':
+        for (const s of this.stats.values()) { s.kills = 0; s.deaths = 0; }
         this.ended = false;
         this.score = m.score;
         this.time = m.time;
@@ -254,6 +297,16 @@ class Online {
     _c.subVectors(_a, cam).normalize();
     _b.setFromMatrixColumn(this.camera.matrixWorld, 0);
     this.audio.play(WEAPONS[m.w]?.sound ?? 'fire', { volume: vol, pan: THREE.MathUtils.clamp(_c.dot(_b), -1, 1) * 0.8, rate: 0.96 + Math.random() * 0.08 });
+  }
+
+  /** A remote player's footstep, quieter with distance and panned. */
+  footstep(pos, wall) {
+    const cam = this.camera.position, d = pos.distanceTo(cam);
+    const vol = (wall ? 0.16 : 0.12) * Math.pow(THREE.MathUtils.clamp(1 - d / 28, 0, 1), 1.6);
+    if (vol < 0.01) return;
+    _c.subVectors(pos, cam).normalize();
+    _b.setFromMatrixColumn(this.camera.matrixWorld, 0);
+    this.audio.play('step', { volume: vol, rate: wall ? 1.15 : 1, pan: THREE.MathUtils.clamp(_c.dot(_b), -1, 1) * 0.7 });
   }
 
   #bearing(p) {
@@ -311,13 +364,14 @@ class Online {
       }
     } else {
       this.deathT += dt;
-      this.ui.death(this.killer, Math.max(0, 3 - this.deathT));
+      this.ui.death(this.killer, Math.max(0, 2.2 - this.deathT));
     }
 
     if ((this.sendT -= dt) <= 0) {
       this.sendT = 1 / SEND_HZ;
       const w = this.arsenal.findIndex((x) => x.gun === gun);
-      this.send({ t: 's', p: round(mv.feet), v: round(mv.vel), y: +(this.rig.yaw + Math.PI).toFixed(3), pi: +this.rig.pitch.toFixed(3), w, st: mv.state, h: +mv.height.toFixed(2) });
+      const g = this.arsenal[w];
+      this.send({ t: 's', p: round(mv.feet), v: round(mv.vel), y: +(this.rig.yaw + Math.PI).toFixed(3), pi: +this.rig.pitch.toFixed(3), w, st: mv.state, cr: mv.crouched ? 1 : 0, ws: mv.wallSide, ads: g && g.gun.adsEased > 0.5 ? 1 : 0, rl: g && g.vm.reloading ? 1 : 0 });
     }
     if ((this.pingT -= dt) <= 0) { this.pingT = 2; this.send({ t: 'ping', c: performance.now() }); }
 
@@ -325,6 +379,7 @@ class Online {
     for (const r of this.remotes.values()) r.update(dt, t);
     this.fx.update(dt, camera);
     this.ui.update(dt, { ally: 0, enemy: 0 }, this.time);
-    this.mid.textContent = `First to ${this.limit}${this.rtt === null ? '' : ` · ${Math.round(this.rtt)} ms`}`;
+    const wpn = WEAPONS[this.round?.weapon]?.name;
+    this.mid.textContent = `${this.round ? `Round ${this.round.n}${wpn ? ` · ${wpn}` : ''} · ` : ''}First to ${this.limit}${this.rtt === null ? '' : ` · ${Math.round(this.rtt)} ms`}`;
   }
 }

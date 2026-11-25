@@ -111,9 +111,11 @@ export const WEAPONS = [
     stats: {
       rpm: 80,
       magSize: 7, // tube-fed, loaded shell by shell
-      damage: 11,
+      damage: 13.2, // per pellet
       pellets: 9,
+      closeBonus: { mult: 1.5, full: 4, end: 10 }, // ×1.5 inside 4 m, easing back to ×1 by 10 m
       pelletSpread: 3.4, // ring radius in degrees; centre pellet + 8 around it
+      pelletAds: 0.7, // aimed, the ring is 30% tighter
       headMultiplier: 1.5,
       range: 70,
       adsTime: 0.22,

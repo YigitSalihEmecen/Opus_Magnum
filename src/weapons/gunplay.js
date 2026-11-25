@@ -154,8 +154,8 @@ export class Gunplay {
     this.#fire(mv, camera, targets, now);
   }
 
-  /** Pellet ring radius (deg) right now; 0 for bullets. ADS tightens it a little. */
-  get pelletSpread() { return (this.S.pelletSpread ?? 0) * (1 - 0.2 * this.adsEased); }
+  /** Pellet ring radius (deg) right now; 0 for bullets. ADS tightens it (to pelletAds × hip). */
+  get pelletSpread() { return (this.S.pelletSpread ?? 0) * (1 - (1 - (this.S.pelletAds ?? 0.8)) * this.adsEased); }
 
   #fire(mv, camera, targets, now) {
     this.ammo--;
@@ -184,9 +184,9 @@ export class Gunplay {
       this.#trace(camera, targets, now, muzzle, tally);
     }
     for (const [, t] of tally) {
-      this.hud.hitmarker(t.killed ? 'kill' : t.head ? 'head' : 'body');
-      this.hud.damageNumber(t.point, t.dmg, t.head);
-      this.audio.hit(t.killed ? 'kill' : t.head ? 'head' : 'body');
+      this.hud.hitmarker(t.killed ? 'kill' : 'hit', t.head);
+      this.hud.damageNumber(t.point, Math.round(t.dmg), t.head);
+      this.audio.hit(t.killed ? 'kill' : 'body', t.head);
     }
 
     // recoil: permanent aim kick + visual punch
@@ -223,7 +223,9 @@ export class Gunplay {
       const dummy = hit.object.userData.dummy;
       if (dummy) {
         const head = hit.object.userData.zone === 'head';
-        const dmg = Math.round(this.S.damage * (head ? this.S.headMultiplier : 1));
+        const cb = this.S.closeBonus;
+        const close = cb ? 1 + (cb.mult - 1) * THREE.MathUtils.clamp((cb.end - hit.distance) / (cb.end - cb.full), 0, 1) : 1;
+        const dmg = this.S.damage * close * (head ? this.S.headMultiplier : 1);
         const res = dummy.damage(dmg, hit.object.userData.zone, hit.point, _dir, now);
         if (res) {
           const t = tally.get(dummy) ?? { dmg: 0, head: false, killed: false, point: hit.point };

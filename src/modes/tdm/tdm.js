@@ -146,6 +146,8 @@ class TDM {
 
   onKill(killer, victim, head) {
     if (this.ended) return;
+    killer.kills = (killer.kills ?? 0) + 1;
+    victim.deaths = (victim.deaths ?? 0) + 1;
     const team = victim.team === 'ally' ? 'enemy' : 'ally';
     this.score[team]++;
     this.ui.feed(killer, victim, head);
@@ -153,6 +155,18 @@ class TDM {
     if (victim !== this.player) this.respawns.push({ bot: victim, t: RESPAWN_BOT });
     this.ui.score(this.score, this.time);
     if (this.score[team] >= SCORE_LIMIT) this.#end();
+  }
+
+  /** Hold-Tab scoreboard rows. */
+  scoreRows() {
+    const row = (c) => ({ name: c.name, kills: c.kills ?? 0, deaths: c.deaths ?? 0, you: c === this.player, dead: !c.alive });
+    return {
+      title: `Team Deathmatch · ${this.mapName}`,
+      teams: [
+        { label: 'Allies', team: 'ally', score: this.score.ally, rows: this.#allySide.map(row) },
+        { label: 'Enemy', team: 'enemy', score: this.score.enemy, rows: this.enemies.map(row) },
+      ],
+    };
   }
 
   // ── player ──

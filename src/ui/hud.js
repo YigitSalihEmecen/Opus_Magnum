@@ -11,7 +11,8 @@ export class HUD {
       <div class="brand card"><span class="title">Opus Magnum</span><span class="label">Test range · 0.1</span></div>
       <div class="fps card">— FPS</div>
       <div class="xhair"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><i class="o"></i><i class="d"></i></div>
-      <div class="hitmarker"><i></i><i></i><i></i><i></i></div>
+      <div class="hitmarker"><b></b><i></i><i></i><i></i><i></i></div>
+      <div class="killflash"></div>
       <div class="dmgs"></div>
       <div class="weapon card">
         <div class="wrow"><span class="label kind">Primary</span></div>
@@ -24,7 +25,7 @@ export class HUD {
       <div class="loadout"></div>`;
     const $ = (s) => root.querySelector(s);
     this.el = {
-      fps: $('.fps'), xhair: $('.xhair'), hit: $('.hitmarker'), dmgs: $('.dmgs'),
+      fps: $('.fps'), xhair: $('.xhair'), hit: $('.hitmarker'), killflash: $('.killflash'), dmgs: $('.dmgs'),
       weapon: $('.weapon'), mag: $('.mag'), pipsBox: $('.pips'), pips: [],
       modesBox: $('.modes'), modes: [], toast: $('.toast'),
       bars: ['.t', '.b', '.l', '.r'].map((s) => root.querySelector(`.xhair ${s}`)),
@@ -75,11 +76,17 @@ export class HUD {
     this.lastAmmo = -1;
   }
 
-  hitmarker(kind) {
+  /** kind: 'hit' | 'kill'; head colours it amber. Kills also pulse a tinted vignette. */
+  hitmarker(kind, head = false) {
     const h = this.el.hit;
-    h.className = `hitmarker ${kind}`;
+    h.className = `hitmarker ${kind}${head ? ' head' : ''}`;
     void h.offsetWidth;
     h.classList.add('on');
+    if (kind !== 'kill') return;
+    const f = this.el.killflash;
+    f.className = `killflash${head ? ' head' : ''}`;
+    void f.offsetWidth;
+    f.classList.add('on');
   }
 
   damageNumber(point, amount, head) {

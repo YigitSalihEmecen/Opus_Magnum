@@ -99,6 +99,16 @@ function makeTargets(w, h, samples) {
 }
 
 /**
+ * Graphics presets. Rendering only: resolution, anti-aliasing and shadows. Geometry, placement, hitboxes and
+ * view distance are identical on every preset, so nobody gains a gameplay edge from a lower setting.
+ */
+export const QUALITY = {
+  high: { ratio: 2, scale: 1, msaa: 4, shadows: true, shadowScale: 1, shadowEvery: 1 },
+  medium: { ratio: 1.5, scale: 1, msaa: 2, shadows: true, shadowScale: 0.5, shadowEvery: 2 },
+  low: { ratio: 1, scale: 0.75, msaa: 0, shadows: false, shadowScale: 0.5, shadowEvery: 4 },
+};
+
+/**
  * Two-scene renderer: world + first-person viewmodel, each rendered to colour/depth/normal
  * buffers and composited with an ink outline pass for the cel-shaded look.
  */
@@ -146,9 +156,53 @@ export class Renderer {
     this.quadScene = new THREE.Scene();
     this.quadScene.add(this.quad);
     this.quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    this.q = QUALITY.high;
+    this.frameN = 0;
+  }
+
+  /** Switch preset: pixel ratio, MSAA of the offscreen targets, shadow on/off + resolution + refresh rate. */
+  setQuality(name) {
+    const q = QUALITY[name] ?? QUALITY.high;
+    if (q === this.q && this.qSet) return;
+    const prev = this.q;
+    this.q = q;
+    this.qSet = true;
+    const gl = this.gl;
+    gl.setPixelRatio(Math.min(window.devicePixelRatio, q.ratio) * q.scale);
+    this.composite.uniforms.lineWidth.value = Math.max(1, gl.getPixelRatio());
+    if (prev.msaa !== q.msaa) {
+      for (const t of [this.world, this.vm]) { t.color.dispose(); t.normal.dispose(); }
+      gl.getDrawingBufferSize(this.size);
+      this.world = makeTargets(this.size.x, this.size.y, q.msaa);
+      this.vm = makeTargets(this.size.x, this.size.y, q.msaa);
+      const u = this.composite.uniforms;
+      Object.assign(u.tWorld, { value: this.world.color.texture }); Object.assign(u.tWorldDepth, { value: this.world.color.depthTexture });
+      Object.assign(u.tWorldNormal, { value: this.world.normal.texture }); Object.assign(u.tVM, { value: this.vm.color.texture });
+      Object.assign(u.tVMDepth, { value: this.vm.color.depthTexture }); Object.assign(u.tVMNormal, { value: this.vm.normal.texture });
+    }
+    if (prev.shadows !== q.shadows) { gl.shadowMap.enabled = q.shadows; this.recompile = true; }
+    this.lightsFor = null; // re-apply shadow resolution on the next frame
+    if (this.cssW) this.resize(this.cssW, this.cssH);
+  }
+
+  /** Shadow map size per preset (each light remembers the size its level asked for). */
+  #applyShadows(scene) {
+    // re-run when the scene's content changes (a level or the lobby was added) or the preset changed
+    if (this.lightsFor === scene && this.lightsN === scene.children.length && !this.recompile) return;
+    scene.traverse((o) => {
+      if (this.recompile && o.material) for (const m of [].concat(o.material)) m.needsUpdate = true;
+      if (!o.isLight || !o.shadow) return;
+      const base = (o.userData.baseShadow ??= o.shadow.mapSize.x);
+      const size = Math.max(512, base * this.q.shadowScale);
+      if (o.shadow.mapSize.x !== size) { o.shadow.mapSize.set(size, size); o.shadow.map?.dispose(); o.shadow.map = null; }
+    });
+    this.lightsFor = scene;
+    this.lightsN = scene.children.length;
+    this.recompile = false;
   }
 
   resize(w, h) {
+    this.cssW = w; this.cssH = h;
     this.gl.setSize(w, h, false);
     this.gl.getDrawingBufferSize(this.size);
     for (const t of [this.world, this.vm]) {
@@ -193,7 +247,8 @@ export class Renderer {
     u.vmNear.value = vmCam.near; u.vmFar.value = vmCam.far;
     if (world.fog) { u.fogNear.value = world.fog.near; u.fogFar.value = world.fog.far; }
 
-    this.gl.shadowMap.needsUpdate = true;
+    this.#applyShadows(world);
+    this.gl.shadowMap.needsUpdate = this.frameN++ % this.q.shadowEvery === 0;
     this.#pass(world, worldCam, this.world, 1);
     this.#pass(vm, vmCam, this.vm, 0);
     this.gl.setRenderTarget(null);

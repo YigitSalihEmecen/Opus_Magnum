@@ -38,16 +38,16 @@ export function buildKiteArm(m, side) {
   part(upper, cyl(0.03, 0.074, 16, 'x'), m.metal);
   part(upper, ext([[-0.04, -0.035], [0.04, -0.035], [0.035, -0.235], [-0.035, -0.235]], 0.075, { axis: 'z', bevel: 0.01 }), m.shell);
   for (const x of [-1, 1]) {
-    part(upper, rb(0.012, 0.095, 0.064, 0.005), m.dark, [x * 0.039, -0.265, 0]);
+    part(upper, rb(0.012, 0.095, 0.05, 0.005), m.dark, [x * 0.039, -0.265, 0]);
     part(upper, rb(0.016, 0.062, 0.062, 0.008), m.patch, [x * 0.039, -D.upper, 0]);
   }
 
   const fore = bone(`forearm_${s}`, upper, 0, -D.upper, 0);
   part(fore, cyl(0.026, 0.064, 14, 'x'), m.dark);
   part(fore, ext([[-0.028, -0.024], [0.028, -0.024], [0.044, -0.12], [0.038, -0.235], [-0.038, -0.235], [-0.044, -0.12]], 0.08, { axis: 'z', bevel: 0.012 }), m.shell);
-  part(fore, ext([[-0.04, -0.19], [0.04, -0.19], [0.0395, -0.212], [-0.0395, -0.212]], 0.084, { axis: 'z', bevel: 0.004 }), m.trim);
+  part(fore, ext([[-0.0435, -0.19], [0.0435, -0.19], [0.0425, -0.212], [-0.0425, -0.212]], 0.086, { axis: 'z', bevel: 0.004 }), m.trim);
   part(fore, cyl(0.03, 0.05, 16), m.dark, [0, -0.26, 0]);
-  const links = [ram(m, upper, [0, -0.07, -0.052], fore, [0, -0.08, -0.054], { r: 0.01, len: 0.19, lug: [0.016, 0.016] })];
+  const links = [ram(m, upper, [0, -0.07, -0.052], fore, [0, -0.08, -0.054], { r: 0.01, len: 0.2, rodLen: 0.17, lug: [0.016, 0.016] })];
 
   const hand = buildHand(m, { left: side > 0, skin: m.metal });
   hand.position.y = -D.fore;
@@ -67,27 +67,39 @@ export function buildKite({ scheme = KITE_SCHEMES.player } = {}) {
   const head = bone('head', neck, 0, D.head, 0);
   const links = [];
 
-  // pelvis: narrow dark frame, winged belt plate in front, actuator boxes over the hip joints
+  // pelvis: narrow dark frame, winged belt plate in front, a hip axle carrying a motor drum outside each thigh
   part(hips, ext([[-0.07, 0.02], [0.07, 0.02], [0.06, -0.085], [-0.06, -0.085]], 0.2, { bevel: 0.012 }), m.dark);
   part(hips, ext([[-0.125, 0.03], [0.125, 0.03], [0.105, -0.005], [0.05, -0.015], [0.04, -0.09], [-0.04, -0.09], [-0.05, -0.015], [-0.105, -0.005]], 0.03, { axis: 'z', bevel: 0.006 }), m.shell, [0, 0, 0.075]);
+  part(hips, cyl(0.022, 0.36, 14, 'x'), m.metal, [0, -0.07, 0]);
   for (const x of [-1, 1]) {
-    part(hips, rb(0.09, 0.12, 0.13, 0.016), m.dark, [x * 0.13, -0.05, 0]);
-    part(hips, ext([[-0.026, -0.022], [0.026, -0.022], [0, 0.024]], 0.006, { axis: 'z', bevel: 0.001 }), m.trim, [x * 0.13, -0.05, 0.066]);
+    part(hips, cyl(0.062, 0.05, 24, 'x'), m.dark, [x * 0.175, -0.07, 0]);
+    part(hips, cyl(0.046, 0.008, 24, 'x'), m.patch, [x * 0.203, -0.07, 0]);
+    part(hips, ext([[-0.024, -0.02], [0.024, -0.02], [0, 0.022]], 0.006, { bevel: 0.001 }), m.trim, [x * 0.209, -0.072, 0], [0, 0, 0]);
   }
 
-  // waist: exposed spine column, a small orange actuator housing with a side servo
-  part(spine, cyl(0.034, 0.34, 14), m.metal, [0, 0.05, 0]);
-  part(spine, rb(0.1, 0.1, 0.09, 0.02), m.shell, [0, 0.03, 0.022]);
-  part(spine, cyl(0.04, 0.03, 16, 'x'), m.dark, [0.062, 0.03, 0.02]);
+  // waist: a vertebra column (stacked discs), the orange drive housing on its front, two side stabiliser rams
+  const discs = [new THREE.Vector2(0.03, -0.11)];
+  for (let i = 0; i < 6; i++) {
+    const y = -0.1 + i * 0.05;
+    discs.push(new THREE.Vector2(0.03, y), new THREE.Vector2(0.052, y + 0.004), new THREE.Vector2(0.052, y + 0.02), new THREE.Vector2(0.03, y + 0.024));
+  }
+  discs.push(new THREE.Vector2(0.03, 0.2));
+  part(spine, new THREE.LatheGeometry(discs, 20), m.metal);
+  part(spine, rb(0.1, 0.12, 0.075, 0.02), m.shell, [0, 0.045, 0.045]);
+  part(spine, cyl(0.036, 0.024, 16, 'x'), m.dark, [0.062, 0.045, 0.045]);
+  for (const x of [-1, 1]) links.push(ram(m, hips, [x * 0.072, 0.02, -0.03], chest, [x * 0.072, -0.02, -0.03], { r: 0.012, len: 0.19 }));
 
   // chest: dark core, orange front plate with a vent slot, slim back pack, shoulder sockets, collar
-  part(chest, ext([[0.1, -0.02], [0.12, 0.1], [0.12, 0.3], [0.08, 0.33], [-0.1, 0.33], [-0.12, 0.28], [-0.12, 0.05], [-0.08, -0.02]], 0.3, { bevel: 0.02 }), m.dark);
-  part(chest, ext([[-0.155, 0.02], [0.155, 0.02], [0.165, 0.24], [0.145, 0.29], [-0.145, 0.29], [-0.165, 0.24]], 0.05, {
-    axis: 'z', bevel: 0.01, holes: [slot(-0.06, 0.06, 0.1, 0.018)],
-  }), m.shell, [0, 0, 0.11]);
-  part(chest, ext([[-0.06, 0.21], [0.06, 0.21], [0.06, 0.225], [-0.06, 0.225]], 0.052, { axis: 'z', bevel: 0.003 }), m.trim, [0, 0, 0.11]);
-  part(chest, rb(0.2, 0.22, 0.08, 0.02), m.patch, [0, 0.16, -0.15]);
-  part(chest, rb(0.204, 0.04, 0.084, 0.01), m.shell, [0, 0.27, -0.15]);
+  // V-tapered core, seen from the front
+  part(chest, ext([[-0.095, -0.02], [0.095, -0.02], [0.15, 0.17], [0.15, 0.3], [0.12, 0.33], [-0.12, 0.33], [-0.15, 0.3], [-0.15, 0.17]], 0.22, { axis: 'z', bevel: 0.02 }), m.dark);
+  part(chest, ext([[-0.11, 0.04], [0.11, 0.04], [0.165, 0.23], [0.145, 0.29], [-0.145, 0.29], [-0.165, 0.23]], 0.05, {
+    axis: 'z', bevel: 0.01, holes: [slot(-0.05, 0.05, 0.12, 0.017)],
+  }), m.shell, [0, 0, 0.1]);
+  part(chest, ext([[-0.06, 0.21], [0.06, 0.21], [0.06, 0.226], [-0.06, 0.226]], 0.058, { axis: 'z', bevel: 0.003 }), m.trim, [0, 0, 0.1]);
+  part(chest, ext([[-0.1, -0.11], [0.1, -0.11], [0.1, 0.1], [-0.1, 0.1]], 0.08, {
+    axis: 'z', bevel: 0.016, holes: [slot(-0.05, 0.05, 0.035, 0.012), slot(-0.05, 0.05, -0.02, 0.012)],
+  }), m.patch, [0, 0.16, -0.14]);
+  part(chest, rb(0.204, 0.04, 0.084, 0.01), m.shell, [0, 0.27, -0.14]);
   for (const x of [-1, 1]) part(chest, cyl(0.055, 0.06, 20, 'x'), m.dark, [x * 0.165, 0.2, 0]);
   part(chest, cyl(0.05, 0.03, 18), m.dark, [0, 0.34, -0.01]);
 
@@ -126,11 +138,10 @@ export function buildKite({ scheme = KITE_SCHEMES.player } = {}) {
     const s = side > 0 ? 'L' : 'R';
     const thigh = bone(`thigh_${s}`, hips, side * D.hipX, -0.07, 0);
     part(thigh, ball(0.05), m.metal);
-    part(thigh, rb(0.07, 0.32, 0.08, 0.016), m.dark, [0, -0.23, 0]);
-    part(thigh, ext([[-0.06, -0.06], [0.07, -0.06], [0.075, -0.36], [0.05, -0.4], [-0.05, -0.4], [-0.06, -0.2]], 0.11, { bevel: 0.014 }), m.shell);
-    if (side > 0) part(thigh, ext([[-0.062, -0.1], [0.072, -0.1], [0.073, -0.125], [-0.062, -0.125]], 0.114, { bevel: 0.004 }), m.trim);
+    part(thigh, ext([[-0.055, -0.05], [0.055, -0.05], [0.078, -0.14], [0.068, -0.33], [0.045, -0.39], [-0.04, -0.39], [-0.056, -0.3], [-0.064, -0.15]], 0.1, { bevel: 0.014 }), m.shell);
+    if (side > 0) part(thigh, ext([[-0.066, -0.11], [0.077, -0.11], [0.0785, -0.135], [-0.0665, -0.135]], 0.106, { bevel: 0.004 }), m.trim);
     for (const x of [-1, 1]) {
-      part(thigh, rb(0.012, 0.09, 0.07, 0.005), m.dark, [x * 0.047, -0.42, 0]);
+      part(thigh, rb(0.012, 0.09, 0.054, 0.005), m.dark, [x * 0.047, -0.42, 0]);
       part(thigh, rb(0.016, 0.068, 0.068, 0.008), m.patch, [x * 0.047, -D.thigh, 0]);
     }
 

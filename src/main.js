@@ -17,6 +17,7 @@ import { Menu } from './ui/menu.js';
 import { Gunsmith } from './ui/gunsmith.js';
 import { Title } from './ui/title.js';
 import { Lobby } from './ui/lobby.js';
+import { Scoreboard } from './ui/scoreboard.js';
 import { selectedCharacter } from './character/characters.js';
 import { listMaps, getMap, hasSpawns } from './modes/editor/storage.js';
 
@@ -64,7 +65,7 @@ const MODES = [
     id: 'online', index: '03 / ONLINE', title: 'Multiplayer', short: 'Play with friends', accent: '#6b6a4f',
     lobby: { server: /^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? 'ws://localhost:8787' : 'wss://bitter-canavar.tailb7f1ff.ts.net:8443', map: 'builtin-duel' },
     load: async (mapId, opts) => (await import('./net/online.js')).createOnline({
-      scene, camera, audio, mv, rig, arsenal, getMap,
+      scene, camera, audio, hud, mv, rig, arsenal, getMap,
       opts: { name: 'Player', room: 'duel', server: MODES.find((m) => m.id === 'online').lobby.server, char: selectedCharacter(), ...opts, mapId: mapId ?? 'builtin-duel' },
       buildWorld: async (map) => (await import('./modes/editor/mapWorld.js')).buildMapWorld(scene, map),
     }),
@@ -80,6 +81,7 @@ let targets = [];
 const input = new Input(canvas);
 const audio = new AudioBank();
 const hud = new HUD(document.getElementById('hud'));
+const scoreboard = new Scoreboard();
 const fx = new WorldFX(scene);
 
 const mv = new Movement(new Octree(), { position: new THREE.Vector3(), yaw: 0 }); // real world arrives with the level
@@ -193,6 +195,7 @@ const menu = new Menu(document.getElementById('menu'), {
     audio.init();
   },
   onSettings: (s) => {
+    renderer.setQuality(s.graphics);
     rig.sensitivity = s.sensitivity;
     rig.hFov = s.fov;
     audio.setVolume(s.volume);
@@ -305,7 +308,10 @@ function tick(dt) {
 
   if (live) {
     if (input.pressed('KeyF') || (vm.inspect && input.clicked(2))) setInspect(!vm.inspect);
-    if (!vm.inspect) {
+    // a mode can hand out the weapon (online gun-game rounds): hold the player to it, no manual switching
+    const forced = level.forcedWeapon ?? null;
+    if (forced !== null && forced !== current && pendingSwitch === null && !vm.inspect) switchWeapon(forced);
+    if (!vm.inspect && forced === null) {
       arsenal.forEach((_, i) => { if (input.pressed(`Digit${i + 1}`)) switchWeapon(i); });
       if (input.wheel) switchWeapon((current + (input.wheel > 0 ? 1 : -1) + arsenal.length) % arsenal.length);
     }
@@ -328,6 +334,7 @@ function tick(dt) {
   vm.update(dt, { mv, axes, mouseDX: vm.inspect ? 0 : input.mouseDX, mouseDY: vm.inspect ? 0 : input.mouseDY, ads, triggerHeld: gun.triggerHeld, cursor });
 
   level?.update(dt, { camera, now, gun });
+  scoreboard.update(dt, input.locked && input.down('Tab') && level?.scoreRows ? level.scoreRows() : null);
   fx.update(dt, camera);
   hud.update(dt, { mv, gun, camera });
   audio.setLoops({
@@ -339,11 +346,20 @@ function tick(dt) {
   input.endFrame();
 }
 
+// one bad frame (a bug, a malformed message) must not stop the loop: log it once a second and keep going
+let lastError = 0;
 function frame() {
-  const dt = Math.min(clock.getDelta(), 0.05);
-  if (!window.OM?.frozen) tick(dt); // OM.frozen = true: only OM.step() advances (frame-exact captures)
   requestAnimationFrame(frame);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  if (window.OM?.frozen) return; // OM.frozen = true: only OM.step() advances (frame-exact captures)
+  try { tick(dt); } catch (err) {
+    if (performance.now() - lastError > 1000) { lastError = performance.now(); console.error(err); }
+    input.endFrame();
+  }
 }
+// the GPU can drop the context (driver reset, sleep): ask to keep it, and rebuild the render targets on restore
+canvas.addEventListener('webglcontextlost', (e) => e.preventDefault());
+canvas.addEventListener('webglcontextrestored', () => resize());
 requestAnimationFrame(frame);
 
 // dev handle for tuning from the console; ?dev skips the menu and pointer lock (keyboard only)

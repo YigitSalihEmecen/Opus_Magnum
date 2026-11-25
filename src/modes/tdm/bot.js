@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { PALETTE as P } from '../../core/toon.js';
 import { FX_LAYER } from '../../core/renderer.js';
-import { gripGun } from '../../character/robot.js';
+import { gripGun, bakeFlat } from '../../character/robot.js';
 import { buildCharacter } from '../../character/characters.js';
 import { WEAPONS } from '../../weapons/weapons.js';
 
@@ -20,6 +20,7 @@ export const MAX_HP = 150;
 const REGEN_DELAY = 5, REGEN_RATE = 30;
 const EYE = 1.62;
 const D2R = Math.PI / 180;
+const NO_POSE = {};
 const STANCE = -0.5; // torso bladed (left shoulder forward) behind the rifle
 
 export const BOT_GUNS = {
@@ -478,7 +479,7 @@ export class Bot {
 
   #build() {
     const r = (this.robot = buildCharacter(this.char, this.team));
-    this.mats = Object.values(r.mats).filter((m) => m.emissive);
+    this.mats = r.flashMats;
     this.root = new THREE.Group();
     this.body = new THREE.Group(); // tips over on death
     this.root.add(this.body);
@@ -526,7 +527,7 @@ export class Bot {
     let gun = this.guns.get(def.id);
     if (!gun) {
       const { root, parts } = def.build();
-      root.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+      bakeFlat(root); // one draw call; its moving parts never move in third person
       root.userData.muzzle = parts.muzzleMount;
       this.gunFrame.add(root);
       this.guns.set(def.id, (gun = root));
@@ -550,17 +551,32 @@ export class Bot {
     }
     this.hips.rotation.y = damp(this.hips.rotation.y, THREE.MathUtils.clamp(legYaw, -1.2, 1.2), 10, dt);
     this.phase += sp * dt * 1.9 * dirSign;
-    const k = Math.min(1, sp / 4);
+    // movement poses (networked players set poseTarget; bots only hop): weights eased so state changes blend
+    const w = (this.poseW ??= { crouch: 0, slide: 0, wall: 0, air: 0, ads: 0, mantle: 0 });
+    const tgt = this.poseTarget ?? NO_POSE;
+    for (const key in w) w[key] = damp(w[key], tgt[key] ?? 0, 12, dt);
+    const air = Math.max(w.air, this.hopY > 0 ? 1 : 0, w.mantle);
+    const low = Math.max(w.crouch, w.slide);
+    const k = Math.min(1, sp / 4) * (1 - w.slide) * (1 - air * 0.7);
     this.legs.forEach((l, i) => {
       const ph = this.phase + i * Math.PI;
-      l.thigh.rotation.x = -Math.sin(ph) * 0.65 * k - (this.hopY > 0 ? 0.5 : 0) - 0.08;
-      l.knee.rotation.x = Math.max(0, Math.cos(ph)) * 0.9 * k + (this.hopY > 0 ? 0.9 : 0) + 0.14;
+      let th = -Math.sin(ph) * 0.65 * k * (1 - w.crouch * 0.4) - 0.08 - air * 0.55 - w.crouch * 0.95;
+      let kn = Math.max(0, Math.cos(ph)) * 0.9 * k + 0.14 + air * 0.95 + w.crouch * 1.55;
+      // slide: lead leg stretched out front, the other folded under
+      th += w.slide * (i === 0 ? -1.35 : -0.35);
+      kn += w.slide * (i === 0 ? 0.15 : 1.85);
+      l.thigh.rotation.x = th;
+      l.knee.rotation.x = kn;
     });
     const bob = Math.abs(Math.sin(this.phase)) * 0.04 * k;
-    this.hips.position.y = this.hipsY - 0.035 + bob;
-    this.spine.rotation.set(-this.aimPitch * 0.35 + 0.08 * k, -this.hips.rotation.y + STANCE, 0, 'YXZ');
-    this.arms.rotation.set(-this.aimPitch * 0.65, 0, 0);
-    this.neck.rotation.set(-this.aimPitch * 0.3, -STANCE * 0.8, 0, 'YXZ');
+    this.hips.position.y = this.hipsY - 0.035 + bob - w.crouch * 0.3 - w.slide * 0.45 - air * 0.05;
+    // wallrun: whole body leans into the wall; slide leans back; mantle/vault pitches forward
+    this.body.rotation.set(0, 0, w.wall * 0.32);
+    this.spine.rotation.set(-this.aimPitch * 0.35 + 0.08 * k - w.slide * 0.45 + w.mantle * 0.5 + w.crouch * 0.12, -this.hips.rotation.y + STANCE * (1 - w.ads * 0.3), 0, 'YXZ');
+    this.arms.rotation.set(-this.aimPitch * 0.65 + w.slide * 0.3, 0, 0);
+    // aiming: the gun comes up to the eye line and in toward the centre
+    this.arms.position.set(-0.1 + w.ads * 0.05, 0.24 + w.ads * 0.1, 0.02 + w.ads * 0.04);
+    this.neck.rotation.set(-this.aimPitch * 0.3 + w.slide * 0.3 + w.ads * 0.08, -STANCE * 0.8, w.ads * -0.12, 'YXZ');
     // reload: gun dips and rolls, the support hand goes to the magazine
     const rl = this.reloadT > 0 ? Math.sin(Math.min(1, this.reloadT / this.gun.reload) * Math.PI) : 0;
     this.arms.rotation.x += rl * 0.6;
