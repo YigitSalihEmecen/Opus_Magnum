@@ -10,6 +10,7 @@ import { CameraRig } from './player/cameraRig.js';
 import { Viewmodel, addViewmodelLights } from './weapons/viewmodel.js';
 import { Gunplay } from './weapons/gunplay.js';
 import { WEAPONS } from './weapons/weapons.js';
+import { silhouettes } from './ui/silhouettes.js';
 import { WorldFX } from './weapons/effects.js';
 import { HUD } from './ui/hud.js';
 import { Menu } from './ui/menu.js';
@@ -38,7 +39,7 @@ const vmCamera = new THREE.PerspectiveCamera(54, innerWidth / innerHeight, 0.01,
 const customWorld = async (mapId) => (await import('./modes/editor/mapWorld.js')).buildMapWorld(scene, getMap(mapId));
 const MODES = [
   {
-    id: 'range', index: '01 / PRACTICE', title: 'Shooting Range', short: 'Warm up and tune', builtin: 'Test Range', blurb: 'Targets, wallrun lanes, mantle steps and a slide ramp. Tune your feel and your loadout.',
+    id: 'range', index: '01 / PRACTICE', title: 'Shooting Range', short: 'Warm up and tune', accent: '#8a9a7b', builtin: 'Test Range', blurb: 'Targets, wallrun lanes, mantle steps and a slide ramp. Tune your feel and your loadout.',
     load: async (mapId) => {
       if (mapId && getMap(mapId)) {
         const w = await customWorld(mapId);
@@ -50,7 +51,7 @@ const MODES = [
     },
   },
   {
-    id: 'tdm', index: '02 / MATCH', title: 'Team Deathmatch', short: '5 v 5 against bots', builtin: 'Kiln', needsSpawns: hasSpawns,
+    id: 'tdm', index: '02 / MATCH', title: 'Team Deathmatch', short: '5 v 5 against bots', accent: '#d97757', builtin: 'Kiln', needsSpawns: hasSpawns,
     blurb: 'You and four allies against five enemy bots. First team to 40 eliminations wins.',
     load: async (mapId) => {
       const arena = mapId && getMap(mapId) ? await customWorld(mapId) : undefined;
@@ -58,7 +59,7 @@ const MODES = [
     },
   },
   {
-    id: 'editor', index: '03 / CREATE', title: 'Map Editor', short: 'Build your own map', lock: false, blurb: 'Lay out walls, containers, cars and fences on a grid. Saved maps show up here to play.',
+    id: 'editor', index: '03 / CREATE', title: 'Map Editor', short: 'Build your own map', accent: '#9fb4c7', lock: false, blurb: 'Lay out walls, containers, cars and fences on a grid. Saved maps show up here to play.',
     load: async () => (await import('./modes/editor/editor.js')).createEditor({ renderer, scene, canvas, onExit: () => { location.href = location.pathname; } }),
   },
 ];
@@ -85,12 +86,19 @@ let current = 0;
 let pendingSwitch = null;
 let { vm, gun } = arsenal[current];
 
+let icons = null;
+let iconsStale = true; // re-drawn once the gunsmith closes and the attachment swaps have settled
+const loadoutSlots = () => {
+  if (iconsStale || !icons) { icons = silhouettes(arsenal.map((a) => a.vm.model)); iconsStale = false; }
+  return arsenal.map((a, j) => ({ key: j + 1, name: a.gun.def.name, icon: icons[j], active: j === current }));
+};
+
 function drawWeapon(i) {
   current = i;
   ({ vm, gun } = arsenal[i]);
   vm.setActive(true);
   gun.activate();
-  hud.setWeapon(gun.def.name, gun.def.kind, arsenal.map((a, j) => ({ key: j + 1, name: a.gun.def.name, active: j === i })));
+  hud.setWeapon(gun.def.name, gun.def.kind, loadoutSlots());
 }
 
 /** Number keys / wheel: holster the current weapon, then draw the next one. */
@@ -109,10 +117,11 @@ const gunsmith = new Gunsmith(document.getElementById('smith'), {
 
 /** F: bring the gun up for the gunsmith (blocked mid-reload / mantle / switch). */
 function setInspect(on) {
-  if (on && (vm.reloading || mv.state === 'mantle' || pendingSwitch !== null)) return;
+  if (on && (vm.reloading || mv.state === 'mantle' || mv.state === 'vault' || pendingSwitch !== null)) return;
   vm.setInspect(on);
   gunsmith.setOpen(on);
   hud.setInspecting(on);
+  if (!on) iconsStale = true;
 }
 
 // movement → audio / camera / viewmodel feedback
@@ -149,6 +158,15 @@ mv.onEvent = (name, d = {}) => {
       audio.play('cloth', { volume: 0.5 });
       audio.play('step', { volume: 0.08, rate: 0.8, delay: 0.12 });
       rig.punch(-2, 0, 2);
+      break;
+    case 'vault':
+      audio.play('cloth', { volume: 0.5, rate: 1.1 });
+      audio.play('step', { volume: 0.1, rate: 0.9, delay: 0.08 });
+      rig.punch(-1.2, 0, -1.5);
+      break;
+    case 'vaultEnd':
+      audio.play('step', { volume: 0.14, rate: 0.85 });
+      rig.punch(0.8, 0, 0);
       break;
     case 'fellOut':
       mv.respawn(level.spawn);
@@ -254,6 +272,8 @@ function tick(dt) {
     if (!alive) { vm.cancelClip(); vm.holster(true); setInspect(false); } else { vm.holster(false); gun.activate(); }
   }
 
+  if (iconsStale && icons && !vm.inspect && !vm.swapping) hud.setLoadout(loadoutSlots());
+
   if (pendingSwitch !== null && vm.lowered) {
     vm.setActive(false);
     vm.holster(false);
@@ -267,12 +287,14 @@ function tick(dt) {
       arsenal.forEach((_, i) => { if (input.pressed(`Digit${i + 1}`)) switchWeapon(i); });
       if (input.wheel) switchWeapon((current + (input.wheel > 0 ? 1 : -1) + arsenal.length) % arsenal.length);
     }
-    const adsSens = THREE.MathUtils.lerp(1, gun.S.adsSensitivity / Math.sqrt(gun.zoom / 1.32), gun.adsEased);
-    if (!vm.inspect) rig.look(input, adsSens);
+    // zoom-matched: a mouse inch moves the target the same distance on screen at any magnification
+    if (!vm.inspect) rig.look(input, 1 / rig.zoom);
     mv.update(dt, input, rig.yaw);
   }
   const axes = live ? input.axes() : { x: 0, y: 0 };
   rig.update(dt, mv, { ads: gun.adsEased, axes, zoom: gun.zoom });
+  const view = window.OM?.view; // dev free camera: OM.view = { pos: [x, y, z], yaw, pitch } (degrees)
+  if (view) { camera.position.set(...view.pos); camera.rotation.set((view.pitch ?? 0) * Math.PI / 180, (view.yaw ?? 0) * Math.PI / 180, 0); }
   camera.updateMatrixWorld();
   if (live) gun.update(dt, { input, mv, camera, targets, now, blocked: vm.inspect || vm.inspectEase > 0.25 || vm.swapping || pendingSwitch !== null });
   if (live) gunsmith.update(dt, input, rig.sensitivity);

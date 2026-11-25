@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { MOVE } from '../player/movement.js';
 
 const D2R = Math.PI / 180;
 const html = (s) => { const t = document.createElement('template'); t.innerHTML = s.trim(); return t.content.firstElementChild; };
@@ -14,26 +13,18 @@ export class HUD {
       <div class="xhair"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><i class="o"></i><i class="d"></i></div>
       <div class="hitmarker"><i></i><i></i><i></i><i></i></div>
       <div class="dmgs"></div>
-      <div class="move card">
-        <div class="row"><div class="speed">0.0<small>m/s</small></div><div class="state" data-s="ground">GROUND</div></div>
-        <div class="label"><span>Wallrun</span><span class="wr-t">—</span></div>
-        <div class="meter wall"><b></b></div>
-        <div class="label"><span>Slide boost</span><span class="sb-t">ready</span></div>
-        <div class="meter boost"><b></b></div>
-      </div>
       <div class="weapon card">
-        <div class="wrow"><span class="label kind">Primary</span><span class="wslots"></span></div>
+        <div class="wrow"><span class="label kind">Primary</span></div>
         <div class="name"></div>
         <div class="ammo"><span class="mag">28</span><span class="res">/ ∞</span></div>
         <div class="pips"></div>
         <div class="modes"></div>
       </div>
-      <div class="toast card"></div>`;
+      <div class="toast card"></div>
+      <div class="loadout"></div>`;
     const $ = (s) => root.querySelector(s);
     this.el = {
       fps: $('.fps'), xhair: $('.xhair'), hit: $('.hitmarker'), dmgs: $('.dmgs'),
-      speed: $('.speed'), state: $('.state'), wall: $('.meter.wall > b'), wallT: $('.wr-t'),
-      boost: $('.meter.boost > b'), boostT: $('.sb-t'),
       weapon: $('.weapon'), mag: $('.mag'), pipsBox: $('.pips'), pips: [],
       modesBox: $('.modes'), modes: [], toast: $('.toast'),
       bars: ['.t', '.b', '.l', '.r'].map((s) => root.querySelector(`.xhair ${s}`)),
@@ -48,16 +39,26 @@ export class HUD {
 
   show(on) { this.root.hidden = !on; }
 
-  /** Active weapon name/class; `slots` = [{ key, name, active }] for the 1/2 indicator. */
+  /** Active weapon name/class; `slots` = [{ key, name, kind, icon, active }] for the loadout bar. */
   setWeapon(name, kind, slots) {
     this.root.querySelector('.weapon .name').textContent = name;
     this.root.querySelector('.weapon .kind').textContent = kind;
-    if (slots) this.root.querySelector('.wslots').innerHTML = slots.map((s) => `<span class="${s.active ? 'on' : ''}">${s.key}</span>`).join('');
+    if (slots) this.setLoadout(slots);
+  }
+
+  /** Bottom-centre loadout bar: one card per weapon with its key, silhouette and name; the drawn one is lifted. */
+  setLoadout(slots) {
+    this.root.querySelector('.loadout').innerHTML = slots.map((s) => `
+      <div class="slot${s.active ? ' on' : ''}">
+        <span class="key">${s.key}</span>
+        <span class="sil"${s.icon ? ` style="--icon:url(${s.icon})"` : ''}></span>
+        <span class="sname">${s.name}</span>
+      </div>`).join('');
   }
 
   /** Fire modes the active weapon cycles with B (e.g. ['semi', 'burst']). */
   setModes(list) {
-    const label = { auto: 'AUTO', semi: 'SEMI', burst: 'BURST ×3', pump: 'PUMP' };
+    const label = { auto: 'AUTO', semi: 'SEMI', burst: 'BURST ×3', pump: 'PUMP', bolt: 'BOLT' };
     this.el.modesBox.innerHTML = list.map((m) => `<span data-m="${m}">${label[m]}</span>`).join('')
       + (list.length > 1 ? '<span class="label" style="margin-left:auto;align-self:center">B</span>' : '');
     this.el.modes = [...this.el.modesBox.querySelectorAll('span[data-m]')];
@@ -125,16 +126,6 @@ export class HUD {
     l.style.transform = `translateX(${-gap - 9}px)`;
     r.style.transform = `translateX(${gap}px)`;
     this.el.xhair.style.opacity = String(Math.max(0, 1 - gun.adsEased * 2.5) * (mv.sprinting ? 0.35 : 1));
-
-    // movement panel
-    this.el.speed.firstChild.nodeValue = mv.speed.toFixed(1);
-    if (this.el.state.dataset.s !== mv.state) { this.el.state.dataset.s = mv.state; this.el.state.textContent = mv.state.toUpperCase(); }
-    const wr = mv.state === 'wallrun' ? 1 - mv.wallrunT / MOVE.wallrunMaxTime : 0;
-    this.el.wall.style.width = `${(wr * 100).toFixed(1)}%`;
-    this.el.wallT.textContent = mv.state === 'wallrun' ? `${(MOVE.wallrunMaxTime - mv.wallrunT).toFixed(2)}s` : '—';
-    const boost = 1 - Math.max(0, mv.slideBoostT) / MOVE.slideBoostCooldown;
-    this.el.boost.style.width = `${(boost * 100).toFixed(1)}%`;
-    this.el.boostT.textContent = boost >= 1 ? 'ready' : `${Math.max(0, mv.slideBoostT).toFixed(1)}s`;
 
     // weapon panel
     if (gun.ammo !== this.lastAmmo) {

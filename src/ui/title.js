@@ -16,8 +16,8 @@ export class Title {
         <h1>Opus Magnum</h1>
         <div class="mode-pick">
           ${this.modes.map((m) => `
-            <button class="mode card" type="button" data-id="${m.id}">
-              <span class="label">${m.index}</span>
+            <button class="mode card" type="button" data-id="${m.id}" style="--accent:${m.accent ?? 'var(--clay)'}">
+              <span class="mode-top"><span class="label">${m.index}</span><i class="mode-chip"></i></span>
               <b>${m.title}</b>
               <span class="mode-blurb">${m.short ?? ''}</span>
               <span class="mode-go">→</span>
