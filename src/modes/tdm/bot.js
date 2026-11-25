@@ -629,4 +629,7 @@ export class Bot {
   }
 
   showMarker() { if (this.marker) this.marker.visible = true; }
+
+  /** Animate from externally driven pos / vel / aimYaw / aimPitch (networked players). */
+  pose(dt) { if (this.alive) this.#animate(dt); else this.#animateDeath(dt); }
 }

@@ -59,7 +59,16 @@ const MODES = [
     },
   },
   {
-    id: 'editor', index: '03 / CREATE', title: 'Map Editor', short: 'Build your own map', accent: '#9fb4c7', lock: false, blurb: 'Lay out walls, containers, cars and fences on a grid. Saved maps show up here to play.',
+    id: 'online', index: '03 / ONLINE', title: 'Multiplayer', short: 'Play with friends', accent: '#6b6a4f',
+    lobby: { server: /^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? 'ws://localhost:8787' : 'wss://bitter-canavar.tailb7f1ff.ts.net:8443', map: 'builtin-duel' },
+    load: async (mapId, opts) => (await import('./net/online.js')).createOnline({
+      scene, camera, audio, mv, rig, arsenal, getMap,
+      opts: { name: 'Player', room: 'duel', server: MODES.find((m) => m.id === 'online').lobby.server, ...opts, mapId: mapId ?? 'builtin-duel' },
+      buildWorld: async (map) => (await import('./modes/editor/mapWorld.js')).buildMapWorld(scene, map),
+    }),
+  },
+  {
+    id: 'editor', index: '04 / CREATE', title: 'Map Editor', short: 'Build your own map', accent: '#9fb4c7', lock: false, blurb: 'Lay out walls, containers, cars and fences on a grid. Saved maps show up here to play.',
     load: async () => (await import('./modes/editor/editor.js')).createEditor({ renderer, scene, canvas, onExit: () => { location.href = location.pathname; } }),
   },
 ];
@@ -191,11 +200,18 @@ const menu = new Menu(document.getElementById('menu'), {
 menu.ready();
 menu.show(false);
 
-async function startMode(id, mapId = null) {
+async function startMode(id, mapId = null, opts) {
   const mode = MODES.find((m) => m.id === id) ?? MODES[0];
   title.show(false);
   document.querySelector('#hud .brand .label').textContent = mapId ? `${mode.title} · ${getMap(mapId)?.name ?? ''}` : `${mode.title} · 0.3`;
-  level = await mode.load(mapId);
+  try {
+    level = await mode.load(mapId, opts);
+  } catch (err) {
+    if (document.pointerLockElement) document.exitPointerLock();
+    title.show(true);
+    title.notice(err.message);
+    return;
+  }
   if (level.frame) return; // the editor drives its own frame
   mv.octree = level.octree;
   mv.respawn(level.spawn);
@@ -207,10 +223,10 @@ async function startMode(id, mapId = null) {
 const title = new Title(document.getElementById('title'), {
   modes: MODES,
   getMaps: listMaps,
-  onPick: (id, mapId) => {
+  onPick: (id, mapId, opts) => {
     if (MODES.find((m) => m.id === id)?.lock !== false) input.lock(); // inside the click gesture, before the level loads
     audio.init();
-    startMode(id, mapId);
+    startMode(id, mapId, opts);
   },
 });
 

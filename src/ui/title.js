@@ -26,7 +26,8 @@ export class Title {
       </section>`;
     this.root.querySelectorAll('.mode').forEach((b) => b.addEventListener('click', () => {
       const m = this.modes.find((x) => x.id === b.dataset.id);
-      if (m.builtin && this.getMaps().length) this.#maps(m);
+      if (m.lobby) this.#lobby(m);
+      else if (m.builtin && this.getMaps().length) this.#maps(m);
       else this.onPick(m.id, null);
     }));
   }
@@ -44,6 +45,35 @@ export class Title {
         <div class="actions"><button class="btn ghost back" type="button">← Back</button></div>
       </section>`;
     this.root.querySelectorAll('.map').forEach((b) => b.addEventListener('click', () => this.onPick(mode.id, b.dataset.id || null)));
+    this.root.querySelector('.back').addEventListener('click', () => this.#home());
+  }
+
+  /** Multiplayer: name, room code, map (used when you open the room), server. Remembered between visits. */
+  #lobby(mode) {
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem('om.lobby') ?? '{}'); } catch { /* private mode */ }
+    const v = { name: '', room: 'duel', map: mode.lobby.map, server: mode.lobby.server, ...saved };
+    const maps = this.getMaps();
+    this.root.innerHTML = `
+      <section class="sheet card title-sheet" role="dialog" aria-label="Multiplayer">
+        <h1>${mode.title}</h1>
+        <form class="settings lobby">
+          <label><span class="label">Your name</span><input name="name" maxlength="16" value="${esc(v.name)}" placeholder="Player"></label>
+          <label><span class="label">Room code</span><input name="room" maxlength="16" required value="${esc(v.room)}"></label>
+          <label><span class="label">Map · if you open the room</span><select name="map">${maps.map((m) => `<option value="${m.id}"${m.id === v.map ? ' selected' : ''}>${esc(m.name)}</option>`).join('')}</select></label>
+          <label><span class="label">Server</span><input name="server" required value="${esc(v.server)}"></label>
+          <div class="actions"><button class="btn" type="submit">Join room →</button><button class="btn ghost back" type="button">← Back</button></div>
+          <p class="note">Share the room code with your friends. The first one in picks the map.</p>
+        </form>
+      </section>`;
+    const form = this.root.querySelector('form');
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const f = Object.fromEntries(new FormData(form));
+      try { localStorage.setItem('om.lobby', JSON.stringify(f)); } catch { /* private mode */ }
+      this.notice('Connecting…');
+      this.onPick(mode.id, f.map, { name: f.name.trim(), room: f.room.trim(), server: f.server.trim() });
+    });
     this.root.querySelector('.back').addEventListener('click', () => this.#home());
   }
 

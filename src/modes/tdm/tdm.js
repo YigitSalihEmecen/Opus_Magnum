@@ -280,15 +280,15 @@ class TDM {
 const fmtTime = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
-class TdmHud {
-  constructor() {
+export class TdmHud {
+  constructor({ ally = 'Allies', enemy = 'Enemy', limit = SCORE_LIMIT } = {}) {
     const root = (this.root = document.createElement('div'));
     root.className = 'tdm';
     root.innerHTML = `
       <div class="tdm-score card">
-        <div class="side ally"><span class="label">Allies</span><b class="a">0</b></div>
-        <div class="mid"><span class="clock">10:00</span><span class="label">First to ${SCORE_LIMIT}</span></div>
-        <div class="side enemy"><b class="e">0</b><span class="label">Enemy</span></div>
+        <div class="side ally"><span class="label">${esc(ally)}</span><b class="a">0</b></div>
+        <div class="mid"><span class="clock">10:00</span><span class="label">First to ${limit}</span></div>
+        <div class="side enemy"><b class="e">0</b><span class="label">${esc(enemy)}</span></div>
       </div>
       <div class="tdm-feed"></div>
       <div class="tdm-hp card"><div class="row"><span class="label">Health</span><span class="num">150</span></div><div class="bar"><b></b><i></i></div></div>
