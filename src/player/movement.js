@@ -54,6 +54,7 @@ export const MOVE = {
 };
 
 const UP = new THREE.Vector3(0, 1, 0);
+const STEP_UP = 0.3; // ledges this low are walked up, not bumped into
 const STEP = 1 / 120;
 const _ray = new THREE.Ray();
 const _v = new THREE.Vector3();
@@ -433,9 +434,10 @@ export class Movement {
     let onFloor = this.#resolve();
 
     // stick to ground on slopes / step-downs
-    if (!onFloor && wasGrounded && this.vel.y <= 0 && this.jumpLock <= 0) {
+    // (also when cresting a ramp/stairs: the slope left some upward speed that would launch us)
+    if (!onFloor && wasGrounded && this.vel.y <= 4 && this.jumpLock <= 0) {
       this.capsule.translate(_v.set(0, -0.35, 0));
-      if (this.#resolve()) onFloor = true;
+      if (this.#resolve()) { onFloor = true; if (this.vel.y > 0) this.vel.y = 0; }
       else this.capsule.translate(_v.set(0, 0.35, 0));
     }
 
@@ -450,14 +452,40 @@ export class Movement {
     }
   }
 
+  /**
+   * Push the capsule out of the level one triangle at a time (deepest first). Two kinds of contact are
+   * treated specially so tiled floors feel like one surface:
+   *  · seams: side faces / edges whose top is level with the feet (between road tiles, slabs, kerbs)
+   *    are ignored, the floor face beside them holds the capsule;
+   *  · low ledges: while grounded, a vertical face up to STEP_UP tall lifts the capsule onto it.
+   */
   #resolve() {
     let onFloor = false;
-    for (let i = 0; i < 4; i++) {
-      const r = this.octree.capsuleIntersect(this.capsule);
-      if (!r) break;
-      const n = r.normal;
+    const tris = [];
+    for (let i = 0; i < 5; i++) {
+      tris.length = 0;
+      this.octree.getCapsuleTriangles(this.capsule, tris);
+      const feetY = this.capsule.start.y - this.capsule.radius;
+      let best = null, bestDepth = 0, step = 0;
+      for (const tri of tris) {
+        const r = this.octree.triangleCapsuleIntersect(this.capsule, tri);
+        if (!r || r.depth < 1e-5) continue;
+        if (r.normal.y < 0.55) {
+          const top = Math.max(tri.a.y, tri.b.y, tri.c.y) - feetY;
+          if (top < 0.04 && r.normal.y > -0.3) continue; // seam at floor level
+          if (this.grounded && top <= STEP_UP && r.normal.y > -0.2) { step = Math.max(step, top); continue; }
+        }
+        if (r.depth > bestDepth) { bestDepth = r.depth; best = r; }
+      }
+      if (step > 0) {
+        this.capsule.translate(_v.set(0, step + 0.005, 0));
+        onFloor = true;
+        continue;
+      }
+      if (!best) break;
+      const n = best.normal;
       if (n.y > 0.55) { onFloor = true; this.groundNormal.copy(n); }
-      this.capsule.translate(n.clone().multiplyScalar(r.depth));
+      this.capsule.translate(_v.copy(n).multiplyScalar(best.depth));
       const vn = this.vel.dot(n);
       if (vn < 0) this.vel.addScaledVector(n, -vn);
     }
