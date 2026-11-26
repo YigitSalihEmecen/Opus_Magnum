@@ -1,7 +1,7 @@
 const CONTROLS = [
   ['WASD', 'Move'], ['Mouse', 'Look'], ['Space', 'Jump · wall-jump'], ['Shift', 'Sprint (toggle)'],
   ['C / Ctrl', 'Crouch · slide'], ['LMB', 'Fire'], ['RMB', 'Aim down sights'], ['R', 'Reload'],
-  ['1 – 5', 'Switch weapon'], ['E', 'Pick up · swap'], ['T', 'Drop weapon'], ['G', 'Throw grenade'], ['Q', 'Heal'],
+  ['1 – 5', 'Switch weapon'], ['E', 'Pick up · swap'], ['T', 'Drop weapon'], ['G', 'Throw grenade'], ['V', 'Knife'], ['Q', 'Heal'],
   ['X', 'Charge armour'], ['F', 'Gunsmith'], ['B', 'Fire mode'], ['Tab', 'Scoreboard'], ['Esc / P', 'Pause · settings'],
 ];
 

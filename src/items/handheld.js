@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { ITEMS } from './items.js';
+import { buildKnife } from './models/knife.js';
 import { THROW } from './inventory.js';
 import { poseArm } from '../character/robot.js';
 import { characterById } from '../character/characters.js';
@@ -7,7 +8,8 @@ import { characterById } from '../character/characters.js';
 /*
   First-person presentation of the item in use, in the viewmodel scene while the gun is lowered: the right
   hand brings it up, works it (a wobble while healing, a pulsing core while charging), or winds up and
-  throws a grenade. Driven by the inventory's action { id, kind, t, time }.
+  throws a grenade, or swings the knife (weapons/melee.js hands over the pose). Driven by an action
+  { id, kind, t, time } from the inventory or the melee.
   The hand grips the item like a pistol grip (same hand frame and pose as the Lynx), so every character's
   arm fits it.
 */
@@ -22,6 +24,16 @@ const HOLD = {
   grenade: {
     at: [0, -0.115, 0.105, 0, 0, 0], scale: 1.15, frame: [0.15, -0.035, -0.52, 6, 6, 0],
     wind: [0.2, -0.02, -0.46, -30, 15, -10], fling: [0.05, -0.09, -0.72, 35, 0, 6], // cocked back, then the follow-through
+  },
+};
+HOLD.knife = { at: [0, -0.1, 0.112, -62, 0, 0], scale: 1.15 }; // blade tipped forward out of the fist
+/** Held things that aren't inventory items. The knife is rolled about its handle so the flat faces you. */
+const BUILD = {
+  knife: () => {
+    const g = new THREE.Group(), k = buildKnife();
+    k.rotation.y = -1.15;
+    g.add(k);
+    return g;
   },
 };
 const ANCHOR = new THREE.Vector3(0.26, -0.42, 0.18);
@@ -68,7 +80,7 @@ export class Handheld {
 
   #model(id) {
     if (!this.models[id]) {
-      const m = ITEMS[id].build();
+      const m = (BUILD[id] ?? ITEMS[id].build)();
       const h = HOLD[id];
       setPose(m, h.at);
       m.scale.setScalar(h.scale);
@@ -82,7 +94,7 @@ export class Handheld {
   update(dt, action, time) {
     if (action) this.last = { ...action };
     const a = this.last;
-    this.show = THREE.MathUtils.clamp(this.show + (action ? dt : -dt) / 0.2, 0, 1);
+    this.show = THREE.MathUtils.clamp(this.show + (action ? dt : -dt) / (a?.kind === 'melee' ? 0.08 : 0.2), 0, 1);
     const on = this.show > 0 && !!a;
     this.frame.visible = this.arm.upper.visible = on;
     if (!on) return;
@@ -92,7 +104,10 @@ export class Handheld {
     const h = HOLD[a.id];
     let pose = h.frame;
     let shake = 0;
-    if (a.kind === 'throw') {
+    if (a.kind === 'melee') {
+      pose = a.pose;
+      this.hand.userData.setCurl(1.35);
+    } else if (a.kind === 'throw') {
       // hold low → pull the pin → wind back and up → snap forward through the release → follow through
       const wind = ease(THREE.MathUtils.clamp((a.t - THROW.pin) / (THROW.release - THROW.pin - 0.08), 0, 1));
       const fling = ease(THREE.MathUtils.clamp((a.t - (THROW.release - 0.08)) / 0.16, 0, 1));

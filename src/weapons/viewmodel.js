@@ -262,7 +262,8 @@ export class Viewmodel {
   }
 
   /** Lower the weapon out of view (true) or bring it back (false). */
-  holster(on) { this.holstered = on; }
+  /** Lower (or raise) the gun out of view; `time` is how long the drop takes. */
+  holster(on, time = HOLSTER_TIME) { this.holstered = on; this.holsterTime = time; }
   get lowered() { return this.holsterT >= 1; }
 
   // ───────────────────────── public API ─────────────────────────
@@ -366,7 +367,7 @@ export class Viewmodel {
     // inspect transition (eased, with an arcing lift and a roll flourish)
     this.inspectT = THREE.MathUtils.clamp(this.inspectT + (this.inspect ? dt : -dt) / INSPECT_TIME, 0, 1);
     const ie = (this.inspectEase = easeInOut(this.inspectT));
-    this.holsterT = THREE.MathUtils.clamp(this.holsterT + (this.holstered ? dt : -dt) / HOLSTER_TIME, 0, 1);
+    this.holsterT = THREE.MathUtils.clamp(this.holsterT + (this.holstered ? dt : -dt) / (this.holsterTime ?? HOLSTER_TIME), 0, 1);
     const ho = easeIn(this.holsterT);
     const arc = Math.sin(Math.PI * ie);
 

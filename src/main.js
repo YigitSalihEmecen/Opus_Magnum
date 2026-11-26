@@ -24,6 +24,7 @@ import { Inventory } from './items/inventory.js';
 import { Pickups } from './items/pickups.js';
 import { Grenades, BLAST } from './items/grenades.js';
 import { Handheld } from './items/handheld.js';
+import { Melee } from './weapons/melee.js';
 import { ITEM_IDS } from './items/items.js';
 import { VitalsHud } from './ui/vitalsHud.js';
 import { listMaps, getMap, hasSpawns } from './maps/storage.js';
@@ -116,6 +117,7 @@ let pendingSwitch = null;
 let { vm, gun } = arsenal[current];
 const inv = new Inventory({ arsenal, vitals, audio, hud });
 const handheld = new Handheld(vmScene);
+const melee = new Melee({ audio, hud, fx, rig });
 let grenades = null;
 let prompt = null;
 
@@ -150,7 +152,7 @@ const gunsmith = new Gunsmith(document.getElementById('smith'), {
 
 /** F: bring the gun up for the gunsmith (blocked mid-reload / mantle / switch). */
 function setInspect(on) {
-  if (on && (vm.reloading || mv.state === 'mantle' || mv.state === 'vault' || pendingSwitch !== null || inv.busy)) return;
+  if (on && (vm.reloading || mv.state === 'mantle' || mv.state === 'vault' || pendingSwitch !== null || inv.busy || melee.busy)) return;
   vm.setInspect(on);
   gunsmith.setOpen(on);
   hud.setInspecting(on);
@@ -376,14 +378,16 @@ function tick(dt) {
     wasAlive = alive;
     if (!alive) {
       inv.cancel();
+      melee.cancel();
       level.pickups?.release({ gun: current, ammo: gun.ammo, reserve: gun.reserve === Infinity ? 2 * gun.magSize : gun.reserve }, mv.feet.clone());
     }
   }
   // the gun goes down while dead or while the hands are busy with an item
-  const lowered = !alive || inv.busy;
+  const lowered = !alive || inv.busy || melee.busy;
   if (lowered !== wasLowered) {
     wasLowered = lowered;
-    if (lowered) { vm.cancelClip(); vm.holster(true); setInspect(false); } else { vm.holster(false); gun.activate(); }
+    // a knife swing snaps the gun out of the way; items and death lower it at the usual pace
+    if (lowered) { vm.cancelClip(); vm.holster(true, melee.busy ? 0.09 : undefined); setInspect(false); } else { vm.holster(false, 0.18); gun.activate(); }
   }
   if (!inv.carries(current) && pendingSwitch === null && inv.guns.length) switchWeapon(inv.guns[0]);
 
@@ -398,20 +402,22 @@ function tick(dt) {
 
   if (live) {
     if (input.pressed('KeyF') || (vm.inspect && input.clicked(2))) setInspect(!vm.inspect);
-    if (!vm.inspect && !inv.busy) {
+    // V: quick knife swing (the gun drops out of the way and comes back)
+    if (input.pressed('KeyV') && !vm.inspect && !inv.busy && pendingSwitch === null && mv.state !== 'mantle' && mv.state !== 'vault') melee.start();
+    if (!vm.inspect && !inv.busy && !melee.busy) {
       inv.guns.forEach((i, k) => { if (input.pressed(`Digit${k + 1}`)) switchWeapon(i); });
       const n = inv.guns.length, k = inv.guns.indexOf(current);
       if (input.wheel && n > 1) switchWeapon(inv.guns[(k + (input.wheel > 0 ? 1 : -1) + n) % n]);
       if (input.pressed('KeyT') && pendingSwitch === null && inv.drop(current)) switchWeapon(inv.guns[0]);
     }
-    inv.update(dt, { input, blocked: vm.inspect || pendingSwitch !== null || mv.state === 'mantle' || mv.state === 'vault' });
+    inv.update(dt, { input, blocked: vm.inspect || melee.busy || pendingSwitch !== null || mv.state === 'mantle' || mv.state === 'vault' });
     vitals.update(dt);
     // pickups: walk over consumables, E for guns and armour upgrades
     const { touch, look } = level.pickups.nearby(mv.feet, camera);
     if (touch && inv.wants(touch) === 'auto') level.pickups.claim(touch);
     const target = [look, touch].find((p) => p && inv.wants(p) === 'prompt') ?? null;
     prompt = target ? inv.promptFor(target) : null;
-    if (target && input.pressed('KeyE') && !inv.busy && pendingSwitch === null) level.pickups.claim(target);
+    if (target && input.pressed('KeyE') && !inv.busy && !melee.busy && pendingSwitch === null) level.pickups.claim(target);
     // zoom-matched: a mouse inch moves the target the same distance on screen at any magnification
     if (!vm.inspect) rig.look(input, 1 / rig.zoom);
     mv.update(dt, input, rig.yaw);
@@ -422,7 +428,7 @@ function tick(dt) {
   if (view) { camera.position.set(...view.pos); camera.rotation.set((view.pitch ?? 0) * Math.PI / 180, (view.yaw ?? 0) * Math.PI / 180, 0); }
   camera.updateMatrixWorld();
   if (!live) prompt = null;
-  if (live) gun.update(dt, { input, mv, camera, targets, octree: mv.octree, now, blocked: vm.inspect || vm.inspectEase > 0.25 || vm.swapping || pendingSwitch !== null || inv.busy || vm.holsterT > 0 || !inv.carries(current) });
+  if (live) gun.update(dt, { input, mv, camera, targets, octree: mv.octree, now, blocked: vm.inspect || vm.inspectEase > 0.25 || vm.swapping || pendingSwitch !== null || inv.busy || melee.busy || vm.holsterT > 0 || !inv.carries(current) });
   if (live) gunsmith.update(dt, input, rig.sensitivity);
 
   const ads = gun.adsEased;
@@ -431,7 +437,8 @@ function tick(dt) {
   const cursor = vm.inspect ? { x: gunsmith.cursor.x / innerWidth * 2 - 1, y: gunsmith.cursor.y / innerHeight * 2 - 1 } : null;
   vm.update(dt, { mv, axes, mouseDX: vm.inspect ? 0 : input.mouseDX, mouseDY: vm.inspect ? 0 : input.mouseDY, ads, triggerHeld: gun.triggerHeld, cursor });
 
-  handheld.update(dt, inv.action, now);
+  melee.update(dt, { camera, targets, octree: mv.octree, now });
+  handheld.update(dt, inv.action ?? melee.action, now);
   level?.update(dt, { camera, now, gun });
   level.pickups.update(dt);
   grenades.update(dt);
@@ -452,7 +459,7 @@ function tick(dt) {
 let lastError = 0;
 function frame() {
   requestAnimationFrame(frame);
-  const dt = Math.min(clock.getDelta(), 0.05);
+  const dt = Math.min(clock.getDelta(), 0.05) * (window.OM?.timeScale ?? 1); // OM.timeScale: dev slow motion
   if (window.OM?.frozen) return; // OM.frozen = true: only OM.step() advances (frame-exact captures)
   try { tick(dt); } catch (err) {
     if (performance.now() - lastError > 1000) { lastError = performance.now(); console.error(err); }
@@ -469,7 +476,7 @@ drawWeapon(0);
 
 window.OM = {
   get vm() { return vm; }, get gun() { return gun; }, arsenal, switchWeapon, inv, vitals, get grenades() { return grenades; },
-  mv, rig, get level() { return level; }, get lobby() { return lobby; }, scene, vmScene, input, gunsmith, setInspect, startMode,
+  mv, rig, melee, handheld, get level() { return level; }, get lobby() { return lobby; }, scene, vmScene, input, gunsmith, setInspect, startMode,
   step: (n = 1, dt = 1 / 60) => { for (let i = 0; i < n; i++) tick(dt); },
 };
 const params = new URLSearchParams(location.search);

@@ -15,7 +15,7 @@ node server/index.js   # match server for online play (ws://localhost:8787); nod
 ## Controls
 WASD move · Mouse look · Space jump / wall-jump · Shift sprint (toggle) · C or Ctrl crouch/slide ·
 LMB fire · RMB aim · R reload · 1–5 or wheel switch weapon · B fire mode · F gunsmith · Tab scoreboard ·
-E pick up / swap · T drop weapon · G throw grenade · Q heal · X charge armour · Esc or P pause/settings
+E pick up / swap · T drop weapon · G throw grenade · V knife · Q heal · X charge armour · Esc or P pause/settings
 
 ## Items
 Health is 150; armour adds 25 / 50 / 75 on top by tier (light, guard, heavy) and soaks damage first.
@@ -41,7 +41,7 @@ src/
   main.js                 wiring + frame loop, weapon switching, item/pickup flow, dev handle (window.OM)
   core/                   engine-level pieces, no game knowledge
     renderer.js           world + viewmodel passes, outline composite (FX_LAYER skips outlines), quality presets
-    toon.js               palette, cel materials (stepped rim), grid/text textures
+    toon.js               palette, cel materials (stepped rim), editor grid / sign text textures
     input.js              keyboard/mouse with per-frame edges, pointer lock
     audio.js              sample bank + synthesized layers (sub thump, brass, hit sounds, explosions, wind)
   world/
@@ -54,7 +54,9 @@ src/
     vitals.js             health + armour (soak, heal, regen); the server owns them online
   character/
     characters.js         playable robots (Rivet, Kite): build, first-person arms
-    robot.js, kite.js     robot bodies, skeleton, arm IK, baking
+    robot.js, kite.js     robot bodies, skeleton, arm IK, baking, box hit volumes per body segment
+    avatar.js             a body in the world holding a gun: poses, flash, marker, death fall
+                          (bots and online players both drive one)
   weapons/
     weapons.js            ★ weapon definitions: stats, recoil, hand poses, slots (start here)
     gunplay.js            ★ firing, fire modes, pellets, ADS, reload flow, spare ammo, recoil, damage
@@ -62,6 +64,7 @@ src/
     animations.js         ★ reload/equip/pump clips, built from each weapon's hand poses
     anim.js               Hermite-spline keyframe tracks + clip player
     viewmodel.js          pose layering (hip/ADS/sprint/sway/recoil), hands, inspect, attachment swaps
+    melee.js              V knife: three swings (Catmull-Rom posed), sweeping hit test at the strike
     effects.js            tracers, decals, sparks, dust
     models/               parts.js (shared gun kit) + one file per gun
   items/
@@ -71,26 +74,29 @@ src/
     grenades.js           throw physics (bounces, ray-cast vs the octree), fuse, blast reach + falloff
     explosion.js          pooled cel-style blast: one lumpy, noise-shaped fireball with mottled banded fire
                           that cools to smoke; dust ring, embers, scorch
-    handheld.js           first-person item in hand: heal / charge / throw poses
-    models/               kit.js (shared materials) + one file per item
+    handheld.js           first-person item in hand: heal / charge / throw poses, the knife swing
+    models/               kit.js (shared materials) + one file per item, knife.js
+  maps/                   maps, shared by every mode that plays one
+    assets.js             ★ placeable pieces + prefab buildings, waterfront (dock, sea wall, stilt), pool,
+                          item/gun pickups; connectors and adaptive road/sidewalk/dock tiles, rounded bends
+    terrain.js            heightfield ground + sculpt brushes (raise/lower/smooth/flatten)
+    mapWorld.js           saved map → playable world: batched draw calls, slim collision proxy, pickups,
+                          water (map.water: a sheet at that height, and falling in kills)
+    storage.js            maps in localStorage (om.maps) + the built-in ones
+    builtin/              settlement.js ("Saltgrass" city); online rotation: duel.js ("Duel"),
+                          lido.js ("Lido", villa round a drained pool), sluice.js ("Sluice", the water kills)
   modes/tdm/              Team Deathmatch, loaded only when picked (see below)
-    tdm.js                match rules, player death/respawn, loadout, item spots, score, TDM HUD overlay
+    tdm.js                match rules, player death/respawn, loadout, item spots, score
     arena.js              "Kiln" 5v5 map, point-symmetric (+ collision octree, nav grid)
     nav.js                layered walkable grid (floors, stairs, roofs) from the octree, A* + smoothing
-    bot.js                bot body/animation + AI (perception, reaction, aim error, cover)
-  modes/editor/           map editor, loaded only when picked
+    bot.js                bot AI on an Avatar (perception, reaction, aim error, cover)
+  modes/editor/           map editor UI, loaded only when picked
     editor.js             grid, orbit camera, place/select/drag, inspector, undo, open/save UI
-    assets.js             ★ placeable pieces + prefab buildings (and item/gun pickups); connectors and
-                          adaptive road/sidewalk tiles, rounded bends; world-aligned grid UVs
-    terrain.js            heightfield ground + sculpt brushes (raise/lower/smooth/flatten)
-    mapWorld.js           saved map → playable world: batched draw calls, slim collision proxy, pickups
-    maps/                 built-in maps: settlement.js ("Saltgrass" city); online rotation: duel.js ("Duel"),
-                          lido.js ("Lido", villa round a drained pool), sluice.js ("Sluice", the water kills)
-    storage.js            maps in localStorage (om.maps)
   net/
-    online.js             online mode: remote players, snapshots, server-owned vitals, pickups, grenades
+    online.js             online mode: remote players, poses, server-owned vitals, pickups, map vote
   ui/
     hud.js, hud.css       HUD (crosshair, ammo, loadout bar, hit markers) + shared styles (neo-brutalist)
+    matchHud.js, .css     team match overlay (TDM + online): score, kill feed, hurt arrows, end screen
     vitalsHud.js, vitals.css   health + armour card, item chips, pickup prompt, item-use ring
     itemIcons.js, silhouettes.js   item icons / gun silhouettes rendered for the HUD
     gunsmith.js           in-world attachment editor
@@ -108,12 +114,14 @@ build on `core`, `ui` reads game state, and `main.js` wires everything. Movement
 import each other.
 
 **Modes:** `MODES` in `main.js` lists what the title screen offers. Each builds a level
-`{ octree, spawn, targets, update(), pickups?, loadout?, playerAlive?, hurtSelf?, onThrow?, ended? }` on demand. To remove Team Deathmatch,
-delete `src/modes/tdm/` and its `MODES` entry; nothing else imports it. To remove the editor, delete
-`src/modes/editor/`, its `MODES` entry, `customWorld` and the storage import in `main.js`.
+`{ octree, spawn, targets, update(), pickups?, loadout?, playerAlive?, hurtSelf?, onThrow?, ended? }` on demand. Team Deathmatch
+(`src/modes/tdm/`), online play (`src/net/`) and the editor (`src/modes/editor/`) don't import each
+other: delete a folder and its `MODES` entry to remove it. Maps live in `src/maps/` because all of
+them use maps.
 
-**Adding an editor piece:** write a `build(color)` in `modes/editor/assets.js` (origin on the floor,
-forward −Z) and list it in `ASSETS`; it gets a library thumbnail and collision automatically.
+**Adding an editor piece:** write a `build(color)` in `maps/assets.js` (origin on the floor, forward −Z,
+flat colours from `mat()`) and list it in `ASSETS`; it gets a library thumbnail and collision
+automatically.
 
 **Adding a weapon:** write a model in `weapons/models/` (scale it with an inner body group if
 needed), add a definition to `weapons.js`, and give it a fire sound in `core/audio.js`. It shows up as an
