@@ -4,7 +4,8 @@ import { FX_LAYER } from '../core/renderer.js';
 import { gripGun, bakeFlat } from './robot.js';
 import { buildCharacter } from './characters.js';
 import { WEAPONS } from '../weapons/weapons.js';
-import { Motion } from './motion.js';
+import { Motion, BONES } from './motion.js';
+import { Spring, Inertializer } from './smooth.js';
 
 /*
   A character in the world holding a gun: the robot body, the third-person gun with its muzzle flash, the
@@ -15,16 +16,22 @@ import { Motion } from './motion.js';
   stride phase matched to its real speed (run backwards when backpedalling), crouch, air, slide, climbing,
   landing and flinching — then shaped in code: the legs turn toward travel while the torso stays on the aim,
   the body leans into speed, acceleration and turns, and the hands stay on the gun.
+  Nothing snaps (smooth.js): every input (aim, speed, stance, leans, the reload hand) follows its target on a
+  spring, one-shot clips fade in from zero, and the finished pose passes an inertializer that eases out any
+  jump that still gets through. A respawn is the one cut.
 */
 
 const NO_POSE = {};
-const NO_POSE_W = { crouch: 0, slide: 0, wall: 0, air: 0, ads: 0, mantle: 0 };
+const POSE_KEYS = ['crouch', 'slide', 'wall', 'air', 'ads', 'mantle'];
+const NO_POSE_W = Object.fromEntries(POSE_KEYS.map((k) => [k, 0]));
+const HL = { aim: 0.045, speed: 0.09, pose: 0.07, legs: 0.07, lean: 0.1, hand: 0.06 }; // spring halflives (s)
 const STANCE = -0.5; // torso bladed (left shoulder forward) behind the rifle
 const G = {
   flash: new THREE.PlaneGeometry(0.34, 0.34),
   marker: new THREE.OctahedronGeometry(0.1, 0),
 };
 const damp = (a, b, k, dt) => a + (b - a) * (1 - Math.exp(-k * dt));
+const _hand = [0, 0, 0, 0, 0, 0, 0];
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const ss = THREE.MathUtils.smoothstep;
 const UP = new THREE.Vector3(0, 1, 0), RIGHT = new THREE.Vector3(1, 0, 0);
@@ -71,8 +78,11 @@ export class Avatar {
     const b = r.bones;
     this.legs = ['L', 'R'].map((s) => ({ thigh: r.legs[s].thigh, knee: r.legs[s].shin }));
     this.motion = new Motion(b, b.root);
-    Object.assign(this, { cycle: 0, idleT: 0, legYaw: 0, lean: new THREE.Vector2(), lastVel: new THREE.Vector3(), heading: 0, turnRate: 0 });
+    Object.assign(this, { cycle: 0, idleT: 0, lastVel: new THREE.Vector3(), heading: 0, turnRate: 0, live: false });
     this.clipT = { air: 0, slide: 0, climb: 9, land: 9, hit: 9 };
+    this.sm = Object.fromEntries(['yaw', 'pitch', 'speed', 'legYaw', 'leanX', 'leanY', 'hand', ...POSE_KEYS].map((k) => [k, new Spring()]));
+    this.poseW = { ...NO_POSE_W };
+    this.inert = new Inertializer(BONES);
 
     // the gun pitches with the aim from the right shoulder; both hands are solved onto its grips every frame
     this.arms = new THREE.Group();
@@ -125,32 +135,47 @@ export class Avatar {
 
   /** Pose the body from pos / vel / aimYaw / aimPitch / poseTarget / reloadT. */
   animate(dt) {
+    const S = this.sm, tgt = this.poseTarget ?? NO_POSE;
+    const airTgt = Math.max(tgt.air ?? 0, this.hopY > 0 ? 1 : 0);
+    if (!this.live) {
+      // (re)appearing: start from where it is, no easing in from the last life
+      this.live = true;
+      S.yaw.snap(this.aimYaw); S.pitch.snap(this.aimPitch); S.speed.snap(Math.hypot(this.vel.x, this.vel.z));
+      for (const k of ['legYaw', 'leanX', 'leanY', 'hand']) S[k].snap(0);
+      for (const k of POSE_KEYS) S[k].snap(k === 'air' ? airTgt : tgt[k] ?? 0);
+      this.lastVel.copy(this.vel);
+      this.inert.reset();
+      this.body.position.y = 0;
+    }
     this.root.position.copy(this.pos);
     this.root.position.y += this.hopY;
-    this.root.rotation.y = this.aimYaw;
+    const yaw = S.yaw.toAngle(this.aimYaw, HL.aim, dt), pitch = S.pitch.to(this.aimPitch, HL.aim, dt);
+    this.root.rotation.y = yaw;
+    this.pitch = pitch;
 
-    // what the body is doing: networked players set poseTarget, bots only hop; eased so changes blend
-    const w = (this.poseW ??= { crouch: 0, slide: 0, wall: 0, air: 0, ads: 0, mantle: 0 });
-    const tgt = this.poseTarget ?? NO_POSE;
-    const was = { air: w.air, mantle: w.mantle };
-    for (const key in w) w[key] = damp(w[key], key === 'air' ? Math.max(tgt.air ?? 0, this.hopY > 0 ? 1 : 0) : tgt[key] ?? 0, 12, dt);
+    // what the body is doing: networked players set poseTarget, bots only hop; each on a spring so changes blend
+    const w = this.poseW;
+    for (const k of POSE_KEYS) w[k] = S[k].to(k === 'air' ? airTgt : tgt[k] ?? 0, HL.pose, dt);
     const T = this.clipT, C = this.motion.clips;
     for (const k in T) T[k] += dt;
-    if (was.air > 0.5 && w.air <= 0.5) T.land = 0; // touched down
-    if (was.mantle < 0.2 && w.mantle >= 0.2) T.climb = 0;
+    // one-shots start while their weight is still zero, so they never jump in mid-clip
+    if (this.airWas && !airTgt) T.land = 0; // touched down
+    if (!this.mantleWas && tgt.mantle) T.climb = 0;
+    this.airWas = airTgt > 0.5;
+    this.mantleWas = !!tgt.mantle;
     if (this.flash > 0.07) T.hit = 0;
 
     // travel: the legs face it (backpedalling runs the cycle backwards), the torso keeps facing the aim
-    const sp = Math.hypot(this.vel.x, this.vel.z);
+    const sp = S.speed.to(Math.hypot(this.vel.x, this.vel.z), HL.speed, dt);
     let legYaw = 0, dir = 1;
     if (sp > 0.4) {
-      legYaw = wrap(Math.atan2(this.vel.x, this.vel.z) - this.aimYaw);
+      legYaw = wrap(Math.atan2(this.vel.x, this.vel.z) - yaw);
       if (Math.abs(legYaw) > Math.PI / 2) { legYaw = wrap(legYaw + Math.PI); dir = -1; }
       const h = Math.atan2(this.vel.x, this.vel.z);
       this.turnRate = damp(this.turnRate, wrap(h - this.heading) / Math.max(dt, 1e-3), 6, dt);
       this.heading = h;
     } else this.turnRate = damp(this.turnRate, 0, 6, dt);
-    this.legYaw = damp(this.legYaw, THREE.MathUtils.clamp(legYaw, -1.2, 1.2), 10, dt);
+    this.legYaw = S.legYaw.to(THREE.MathUtils.clamp(legYaw, -1.2, 1.2), HL.legs, dt);
 
     // gait weights by speed, and one stride phase advanced at the rate that keeps the feet planted
     const move = ss(sp, 0.25, 1.2);
@@ -176,7 +201,8 @@ export class Avatar {
     // layers: the special states take over from walking; landing and flinches ride on top for a moment
     const special = Math.min(1, w.slide + w.air * (1 - w.mantle) + w.mantle);
     const base = 1 - special, stand = base * (1 - w.crouch), crouch = base * w.crouch;
-    const land = T.land < C.land.duration * 0.6 ? 0.85 * (1 - T.land / (C.land.duration * 0.6)) : 0;
+    const landEnd = C.land.duration * 0.6;
+    const land = T.land < landEnd ? 0.85 * ss(T.land, 0, 0.06) * (1 - ss(T.land, landEnd * 0.3, landEnd)) : 0;
     const hit = T.hit < C.hit.duration ? 0.7 * Math.sin((T.hit / C.hit.duration) * Math.PI) : 0;
     const layers = [
       { clip: 'idle', t: this.idleT, w: stand * (1 - move) },
@@ -200,10 +226,11 @@ export class Avatar {
     // sliding legs swing down from the hips until the feet meet the floor
     if (w.slide > 0.01) m.turn(LEGS, RIGHT, w.slide * Math.asin(THREE.MathUtils.clamp((m.hipsRest.y + m.offset.y - 0.1) / 0.86, 0, 1)));
     m.turn(LOWER, UP, this.legYaw);
-    m.turn(UPPER, RIGHT, -this.aimPitch * 0.35 - w.slide * 0.3 + w.crouch * 0.1);
+    m.turn(UPPER, RIGHT, -pitch * 0.35 - w.slide * 0.3 + w.crouch * 0.1);
     m.turn(['chest', 'neck', 'head', 'shoulder_L', 'shoulder_R'], UP, STANCE * (1 - w.ads * 0.3));
     m.turn(['neck', 'head'], UP, -STANCE * 0.8);
-    m.turn(['neck', 'head'], RIGHT, -this.aimPitch * 0.3 + w.slide * 0.3 + w.ads * 0.08);
+    m.turn(['neck', 'head'], RIGHT, -pitch * 0.3 + w.slide * 0.3 + w.ads * 0.08);
+    this.inert.apply(m.world, m.offset, dt);
     m.apply();
 
     // whole-body lean: forward with speed and when speeding up (back when braking), into turns, into the wall
@@ -211,10 +238,12 @@ export class Avatar {
     this.lastVel.copy(this.vel);
     const fwd = sp > 0.4 ? (ax * this.vel.x + az * this.vel.z) / sp : 0;
     const run = gw[2] * move * base * (1 - w.crouch);
-    this.lean.x = damp(this.lean.x, THREE.MathUtils.clamp(0.1 * run + fwd * 0.018, -0.12, 0.22), 7, dt);
-    this.lean.y = damp(this.lean.y, THREE.MathUtils.clamp(-this.turnRate * sp * 0.025, -0.22, 0.22), 7, dt);
-    this.body.rotation.set(this.lean.x * (1 - w.slide), 0, this.lean.y * base + w.wall * 0.32, 'YXZ');
+    const leanX = S.leanX.to(THREE.MathUtils.clamp(0.1 * run + fwd * 0.018, -0.12, 0.22), HL.lean, dt);
+    const leanY = S.leanY.to(THREE.MathUtils.clamp(-this.turnRate * sp * 0.025, -0.22, 0.22), HL.lean, dt);
+    // on a wall the feet press into it and the head tips away (wall: +1 on the right; +z rolls the head right)
+    this.body.rotation.set(leanX * (1 - w.slide), 0, leanY * base - w.wall * 0.32, 'YXZ');
 
+    this.dt = dt;
     this.#holdGun(w);
 
     this.flashT -= dt;
@@ -229,7 +258,7 @@ export class Avatar {
    * lean are doing: its rotation is the aim, bladed behind the rifle, undone from the chest's and the lean's.
    */
   #holdGun(w) {
-    _aim.setFromEuler(_e.set(-this.aimPitch, STANCE * (1 - w.ads * 0.3), 0, 'YXZ'));
+    _aim.setFromEuler(_e.set(-(this.pitch ?? this.aimPitch), STANCE * (1 - w.ads * 0.3), 0, 'YXZ'));
     _lean.setFromEuler(this.body.rotation).invert();
     this.arms.quaternion.copy(this.motion.world.chest).invert().multiply(_lean).multiply(_aim);
     // aiming: the gun comes up to the eye line and in toward the centre
@@ -237,8 +266,10 @@ export class Avatar {
     // reload: gun dips and rolls, the support hand goes to the magazine; sliding tips it up
     const rl = this.reloadT > 0 ? Math.sin(Math.min(1, this.reloadT / this.reloadTime) * Math.PI) : 0;
     this.arms.quaternion.multiply(_aim.setFromEuler(_e.set(rl * 0.6 + w.slide * 0.3, 0, rl * 0.5)));
-    const poses = this.weapon.poses;
-    gripGun(this.robot, this.gunFrame, poses, { left: rl > 0.3 ? poses.lhMag ?? poses.lhRest : poses.lhRest });
+    // the support hand travels between the grip and the magazine rather than jumping
+    const poses = this.weapon.poses, k = this.sm.hand.to(rl > 0.3 && poses.lhMag ? 1 : 0, HL.hand, this.dt ?? 1 / 60);
+    for (let i = 0; i < 7; i++) _hand[i] = poses.lhRest[i] + ((poses.lhMag ?? poses.lhRest)[i] - poses.lhRest[i]) * k;
+    gripGun(this.robot, this.gunFrame, poses, { left: _hand });
   }
 
   /** One clip exactly as authored, t seconds in, nothing layered on (the animation gallery). */
@@ -253,11 +284,17 @@ export class Avatar {
   /** Topple away from the killing shot (fallDir), then sink and hide. */
   animateDeath(dt) {
     if (!this.root.visible) return;
+    if (this.live) {
+      // the fall starts from the lean it died in
+      this.live = false;
+      this.deathFrom = { x: this.body.rotation.x, z: this.body.rotation.z };
+    }
     this.deathT += dt;
     const t = Math.min(1, this.deathT / 0.55);
-    const ease = 1 - Math.pow(1 - t, 3);
+    const ease = t * t * (3 - 2 * t);
     // topple away from the shot, knees buckle first
-    this.body.rotation.set(-Math.cos(this.fallDir) * ease * 1.45, 0, Math.sin(this.fallDir) * ease * 1.45);
+    const f = this.deathFrom ?? { x: 0, z: 0 };
+    this.body.rotation.set(THREE.MathUtils.lerp(f.x, -Math.cos(this.fallDir) * 1.45, ease), 0, THREE.MathUtils.lerp(f.z, Math.sin(this.fallDir) * 1.45, ease));
     this.legs.forEach((l) => { l.knee.rotation.x = damp(l.knee.rotation.x, 1.2, 8, dt); });
     this.arms.rotation.x = damp(this.arms.rotation.x, 0.8, 6, dt);
     gripGun(this.robot, this.gunFrame, this.weapon.poses);

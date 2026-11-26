@@ -28,6 +28,22 @@ export function motionClips() {
 }
 
 const _a = new THREE.Quaternion(), _b = new THREE.Quaternion(), _q = new THREE.Quaternion(), _inv = new THREE.Quaternion();
+const _k = [0, 0, 0, 0];
+
+/** Catmull-Rom through four keys (quaternions as 4-vectors, aligned to one hemisphere, then normalised):
+ *  smooth through every key, so a clip's motion has no kinks at its 30 fps samples. */
+function cubic(arr, i, k, out) {
+  let px = 0, py = 0, pz = 0, pw = 0;
+  const o = i[1] * 4, rx = arr[o], ry = arr[o + 1], rz = arr[o + 2], rw = arr[o + 3];
+  const k2 = k * k, k3 = k2 * k;
+  const w = [(-k3 + 2 * k2 - k) / 2, (3 * k3 - 5 * k2 + 2) / 2, (-3 * k3 + 4 * k2 + k) / 2, (k3 - k2) / 2];
+  for (let j = 0; j < 4; j++) {
+    const b = i[j] * 4, x = arr[b], y = arr[b + 1], z = arr[b + 2], q = arr[b + 3];
+    const s = x * rx + y * ry + z * rz + q * rw < 0 ? -w[j] : w[j];
+    px += x * s; py += y * s; pz += z * s; pw += q * s;
+  }
+  return out.set(px, py, pz, pw).normalize();
+}
 
 export class Motion {
   /** bones: name → THREE.Bone (rest pose when this runs); root: the object character space is measured in. */
@@ -58,11 +74,12 @@ export class Motion {
       if (L.w <= 1e-4) continue;
       const c = this.clips[L.clip];
       const f = c.loop ? ((L.t / c.duration) % 1 + 1) % 1 * c.frames : THREE.MathUtils.clamp(L.t / c.duration, 0, 1) * (c.frames - 1);
-      const i0 = Math.floor(f) % c.frames, i1 = c.loop ? (i0 + 1) % c.frames : Math.min(c.frames - 1, i0 + 1), k = f - Math.floor(f);
+      const i0 = Math.floor(f) % c.frames, k = f - Math.floor(f), n = c.frames;
+      const key = (j) => (c.loop ? ((i0 + j) % n + n) % n : THREE.MathUtils.clamp(i0 + j, 0, n - 1));
+      _k[0] = key(-1); _k[1] = key(0); _k[2] = key(1); _k[3] = key(2);
+      const i1 = _k[2];
       for (const b of L.bones ?? BONES) {
-        const q = c.q[b];
-        _a.fromArray(q, i0 * 4); _b.fromArray(q, i1 * 4);
-        _a.slerp(_b, k);
+        cubic(c.q[b], _k, k, _a);
         // accumulate the turns (nlerp, kept in one hemisphere)
         const w = L.w, cur = this.world[b];
         if (acc[b] === 0) cur.set(_a.x * w, _a.y * w, _a.z * w, _a.w * w);
