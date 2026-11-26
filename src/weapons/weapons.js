@@ -19,6 +19,14 @@ import { buildShotgunClips, buildBoltClips } from './animations.js';
     slots / attachments / defaults — which attachments fit (ids from attachments.js)
 */
 
+/** Damage by body part: the head uses each gun's headMultiplier, the chest is the base, legs take less. */
+export const ZONE = { body: 1, legs: 0.72 };
+
+/*
+  Damage falloff (stats.falloff): full damage to `start` m, easing down to `min` × at `end` m and beyond.
+  Steep for the SMG and shotgun, gentle for the rifle, almost none for the sniper.
+*/
+
 const ALL_OPTICS = ['iron', 'holo', 'reddot', 'prism2', 'scope3'];
 const MUZZLES = ['comp', 'flash', 'suppressor'];
 const STOCKS = ['skeleton', 'precision'];
@@ -35,6 +43,7 @@ export const WEAPONS = [
       damage: 16,
       headMultiplier: 1.75,
       range: 400,
+      falloff: { start: 22, end: 65, min: 0.72 }, // rifle: holds up at mid range
       adsTime: 0.19,
       reloadRate: 1,
       spread: { hip: 1.4, ads: 0.05, move: 1.2, moveAds: 0.12, air: 2.4, airAds: 0.35, slide: 0.4 },
@@ -73,6 +82,7 @@ export const WEAPONS = [
       damage: 11,
       headMultiplier: 1.5,
       range: 250,
+      falloff: { start: 8, end: 30, min: 0.5 }, // SMG: strong up close, half damage past 30 m
       adsTime: 0.15,
       reloadRate: 1.15,
       spread: { hip: 1.0, ads: 0.1, move: 0.7, moveAds: 0.14, air: 1.7, airAds: 0.4, slide: 0.15 },
@@ -118,6 +128,7 @@ export const WEAPONS = [
       pelletAds: 0.7, // aimed, the ring is 30% tighter
       headMultiplier: 1.5,
       range: 70,
+      falloff: { start: 6, end: 20, min: 0.4 }, // per pellet, on top of the close bonus
       adsTime: 0.22,
       reloadRate: 1,
       spread: { hip: 0.5, ads: 0.1, move: 0.5, moveAds: 0.1, air: 1.2, airAds: 0.3, slide: 0.1 },
@@ -160,6 +171,7 @@ export const WEAPONS = [
       damage: 17,
       headMultiplier: 2,
       range: 200,
+      falloff: { start: 10, end: 35, min: 0.6 },
       adsTime: 0.13,
       reloadRate: 1.3,
       spread: { hip: 0.8, ads: 0.08, move: 0.55, moveAds: 0.12, air: 1.4, airAds: 0.35, slide: 0.2 },
@@ -202,6 +214,7 @@ export const WEAPONS = [
       damage: 155, // one body shot drops a full-health (150) target
       headMultiplier: 1.5,
       range: 600,
+      falloff: { start: 60, end: 200, min: 0.92 }, // sniper: barely drops
       adsTime: 0.3,
       reloadRate: 1,
       // wild from the hip and on the move; dead on when scoped and still

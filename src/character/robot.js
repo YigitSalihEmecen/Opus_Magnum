@@ -472,7 +472,7 @@ function hitProxies(root, bones) {
     m.position.copy(c);
     m.visible = false;
     m.name = `hit_${seg.name}`;
-    m.userData.zone = seg === bones.head ? 'head' : 'body';
+    m.userData.zone = seg === bones.head ? 'head' : /^(thigh|shin)_/.test(seg.name) ? 'legs' : 'body';
     seg.add(m);
     out.push(m);
   }

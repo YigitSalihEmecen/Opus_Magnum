@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Avatar } from '../../character/avatar.js';
 import { MAX_HP } from '../../player/vitals.js';
+import { ZONE } from '../../weapons/weapons.js';
 
 /*
   TDM bot: an Avatar (character/avatar.js) driven by a small state machine. What makes it feel human:
@@ -67,10 +68,14 @@ export class Bot extends Avatar {
     _segA.copy(this.pos).setY(this.pos.y + 0.25 + this.hopY);
     _segB.copy(this.pos).setY(this.pos.y + 1.42 + this.hopY);
     const r = raySegment(ray, _segA, _segB);
-    return r.dist < 0.3 ? { dist: r.t, zone: 'body' } : null;
+    if (r.dist >= 0.3) return null;
+    // below the hips is the legs
+    const y = ray.origin.y + ray.direction.y * r.t - this.pos.y - this.hopY;
+    return { dist: r.t, zone: y < 0.85 ? 'legs' : 'body' };
   }
 
-  takeDamage(dmg, zone, attacker, dir) {
+  /** weapon: what did it (an arsenal id, 'knife', 'grenade'), for the kill feed. */
+  takeDamage(dmg, zone, attacker, dir, weapon) {
     if (!this.alive) return false;
     const now = this.world.now;
     this.hp -= dmg;
@@ -84,16 +89,16 @@ export class Bot extends Avatar {
       this.#notice(attacker, true);
     }
     if (this.hp <= 0) {
-      this.#die(attacker, zone === 'head', dir);
+      this.#die(attacker, zone === 'head', dir, weapon);
       return true;
     }
     return false;
   }
 
   /** Gunplay (the player's guns) talks to hitboxes through this; allies take no friendly fire. */
-  damage(amount, zone, point, dir) {
+  damage(amount, zone, point, dir, now, weapon) {
     if (!this.alive || this.team === 'ally') return null;
-    return { killed: this.takeDamage(amount, zone, this.world.player, dir) };
+    return { killed: this.takeDamage(amount, zone, this.world.player, dir, weapon) };
   }
 
   // ── lifecycle ──
@@ -144,11 +149,11 @@ export class Bot extends Avatar {
     this.body.position.y = 0;
   }
 
-  #die(killer, head, dir) {
+  #die(killer, head, dir, weapon) {
     this.alive = false;
     this.deathT = 0;
     this.fallDir = dir ? Math.atan2(dir.x, dir.z) - this.yaw : Math.PI;
-    this.world.onKill(killer, this, head);
+    this.world.onKill(killer, this, head, weapon);
   }
 
   // ── per frame ──
@@ -446,9 +451,11 @@ export class Bot extends Avatar {
     }
     const end = eye.clone().addScaledVector(_dir, bestD);
     if (best) {
-      const falloff = THREE.MathUtils.clamp(1 - (bestD - 30) / 90, 0.65, 1);
-      const dmg = Math.round(g.dmg * falloff * (best.zone === 'head' ? g.head : 1));
-      best.e.takeDamage(dmg, best.zone, this, _dir.clone());
+      // the same falloff and body-part damage as the player's guns
+      const fo = this.weapon.stats.falloff;
+      const falloff = fo ? THREE.MathUtils.lerp(1, fo.min, THREE.MathUtils.smoothstep(bestD, fo.start, fo.end)) : 1;
+      const dmg = Math.round(g.dmg * falloff * (best.zone === 'head' ? g.head : ZONE[best.zone] ?? 1));
+      best.e.takeDamage(dmg, best.zone, this, _dir.clone(), this.weapon.id);
     } else if (worldHit) {
       this.world.fx.impact(end, worldHit.triangle.getNormal(new THREE.Vector3()));
     }

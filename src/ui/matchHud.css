@@ -16,7 +16,10 @@
 .tdm-feed .card.out { opacity: 0; transform: translateX(12px); }
 .tdm-feed .ally { color: #5b7590; }
 .tdm-feed .enemy { color: #b4532f; }
-.tdm-feed em { font-style: normal; color: var(--cloud); }
+.tdm-feed em { display: flex; align-items: center; gap: 4px; font-style: normal; color: var(--cloud); }
+.tdm-feed em img { height: 18px; width: auto; display: block; }
+.tdm-feed em b { color: var(--clay, #d97757); font-size: 11px; }
+.tdm-feed em i { font: 700 10px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; }
 
 
 .tdm-vignette { position: absolute; inset: 0; opacity: 0; background: radial-gradient(ellipse at center, transparent 52%, rgba(217, 119, 87, 0.55) 100%); }

@@ -1,4 +1,5 @@
 import './matchHud.css';
+import { weaponIcon } from './weaponIcons.js';
 
 /*
   Team match overlay shared by Team Deathmatch and online play: the score bar with clock and limit, the
@@ -50,10 +51,14 @@ export class MatchHud {
     this.el.clock.textContent = fmtTime(time);
   }
 
-  feed(killer, victim, head) {
+  /** weapon: arsenal id, 'knife', 'grenade' or 'fall'; its silhouette sits between the names. */
+  feed(killer, victim, head, weapon) {
     const row = document.createElement('div');
     row.className = 'card';
-    row.innerHTML = `<span class="${killer.team}">${esc(killer.name)}</span><em>${head ? '◆' : '▸'}</em><span class="${victim.team}">${esc(victim.name)}</span>`;
+    const icon = weapon && weapon !== 'fall' ? weaponIcon(weapon) : null;
+    const how = icon ? `<img src="${icon}" alt="">` : weapon === 'fall' ? '<i>fell</i>' : '▸';
+    const self = killer.name === victim.name;
+    row.innerHTML = `${self ? '' : `<span class="${killer.team}">${esc(killer.name)}</span>`}<em>${how}${head ? '<b>◆</b>' : ''}</em><span class="${victim.team}">${esc(victim.name)}</span>`;
     this.el.feed.prepend(row);
     setTimeout(() => row.classList.add('out'), 5000);
     setTimeout(() => row.remove(), 5600);
@@ -80,11 +85,12 @@ export class MatchHud {
     }
   }
 
+  /** t: seconds to the respawn, or a line of text (online: you sit out until the round ends). */
   death(name, t) {
     this.el.death.hidden = !name;
     if (name) {
       this.el.who.textContent = name;
-      this.el.cd.textContent = t > 0 ? `Redeploy in ${Math.ceil(t)}` : 'Redeploying';
+      this.el.cd.textContent = typeof t === 'string' ? t : t > 0 ? `Redeploy in ${Math.ceil(t)}` : 'Redeploying';
     }
   }
 

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { findAttachment, loadoutStats } from './attachments.js';
 import { MOVE } from '../player/movement.js';
+import { ZONE } from './weapons.js';
 
 const D2R = Math.PI / 180;
 
@@ -230,11 +231,12 @@ export class Gunplay {
       const normal = hit.normal ?? (hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : _dir.clone().negate());
       const dummy = hit.object?.userData.dummy;
       if (dummy) {
-        const head = hit.object.userData.zone === 'head';
-        const cb = this.S.closeBonus;
+        const zone = hit.object.userData.zone, head = zone === 'head';
+        const cb = this.S.closeBonus, fo = this.S.falloff;
         const close = cb ? 1 + (cb.mult - 1) * THREE.MathUtils.clamp((cb.end - hit.distance) / (cb.end - cb.full), 0, 1) : 1;
-        const dmg = this.S.damage * close * (head ? this.S.headMultiplier : 1);
-        const res = dummy.damage(dmg, hit.object.userData.zone, hit.point, _dir, now);
+        const fall = fo ? THREE.MathUtils.lerp(1, fo.min, THREE.MathUtils.smoothstep(hit.distance, fo.start, fo.end)) : 1;
+        const dmg = this.S.damage * close * fall * (head ? this.S.headMultiplier : ZONE[zone] ?? 1);
+        const res = dummy.damage(dmg, zone, hit.point, _dir, now, this.def.id);
         if (res) {
           const t = tally.get(dummy) ?? { dmg: 0, head: false, killed: false, point: hit.point };
           t.dmg += dmg;
