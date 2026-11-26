@@ -437,17 +437,47 @@ export function finishRobot({ root, links, ...rest }) {
   const bones = {};
   root.traverse((o) => { if (o.isBone) bones[o.name] = o; });
   const skeleton = new THREE.Skeleton(Object.values(bones));
-  const hitboxes = [];
-  root.traverse((o) => {
-    if (!o.isMesh) return;
-    let p = o.parent, isHead = false;
-    while (p) { if (p === bones.head || p === bones.neck) isHead = true; p = p.parent; }
-    o.userData.zone = isHead ? 'head' : 'body';
-    hitboxes.push(o);
-  });
   const update = () => { root.updateMatrixWorld(true); for (const l of links) l(); };
   update();
-  return { root, bones, skeleton, hitboxes, update, flashMats: baked, ...rest };
+  return { root, bones, skeleton, hitboxes: hitProxies(root, bones), update, flashMats: baked, ...rest };
+}
+
+// one rough box per body segment, a little bigger than the plating; hands and feet ride with their limb
+const SEGMENTS = ['head', 'chest', 'spine', 'hips', 'shoulder_L', 'shoulder_R', 'upperArm_L', 'upperArm_R', 'forearm_L', 'forearm_R', 'thigh_L', 'thigh_R', 'shin_L', 'shin_R'];
+const HIT_PAD = 0.045;
+const hitMat = new THREE.MeshBasicMaterial();
+
+/**
+ * Invisible box hit volumes on the bones, sized from the model's own parts in the build pose. Shots and
+ * blasts test these instead of the detailed mesh: cheaper to raycast, and no gaps between thin limbs.
+ */
+function hitProxies(root, bones) {
+  const boxes = new Map(), box = new THREE.Box3(), inv = new THREE.Matrix4();
+  root.traverse((o) => {
+    if (!o.isMesh || !o.visible) return;
+    let seg = o.parent;
+    while (seg && !(seg.isBone && SEGMENTS.includes(seg.name === 'neck' ? 'head' : seg.name))) seg = seg.parent;
+    if (!seg) return;
+    if (seg.name === 'neck') seg = bones.head;
+    if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+    inv.copy(seg.matrixWorld).invert().multiply(o.matrixWorld);
+    box.copy(o.geometry.boundingBox).applyMatrix4(inv);
+    boxes.set(seg, (boxes.get(seg) ?? new THREE.Box3()).union(box));
+  });
+  const out = [];
+  for (const [seg, b] of boxes) {
+    b.expandByScalar(HIT_PAD);
+    const size = b.getSize(new THREE.Vector3()), c = b.getCenter(new THREE.Vector3());
+    const m = new THREE.Mesh(new THREE.BoxGeometry(size.x, size.y, size.z), hitMat);
+    m.position.copy(c);
+    m.visible = false;
+    m.name = `hit_${seg.name}`;
+    m.userData.zone = seg === bones.head ? 'head' : 'body';
+    seg.add(m);
+    out.push(m);
+  }
+  root.updateMatrixWorld(true);
+  return out;
 }
 
 // ───────────────────────────── holding a gun ─────────────────────────────
