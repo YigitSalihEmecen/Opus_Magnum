@@ -305,7 +305,7 @@ class TDM {
     if (p.alive) {
       p.shield = Math.max(0, p.shield - dt);
       this.ui.hurt(this.vitals.hp / PLAYER_HP, null); // vignette follows health (regen and heals happen in Vitals)
-      if (this.mv.feet.y < -20) this.#respawnPlayer();
+      if (this.mv.feet.y < (this.arena.killY ?? -20)) this.#respawnPlayer();
     } else if (!this.ended) {
       p.deathT += dt;
       this.ui.death(p.killer?.name, Math.max(0, RESPAWN_PLAYER - p.deathT));

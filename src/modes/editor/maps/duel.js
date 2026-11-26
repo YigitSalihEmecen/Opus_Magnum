@@ -89,5 +89,5 @@ export function duel() {
   put('item_armour3', 0, 12.6);
   put('gun_kestrel', 0, -11.2);
 
-  return { id: 'builtin-duel', builtin: true, name: 'Duel', size: 64, updated: 0, pieces };
+  return { id: 'builtin-duel', builtin: true, online: true, name: 'Duel', size: 64, updated: 0, pieces };
 }

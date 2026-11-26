@@ -4,10 +4,12 @@
 */
 import { settlement } from './maps/settlement.js';
 import { duel } from './maps/duel.js';
+import { lido } from './maps/lido.js';
+import { sluice } from './maps/sluice.js';
 
 const KEY = 'om.maps';
 let builtins;
-const BUILTIN = () => (builtins ??= [settlement(), duel()]);
+const BUILTIN = () => (builtins ??= [settlement(), duel(), lido(), sluice()]);
 
 function readAll() {
   try { return JSON.parse(localStorage.getItem(KEY) ?? '{}'); } catch { return {}; }

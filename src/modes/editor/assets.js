@@ -919,6 +919,64 @@ function podium(color, ctx) {
   return g;
 }
 
+/**
+ * Drained swimming pool, 14 × 7 inside, sunk into the ground: shallow end (-X, 1.15 m, steps) sloping to a
+ * deep end (+X, 2.3 m, ladder, diving board, a puddle). The paved surround reaches 10 × 6 from the centre
+ * so it covers the terrain's 2 m lattice bank: dig the ground under it to -3 m first (inside ±8 × ±4).
+ */
+const POOL = { x: 7, z: 3.5, shallow: 1.15, deep: 2.3, outX: 10, outZ: 6 };
+let waterMat;
+function pool(color) {
+  const g = new THREE.Group();
+  const { x: X, z: Z, shallow: S, deep: D, outX, outZ } = POOL;
+  const deco = (m) => { m.userData.noCollide = true; return m; };
+  const t = 0.3, top = -0.05;
+  // basin floor: flat shallow end, an incline, flat deep end
+  gbox(g, 4, t, 2 * Z, -X + 2, -S - t / 2, 0, color);
+  gbox(g, 5, t, 2 * Z, X - 2.5, -D - t / 2, 0, color);
+  const run = 5, fall = D - S, a = Math.atan2(fall, run), len = Math.hypot(run, fall);
+  const inc = gbox(g, len + 0.1, t, 2 * Z, -0.5, -(S + D) / 2 - t / 2 / Math.cos(a), 0, color);
+  inc.rotation.z = -a;
+  // liner walls down to below the deep floor
+  const bottom = -D - t, h = top - bottom;
+  for (const sx of [-1, 1]) gbox(g, t, h, 2 * Z + 2 * t, sx * (X + t / 2), bottom + h / 2, 0, color);
+  for (const sz of [-1, 1]) gbox(g, 2 * X, h, t, 0, bottom + h / 2, sz * (Z + t / 2), color);
+  // waterline tile band and lane marks
+  const band = mat(P.slate);
+  for (const sx of [-1, 1]) deco(sbox(g, 0.03, 0.18, 2 * Z, sx * (X - 0.015), -0.3, 0, band));
+  for (const sz of [-1, 1]) deco(sbox(g, 2 * X, 0.18, 0.03, 0, -0.3, sz * (Z - 0.015), band));
+  deco(sbox(g, 3.4, 0.02, 0.22, -X + 2.2, -S + 0.01, 0, band));
+  deco(sbox(g, 4.4, 0.02, 0.22, X - 2.6, -D + 0.01, 0, band));
+  deco(sbox(g, 0.22, 0.02, 1.4, X - 0.55, -D + 0.01, 0, band));
+  // paved surround (walkable), its edges flush with the ground beyond
+  const pave = P.ivory, dt = 0.13, dy = top + dt / 2;
+  for (const sx of [-1, 1]) gbox(g, outX - X, dt, 2 * outZ, sx * (X + outX) / 2, dy, 0, pave);
+  for (const sz of [-1, 1]) gbox(g, 2 * X, dt, outZ - Z, 0, dy, sz * (Z + outZ) / 2, pave);
+  // rounded coping over the lip
+  const cope = mat(P.pampas);
+  for (const sx of [-1, 1]) rbox(g, 0.5, 0.14, 2 * Z + 0.5, sx * (X + 0.05), top + dt + 0.03, 0, cope, 0.05);
+  for (const sz of [-1, 1]) rbox(g, 2 * X - 0.4, 0.14, 0.5, 0, top + dt + 0.03, sz * (Z + 0.05), cope, 0.05);
+  // shallow-end steps (each under a step-up's height)
+  const lip = top + dt, rise = (S + lip) / 4;
+  for (let i = 1; i <= 3; i++) { const hgt = S + lip - rise * i; gbox(g, 0.5, hgt, 3, -X + 0.25 + (i - 1) * 0.5, -S + hgt / 2, 0, pave); }
+  // deep-end ladder (decoration: climb out up the slope or the steps)
+  const rail = mat(P.cloud);
+  for (const sz of [-0.3, 0.3]) {
+    deco(add(g, cyl(0.03, D + 0.9, 8), rail, X - 0.16, (0.9 - D) / 2, -2 + sz));
+    const hook = deco(add(g, new THREE.TorusGeometry(0.16, 0.03, 6, 12, Math.PI), rail, X + 0.0, 0.9, -2 + sz));
+    hook.rotation.y = Math.PI / 2;
+  }
+  for (let y = -D + 0.35; y < 0; y += 0.42) deco(sbox(g, 0.05, 0.04, 0.6, X - 0.16, y, -2, rail));
+  // diving board over the deep end
+  gbox(g, 0.8, 0.5, 0.9, X + 1.9, top + dt + 0.25, 0, P.cloud);
+  rbox(g, 3.4, 0.09, 0.62, X + 0.4, top + dt + 0.56, 0, mat(P.sky), 0.04);
+  // a puddle left at the deep end
+  waterMat ??= Object.assign(toon(0x7cc0d2, { rim: 0 }), { transparent: true, opacity: 0.55, depthWrite: false });
+  const water = deco(add(g, new THREE.PlaneGeometry(4.6, 2 * Z - 0.2).rotateX(-Math.PI / 2), waterMat, X - 2.4, -D + 0.12, 0));
+  water.castShadow = false;
+  return g;
+}
+
 /** Single-storey row of three shops, 12 × 8, awnings on the street side. */
 function shopRow(color, ctx) {
   const g = new THREE.Group();
@@ -1191,6 +1249,7 @@ export const ASSETS = [
   { id: 'room', cat: 'Buildings', name: 'Room', note: 'stacks · auto-joins', colors: [P.manilla, P.ivory, P.sky, P.sage, P.kraft, P.clay, P.bookcloth, P.oat, P.slate], tile: 4, build: room },
   { id: 'tower3', cat: 'Buildings', name: 'Tower · 3', note: '12 × 12 · enterable', colors: [P.ivory, P.manilla, P.oat, P.sky, P.sage, P.kraft, P.slate], snap: 2, build: tower(3) },
   { id: 'tower5', cat: 'Buildings', name: 'Tower · 5', note: '12 × 12 · roof access', colors: [P.oat, P.ivory, P.manilla, P.sky, P.sage, P.bookcloth, P.slate], snap: 2, build: tower(5) },
+  { id: 'pool', cat: 'Buildings', name: 'Pool', note: '14 × 7 · dig ground to -3 first', colors: [P.sky, P.ivory, P.sage], snap: 2, build: pool },
   { id: 'podium', cat: 'Buildings', name: 'Podium', note: '12 × 12 terrace', colors: [P.manilla, P.oat, P.ivory, P.kraft], snap: 2, build: podium },
   { id: 'shoprow', cat: 'Buildings', name: 'Shop row', note: '12 × 8', colors: [P.ivory, P.manilla, P.sky, P.sage, P.kraft], snap: 2, build: shopRow },
   { id: 'house', cat: 'Buildings', name: 'House', note: '8 × 8 · gabled', colors: [P.ivory, P.manilla, P.sage, P.sky, P.kraft], snap: 2, build: house },

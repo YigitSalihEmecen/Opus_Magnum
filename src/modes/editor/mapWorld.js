@@ -57,6 +57,13 @@ export function buildMapWorld(scene, map) {
 
   // no wall at the edge: the land rolls on into hills, and an invisible fence keeps players in
   group.add(outerLand(h, half * 2, groundAt));
+  // flooded maps: a sheet of water at map.water, and anyone who falls in is out (killY)
+  if (map.water !== undefined) {
+    const water = new THREE.Mesh(new THREE.PlaneGeometry(half * 2 + 160, half * 2 + 160).rotateX(-Math.PI / 2), toon(0x5d93a6, { rim: 0 }));
+    water.position.y = map.water;
+    water.receiveShadow = true;
+    group.add(water);
+  }
   let peak = 0;
   for (const v of h) peak = Math.max(peak, v);
   const bottom = LIMIT.min - 0.1, top = peak + 12;
@@ -91,6 +98,7 @@ export function buildMapWorld(scene, map) {
     spawns,
     pickups,
     spawn: spawns.ally[0],
+    killY: map.water !== undefined ? map.water - 0.4 : undefined,
     bounds: { minX: -half, maxX: half, minZ: -half, maxZ: half, cell: 1 },
     dispose: () => scene.remove(group),
   };

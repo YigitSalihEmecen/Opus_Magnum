@@ -84,7 +84,8 @@ src/
                           adaptive road/sidewalk tiles, rounded bends; world-aligned grid UVs
     terrain.js            heightfield ground + sculpt brushes (raise/lower/smooth/flatten)
     mapWorld.js           saved map → playable world: batched draw calls, slim collision proxy, pickups
-    maps/                 built-in maps: settlement.js ("Saltgrass" city), duel.js ("Duel", online 1v1)
+    maps/                 built-in maps: settlement.js ("Saltgrass" city); online rotation: duel.js ("Duel"),
+                          lido.js ("Lido", villa round a drained pool), sluice.js ("Sluice", the water kills)
     storage.js            maps in localStorage (om.maps)
   net/
     online.js             online mode: remote players, snapshots, server-owned vitals, pickups, grenades
