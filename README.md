@@ -96,6 +96,8 @@ src/
     bot.js                bot AI on an Avatar (perception, reaction, aim error, cover)
   modes/editor/           map editor UI, loaded only when picked
     editor.js             grid, orbit camera, place/select/drag, inspector, undo, open/save UI
+  modes/gallery/          animation gallery, loaded only when picked
+    gallery.js            every captured clip and every in-game movement state on both robots; [ ] \ time
   net/
     online.js             online mode: remote players, poses, server-owned vitals, pickups, map vote
   ui/
@@ -120,8 +122,8 @@ import each other.
 
 **Modes:** `MODES` in `main.js` lists what the title screen offers. Each builds a level
 `{ octree, spawn, targets, update(), pickups?, loadout?, playerAlive?, hurtSelf?, onThrow?, ended? }` on demand. Team Deathmatch
-(`src/modes/tdm/`), online play (`src/net/`) and the editor (`src/modes/editor/`) don't import each
-other: delete a folder and its `MODES` entry to remove it. Maps live in `src/maps/` because all of
+(`src/modes/tdm/`), online play (`src/net/`), the editor (`src/modes/editor/`) and the animation gallery
+(`src/modes/gallery/`) don't import each other: delete a folder and its `MODES` entry to remove it. Maps live in `src/maps/` because all of
 them use maps.
 
 **Measurements:** pieces share one set of sizes (top of `maps/assets.js`): 4 m bays, 3.5 m storeys, a

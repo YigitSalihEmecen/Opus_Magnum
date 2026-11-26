@@ -18,6 +18,7 @@ import { Motion } from './motion.js';
 */
 
 const NO_POSE = {};
+const NO_POSE_W = { crouch: 0, slide: 0, wall: 0, air: 0, ads: 0, mantle: 0 };
 const STANCE = -0.5; // torso bladed (left shoulder forward) behind the rifle
 const G = {
   flash: new THREE.PlaneGeometry(0.34, 0.34),
@@ -209,11 +210,23 @@ export class Avatar {
     this.lean.y = damp(this.lean.y, THREE.MathUtils.clamp(-this.turnRate * sp * 0.025, -0.22, 0.22), 7, dt);
     this.body.rotation.set(this.lean.x * (1 - w.slide), 0, this.lean.y * base + w.wall * 0.32, 'YXZ');
 
-    // the gun rides on the chest (it bobs with the stride) but points where they aim, whatever the torso and
-    // the lean are doing: its rotation is the aim, bladed behind the rifle, undone from the chest's and the lean's
+    this.#holdGun(w);
+
+    this.flashT -= dt;
+    this.flashMesh.visible = this.flashT > 0;
+    this.flash = Math.max(0, (this.flash ?? 0) - dt);
+    const e = this.flash > 0 ? 0.5 : 0;
+    for (const mt of this.mats) mt.emissive.setScalar(e);
+  }
+
+  /**
+   * The gun rides on the chest (it bobs with the stride) but points where they aim, whatever the torso and the
+   * lean are doing: its rotation is the aim, bladed behind the rifle, undone from the chest's and the lean's.
+   */
+  #holdGun(w) {
     _aim.setFromEuler(_e.set(-this.aimPitch, STANCE * (1 - w.ads * 0.3), 0, 'YXZ'));
     _lean.setFromEuler(this.body.rotation).invert();
-    this.arms.quaternion.copy(m.world.chest).invert().multiply(_lean).multiply(_aim);
+    this.arms.quaternion.copy(this.motion.world.chest).invert().multiply(_lean).multiply(_aim);
     // aiming: the gun comes up to the eye line and in toward the centre
     this.arms.position.set(-0.1 + w.ads * 0.05, 0.24 + w.ads * 0.1, 0.02 + w.ads * 0.04);
     // reload: gun dips and rolls, the support hand goes to the magazine; sliding tips it up
@@ -221,12 +234,15 @@ export class Avatar {
     this.arms.quaternion.multiply(_aim.setFromEuler(_e.set(rl * 0.6 + w.slide * 0.3, 0, rl * 0.5)));
     const poses = this.weapon.poses;
     gripGun(this.robot, this.gunFrame, poses, { left: rl > 0.3 ? poses.lhMag ?? poses.lhRest : poses.lhRest });
+  }
 
-    this.flashT -= dt;
-    this.flashMesh.visible = this.flashT > 0;
-    this.flash = Math.max(0, (this.flash ?? 0) - dt);
-    const e = this.flash > 0 ? 0.5 : 0;
-    for (const mt of this.mats) mt.emissive.setScalar(e);
+  /** One clip exactly as authored, t seconds in, nothing layered on (the animation gallery). */
+  showClip(name, t) {
+    this.root.position.copy(this.pos);
+    this.root.rotation.y = this.aimYaw;
+    this.body.rotation.set(0, 0, 0);
+    this.motion.blend([{ clip: name, t, w: 1 }]).apply();
+    this.#holdGun(NO_POSE_W);
   }
 
   /** Topple away from the killing shot (fallDir), then sink and hide. */

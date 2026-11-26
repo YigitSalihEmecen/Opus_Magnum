@@ -44,8 +44,9 @@ const vmCamera = new THREE.PerspectiveCamera(54, innerWidth / innerHeight, 0.01,
     play:  { octree, spawn, targets, update(dt, ctx), playerAlive?, ended? }
     owner: { frame(dt) }  — takes over the whole frame (the map editor)
   load(mapId) gets a saved custom map's id, or null for the mode's own map.
-  TDM (src/modes/tdm/), online play (src/net/) and the editor (src/modes/editor/) are only loaded when
-  picked and don't depend on each other: delete a folder and its entry here to remove it. Maps
+  TDM (src/modes/tdm/), online play (src/net/), the editor (src/modes/editor/) and the animation gallery
+  (src/modes/gallery/) are only loaded when picked and don't depend on each other: delete a folder and its
+  entry here to remove it. Maps
   (src/maps/) are shared by all of them.
 */
 const customWorld = async (mapId) => (await import('./maps/mapWorld.js')).buildMapWorld(scene, getMap(mapId));
@@ -88,6 +89,11 @@ const MODES = [
   {
     id: 'editor', index: '04 / CREATE', title: 'Map Editor', short: 'Build your own map', accent: '#9fb4c7', lock: false, blurb: 'Lay out walls, containers, cars and fences on a grid. Saved maps show up here to play.',
     load: async () => (await import('./modes/editor/editor.js')).createEditor({ renderer, scene, canvas, onExit: () => { location.href = location.pathname; } }),
+  },
+  {
+    id: 'gallery', index: '05 / LAB', title: 'Animation Gallery', short: 'Every robot animation', accent: '#87867f',
+    blurb: 'Every captured clip and every in-game movement state on both robots, side by side. [ and ] change the speed.',
+    load: async () => (await import('./modes/gallery/gallery.js')).createGallery({ scene, hud, buildWorld: async (map) => (await import('./maps/mapWorld.js')).buildMapWorld(scene, map) }),
   },
 ];
 let level = null;
