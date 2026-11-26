@@ -3,15 +3,17 @@ import { Octree } from 'three/examples/jsm/math/Octree.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { PALETTE as P, toon } from '../core/toon.js';
 import { buildPiece, buildJoints, makeContext } from './assets.js';
-import { terrainMesh, setHeights, heightsOf, heightAt, LIMIT, terrainMaterial, tintGround } from './terrain.js';
+import { terrainMesh, setHeights, heightsOf, heightAt, segOf, LIMIT, terrainMaterial, tintGround } from './terrain.js';
 import { applySky } from '../world/sky.js';
+import { Doors } from './doors.js';
 import { pickupSpec } from '../items/items.js';
 import { WEAPONS } from '../weapons/weapons.js';
 
 /*
   Turns a saved map into a playable world. The result fits both level users:
-    explore (main.js): octree · spawn · raycastTargets · pickups
-    TDM arena:         octree · raycastTargets · spawns { ally, enemy } · pickups · bounds · dispose()  (TDM builds nav + hotspots)
+    explore (main.js): octree · spawn · raycastTargets · pickups · doors
+    TDM arena:         octree · raycastTargets · spawns { ally, enemy } · pickups · doors · bounds · dispose()  (TDM builds nav + hotspots)
+  Ground-level doorways (and placed door pieces) become working doors (doors.js); main.js makes them solid.
   Item and gun pieces aren't built into the world: they come out as pickups [{ type, gun?, position }].
 */
 
@@ -21,13 +23,13 @@ export const MAP_SIZE = 96; // buildable square, metres
 export function buildMapScene(map, group) {
   const size = map.size ?? MAP_SIZE;
   const h = heightsOf(map, size);
-  const ground = terrainMesh(size);
-  setHeights(ground, h);
+  const ground = terrainMesh(size, { seg: segOf(h) });
+  setHeights(ground, h, { grass: !map.terrain?.plain });
   group.add(ground);
   const groundAt = (x, z) => heightAt(h, size, x, z);
   const ctx = makeContext(map.pieces, groundAt);
   const spawns = { ally: [], enemy: [] };
-  const pickups = [];
+  const pickups = [], doors = [];
   const weaponIds = WEAPONS.map((w) => w.id);
   for (const rec of map.pieces) {
     if (/^(item|gun)_/.test(rec.type)) {
@@ -40,10 +42,23 @@ export function buildMapScene(map, group) {
       continue;
     }
     const piece = buildPiece(rec, ctx(rec));
-    if (piece) group.add(piece);
+    if (!piece) continue;
+    // doorways at ground level get working doors (a placed door piece is one by itself, not built here)
+    piece.updateMatrixWorld(true);
+    piece.traverse((o) => { for (const way of o.userData.doorways ?? []) doorway(o, way, rec.type === 'door'); });
+    if (rec.type !== 'door') group.add(piece);
   }
   group.add(buildJoints(map.pieces, groundAt));
-  return { size, h, groundAt, spawns, pickups };
+  return { size, h, groundAt, spawns, pickups, doors };
+
+  function doorway(o, way, placed) {
+    const c = new THREE.Vector3((way.x0 + way.x1) / 2, 0, 0).applyMatrix4(o.matrixWorld);
+    if (!placed && Math.abs(c.y - groundAt(c.x, c.z)) > 0.45) return;
+    if (doors.some((d) => Math.hypot(d.cx - c.x, d.cz - c.z) < 0.5)) return;
+    const p = new THREE.Vector3().setFromMatrixPosition(o.matrixWorld);
+    const yaw = new THREE.Euler().setFromRotationMatrix(o.matrixWorld, 'YXZ').y;
+    doors.push({ x: p.x, y: p.y, z: p.z, yaw, way, cx: c.x, cz: c.z });
+  }
 }
 
 export function buildMapWorld(scene, map) {
@@ -53,7 +68,7 @@ export function buildMapWorld(scene, map) {
   atmosphere(scene, group, half);
 
   const world = new THREE.Group();
-  const { spawns, groundAt, h, pickups } = buildMapScene(map, world);
+  const { spawns, groundAt, h, pickups, doors: doorSpots } = buildMapScene(map, world);
 
   // no wall at the edge: the land rolls on into hills, and an invisible fence keeps players in
   group.add(outerLand(h, half * 2, groundAt));
@@ -99,6 +114,7 @@ export function buildMapWorld(scene, map) {
     pickups,
     spawn: spawns.ally[0],
     killY: map.water !== undefined ? map.water - 0.4 : undefined,
+    doors: new Doors(group, doorSpots),
     bounds: { minX: -half, maxX: half, minZ: -half, maxZ: half, cell: 1 },
     dispose: () => scene.remove(group),
   };

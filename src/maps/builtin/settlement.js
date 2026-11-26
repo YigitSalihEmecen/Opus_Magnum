@@ -110,8 +110,8 @@ export function settlement() {
 
     // ── stair court: street → landing (3.5) → deck (7) ──
     put('stairs', X(3), sz * (6 + 3), stairRot(0, 1), 0, P.oat);
-    put('floor', X(3), sz * (6 + 8), 0, 3.2, P.oat);
-    put('floor', X(4), sz * (6 + 8), 0, 3.2, P.oat);
+    put('floor', X(3), sz * (6 + 8), 0, ST, P.oat);
+    put('floor', X(4), sz * (6 + 8), 0, ST, P.oat);
     put('stairs', X(4), sz * (6 + 13), stairRot(0, 1), ST, P.oat);
     for (const z of [12.4, 15.6]) put('pillar', (X(3) + X(4)) / 2, sz * z, 0, 0, P.oat); // the landing's open span
     if (top(4, 4) > 2) mark(4, 4, 2, 'door', sideOf(0, -1)); else mark(4, 4, 1, 'open', sideOf(0, -1));
@@ -211,7 +211,7 @@ export function settlement() {
   for (const s of [-1, 1]) {
     put('container', s * 62.6, -3.1, 90, 0, s < 0 ? P.sky : P.clay);
     put('container', s * 62.6, 3.1, 90, 0, s < 0 ? P.sage : P.kraft);
-    put('container', s * 62.6, 0.2, 86, 2.6, s < 0 ? P.clay : P.sky);
+    put('container', s * 62.6, 0.2, 86, 2.4, s < 0 ? P.clay : P.sky);
     for (const x of [-2, 2]) put('jersey', x, s * 39.2, 0, 0, P.oat);
     for (const x of [49, 55, 61]) onGround('pole', -s * x, 7.2 * s, 0, P.kraft);
   }

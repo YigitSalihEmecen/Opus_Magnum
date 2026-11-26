@@ -3,8 +3,8 @@ import { WebSocketServer } from 'ws';
 
 /*
   Opus Magnum match server. Rooms by code; two teams (a, b). Gun-game rounds: every round all players get the
-  same random weapon; the first kill ends the round, and after ROUND_PAUSE everyone is back at their base with
-  a new weapon. First team to LIMIT round wins (or the higher score when the clock runs out) takes the match,
+  same random weapon; a round ends when one team has nobody left standing (the dead wait it out), and after
+  ROUND_PAUSE everyone is back at their base with a new weapon. Rounds won are the score. First team to LIMIT round wins (or the higher score when the clock runs out) takes the match,
   then the room restarts on its own.
   Clients own their movement and hit detection (friends-only trust model); the server owns HP, armour, kills,
   score, rounds, the clock and who got which pickup, and relays poses at TICK Hz.
@@ -17,16 +17,18 @@ import { WebSocketServer } from 'ws';
 
   client → server   hello { v, name, room, char, mapId, map?, maps, weapons } · fire { o, d, w, sup } · hit { id, zone, dmg }
                     s { q: [px, py, pz, vx, vy, vz, yaw, pitch, weapon, state, flags, wallSide, clientMs] }
+                    hit { id, zone, dmg, w? }  (w: what did it — arsenal id, 'knife', 'grenade', 'fall')
                     take { id } · drop { w, p, ammo, reserve } · vit { op: heal|wear|charge, v } · nade { p, v, f }
-                    vote { map } · ping { c }
+                    door { id, open, dir } · vote { map } · ping { c }
   server → client   welcome { v, id, team, mapId, map, players, score, limit, time, round, items, vote? }
                     join { player } · leave { id } · s { id, al, q } · fire { id, ... } · hurt { hp, ar, am, by?, dmg? }
-                    kill { k, v, head, score } · took { id, by } · back { id } · dropped { id, w, p, ammo, reserve }
+                    kill { k, v, head, w, score } · took { id, by } · back { id } · dropped { id, w, p, ammo, reserve }
+                    door { id, open, dir } (doors: welcome.doors [[id, open, dir]], all shut each round)
                     nade { id, p, v, f } · round { n, weapon, score } · end { score, vote } · votes { tally }
                     restart { score, time, mapId } · pong { c } · error { msg }
 */
 
-export const PROTOCOL = 2;
+export const PROTOCOL = 3;
 
 const PORT = Number(process.env.PORT ?? 8787);
 // only the Funnel proxy (and this machine) should reach the server; nothing else on the LAN
@@ -63,7 +65,7 @@ function join(ws, msg) {
   let room = rooms.get(code);
   if (!room) {
     if (rooms.size >= MAX_ROOMS) return send(ws, { t: 'error', msg: 'Server is busy' }), null;
-    room = { code, players: new Map(), score: { a: 0, b: 0 }, mapId: String(msg.mapId ?? ''), map: msg.map && typeof msg.map === 'object' && Array.isArray(msg.map.pieces) && msg.map.pieces.length < 20000 ? msg.map : null, time: MATCH_TIME, ended: false, endT: 0, pauseT: 0, weapons: Math.min(16, Math.max(1, msg.weapons | 0)) || 5, maps: (Array.isArray(msg.maps) ? msg.maps : []).slice(0, 8).map((m) => clean(m, 32)).filter(Boolean), round: null, taken: new Map(), drops: new Map(), dropN: 0, votes: new Map() };
+    room = { code, players: new Map(), score: { a: 0, b: 0 }, mapId: String(msg.mapId ?? ''), map: msg.map && typeof msg.map === 'object' && Array.isArray(msg.map.pieces) && msg.map.pieces.length < 20000 ? msg.map : null, time: MATCH_TIME, ended: false, endT: 0, pauseT: 0, weapons: Math.min(16, Math.max(1, msg.weapons | 0)) || 5, maps: (Array.isArray(msg.maps) ? msg.maps : []).slice(0, 8).map((m) => clean(m, 32)).filter(Boolean), round: null, taken: new Map(), drops: new Map(), dropN: 0, votes: new Map(), doors: new Map() };
     room.round = { n: 1, weapon: pickWeapon(room) };
     rooms.set(code, room);
   }
@@ -74,7 +76,7 @@ function join(ws, msg) {
     alive: room.pauseT <= 0, kills: 0, deaths: 0, hp: MAX_HP, armour: 0, armourMax: 0, lastHurt: -99, shieldUntil: now() + SHIELD, sentHp: MAX_HP,
   };
   room.players.set(p.id, p);
-  send(ws, { t: 'welcome', v: PROTOCOL, id: p.id, team: p.team, mapId: room.mapId, map: room.map, players: [...room.players.values()].map(pub), score: room.score, limit: LIMIT, time: room.time, ended: room.ended, vote: room.ended ? voteState(room) : undefined, round: room.round, items: { taken: [...room.taken.keys()], drops: [...room.drops].map(([id, d]) => ({ id, ...d })) } });
+  send(ws, { t: 'welcome', v: PROTOCOL, id: p.id, team: p.team, mapId: room.mapId, map: room.map, players: [...room.players.values()].map(pub), score: room.score, limit: LIMIT, time: room.time, ended: room.ended, vote: room.ended ? voteState(room) : undefined, round: room.round, items: { taken: [...room.taken.keys()], drops: [...room.drops].map(([id, d]) => ({ id, ...d })) }, doors: [...room.doors].map(([id, d]) => [id, d.open, d.dir]) });
   broadcast(room, { t: 'join', player: pub(p) }, p);
   console.log(`${p.name} joined ${code} (${room.players.size})`);
   return p;
@@ -85,6 +87,9 @@ function leave(p) {
   room.players.delete(p.id);
   room.votes.delete(p.id);
   broadcast(room, { t: 'leave', id: p.id });
+  // the last one standing on a team walking out ends the round too
+  const winner = !room.ended && room.pauseT <= 0 && roundWinner(room);
+  if (winner) { room.score[winner]++; broadcast(room, { t: 'roundWon', team: winner, score: room.score }); closeRound(room, winner); }
   if (!room.players.size) rooms.delete(room.code);
   console.log(`${p.name} left ${room.code} (${room.players.size})`);
 }
@@ -106,11 +111,25 @@ function hit(p, msg) {
   v.alive = false;
   if (!self) p.kills++;
   v.deaths++;
-  const team = self ? (p.team === 'a' ? 'b' : 'a') : p.team;
-  room.score[team]++;
-  broadcast(room, { t: 'kill', k: p.id, v: v.id, head: msg.zone === 'head', score: room.score });
-  if (room.score[team] >= LIMIT) end(room);
-  else room.pauseT = ROUND_PAUSE; // the round is over: a short beat, then everyone resets
+  const winner = roundWinner(room);
+  if (winner) room.score[winner]++;
+  broadcast(room, { t: 'kill', k: p.id, v: v.id, head: msg.zone === 'head', w: clean(msg.w, 12) || undefined, score: room.score });
+  if (winner) closeRound(room, winner);
+}
+
+/** The team still standing once the other has nobody alive (both sides must have players). */
+function roundWinner(room) {
+  const up = { a: 0, b: 0 }, all = { a: 0, b: 0 };
+  for (const q of room.players.values()) { all[q.team]++; if (q.alive) up[q.team]++; }
+  if (!all.a || !all.b) return null;
+  if (!up.a && up.b) return 'b';
+  if (!up.b && up.a) return 'a';
+  return null;
+}
+
+function closeRound(room, winner) {
+  if (room.score[winner] >= LIMIT) end(room);
+  else room.pauseT = ROUND_PAUSE; // a short beat, then everyone resets
 }
 
 /** First claim wins: a map item comes back after ITEM_RESPAWN s (or next round), a dropped gun is gone. */
@@ -155,7 +174,8 @@ function nextRound(room) {
   room.pauseT = 0;
   room.round = { n: (room.round?.n ?? 0) + 1, weapon: pickWeapon(room) };
   for (const p of room.players.values()) Object.assign(p, { alive: true, hp: MAX_HP, armour: 0, armourMax: 0, lastHurt: -99, shieldUntil: now() + SHIELD });
-  room.taken.clear(); // every map item back in place, dropped guns gone
+  room.taken.clear(); // every map item back in place, dropped guns gone, doors shut
+  room.doors.clear();
   room.drops.clear();
   broadcast(room, { t: 'round', ...room.round, score: room.score });
 }
@@ -249,6 +269,14 @@ wss.on('connection', (ws) => {
         if (Array.isArray(msg.q) && msg.q.length === 13 && msg.q.every(Number.isFinite)) broadcast(p.room, { t: 's', id: p.id, al: p.alive ? 1 : 0, q: msg.q }, p);
         break;
       case 'vote': vote(p, msg); break;
+      case 'door': {
+        const id = clean(msg.id, 8);
+        if (!/^o\d{1,4}$/.test(id) || (!p.room.doors.has(id) && p.room.doors.size >= 512)) break;
+        const d = { open: !!msg.open, dir: Math.sign(+msg.dir || 1) };
+        p.room.doors.set(id, d);
+        broadcast(p.room, { t: 'door', id, ...d }, p);
+        break;
+      }
       case 'fire':
         if (p.alive && vec(msg.o) && vec(msg.d)) broadcast(p.room, { t: 'fire', id: p.id, o: msg.o, d: msg.d, w: msg.w | 0, sup: !!msg.sup }, p);
         break;

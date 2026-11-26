@@ -91,7 +91,7 @@ export function lido() {
   }
 
   // the middle: prizes in and over the pool, cover along the pool ends
-  put('gun_kestrel', 8.4, 0, 0, 0.67);
+  put('gun_kestrel', 8.4, 0, 0, 0.6);
   put('item_armour3', 5.2, 0, 0, -2.3);
   put('item_medkit', -5.4, 0, 0, -1.15);
   put('item_armour2', -12, 0);

@@ -20,7 +20,7 @@ import { Pickups } from '../items/pickups.js';
   Delete src/net/ and its MODES entry in main.js to remove multiplayer.
 */
 
-export const PROTOCOL = 2; // server/index.js PROTOCOL
+export const PROTOCOL = 3; // server/index.js PROTOCOL
 const SEND_HZ = 30;
 const INTERP = 80;
 const COAST = 120; // ms of extrapolation past the newest pose
@@ -71,17 +71,18 @@ class Remote extends Avatar {
   }
 
   /** Pellets and same-frame hits add up here; Online sends them as one hit per frame. */
-  damage(amount, zone) {
+  damage(amount, zone, point, dir, now, weapon) {
     if (!this.alive || this.team === 'ally') return null;
     const h = (this.pending ??= { dmg: 0, head: false });
     h.dmg += amount;
     h.head ||= zone === 'head';
+    h.w = weapon;
     return { killed: false };
   }
 
   flushHits() {
     if (!this.pending) return;
-    this.world.send({ t: 'hit', id: this.id, zone: this.pending.head ? 'head' : 'body', dmg: Math.round(this.pending.dmg * 10) / 10 });
+    this.world.send({ t: 'hit', id: this.id, zone: this.pending.head ? 'head' : 'body', dmg: Math.round(this.pending.dmg * 10) / 10, w: this.pending.w });
     this.pending = null;
   }
 
@@ -163,6 +164,7 @@ class Online {
     this.#setArena(arena, mapId);
     for (const id of welcome.items?.taken ?? []) this.pickups.take(this.pickups.byId(id));
     for (const d of welcome.items?.drops ?? []) this.pickups.drop({ gun: d.w, ammo: d.ammo, reserve: d.reserve }, new THREE.Vector3(...d.p), d.id);
+    for (const [id, open, dir] of welcome.doors ?? []) this.doors.set(id, open, dir, true);
     this.id = welcome.id;
     this.team = welcome.team;
     this.foe = this.team === 'a' ? 'b' : 'a';
@@ -206,6 +208,8 @@ class Online {
     this.octree = arena.octree;
     this.pickups = new Pickups(this.scene, { octree: arena.octree, spots: arena.pickups, net: this });
     this.pickups.onTaken = (p) => this.#heard(p.pos, 'magIn', 0.35);
+    this.doors = arena.doors;
+    this.doors.onToggle = (id, open, dir) => this.send({ t: 'door', id, open, dir });
   }
 
   /** The vote moved the room to another map: tear this one down and build that one where we stand. */
@@ -216,6 +220,7 @@ class Online {
       const onGrant = this.pickups.onGrant;
       this.arena.dispose();
       this.pickups.dispose();
+      this.doors.dispose();
       this.#setArena(await this.buildWorld(map), mapId);
       this.pickups.onGrant = onGrant;
       for (const r of this.remotes.values()) r.buf.length = 0;
@@ -235,7 +240,7 @@ class Online {
   onThrow(g) { this.send({ t: 'nade', p: round(g.pos), v: round(g.vel), f: +g.fuse.toFixed(2) }); }
 
   /** Our own grenade caught us: the server takes it off our health like any hit. */
-  hurtSelf(dmg) { this.send({ t: 'hit', id: this.id, zone: 'blast', dmg }); }
+  hurtSelf(dmg) { this.send({ t: 'hit', id: this.id, zone: 'blast', dmg, w: 'grenade' }); }
 
   send(msg) { if (this.ws.readyState === 1) this.ws.send(JSON.stringify(msg)); }
 
@@ -321,11 +326,17 @@ class Online {
         break;
       }
       case 'kill': {
+        const won = ['a', 'b'].find((t) => m.score[t] > this.score[t]); // this kill finished a team off
         this.score = m.score;
         this.#score();
         const killer = this.#who(m.k), victim = this.#who(m.v);
-        for (const [id, k] of [[m.k, 'kills'], [m.v, 'deaths']]) { const s = this.stats.get(id) ?? { kills: 0, deaths: 0 }; s[k]++; this.stats.set(id, s); }
-        this.ui.feed(killer, victim, m.head);
+        for (const [id, k] of [[m.k, 'kills'], [m.v, 'deaths']]) {
+          if (k === 'kills' && m.k === m.v) continue;
+          const s = this.stats.get(id) ?? { kills: 0, deaths: 0 };
+          s[k]++;
+          this.stats.set(id, s);
+        }
+        this.ui.feed(killer, victim, m.head, m.w);
         if (m.v === this.id) {
           this.alive = false;
           this.vitals.set({ hp: 0 });
@@ -341,8 +352,14 @@ class Online {
             this.audio.hit('kill', m.head);
           }
         }
+        if (won) this.ui.toast(won === this.team ? 'Round won' : 'Round lost');
         break;
       }
+      case 'roundWon':
+        this.score = m.score;
+        this.#score();
+        this.ui.toast(m.team === this.team ? 'Round won' : 'Round lost');
+        break;
       case 'round':
         this.round = m;
         this.score = m.score;
@@ -367,6 +384,7 @@ class Online {
         break;
       case 'took': this.pickups.grant(m.id, m.by === this.id); break;
       case 'back': this.pickups.restore(m.id); break;
+      case 'door': this.doors.set(m.id, m.open, m.dir); break;
       case 'dropped': this.pickups.drop({ gun: m.w, ammo: m.ammo, reserve: m.reserve }, new THREE.Vector3(...m.p), m.id); break;
       case 'nade': this.grenades?.spawn(new THREE.Vector3(...m.p), new THREE.Vector3(...m.v), { mine: false, fuse: m.f }); break;
       case 'pong': this.rtt = performance.now() - m.c; break;
@@ -437,6 +455,7 @@ class Online {
     this.inv.reset(this.loadout);
     this.vitals.reset();
     this.pickups.reset();
+    this.doors.reset();
     this.alive = true;
     this.ui.death(null);
     this.ui.hurt(1, null);
@@ -500,7 +519,7 @@ class Online {
     if (this.alive) {
       if (this.arena.killY !== undefined && mv.feet.y < this.arena.killY) {
         // in the water: that's the round (once; the server's kill takes it from here)
-        if (!this.drowned) { this.drowned = true; this.send({ t: 'hit', id: this.id, zone: 'fall', dmg: 999 }); this.audio.play('land', { volume: 0.6, rate: 0.5 }); }
+        if (!this.drowned) { this.drowned = true; this.send({ t: 'hit', id: this.id, zone: 'fall', dmg: 999, w: 'fall' }); this.audio.play('land', { volume: 0.6, rate: 0.5 }); }
       } else if (mv.feet.y < -20) { mv.respawn(this.spawn); this.rig.yaw = this.spawn.yaw; }
       if (gun && gun.sinceShot === 0) {
         camera.getWorldDirection(_a);
@@ -508,7 +527,7 @@ class Online {
       }
     } else {
       this.deathT += dt;
-      this.ui.death(this.killer, Math.max(0, 2.2 - this.deathT));
+      this.ui.death(this.killer, 'Out until the round ends');
     }
 
     // a steady cadence: carry the remainder over instead of restarting the timer each send

@@ -87,6 +87,7 @@ class TDM {
     this.ui.score(this.score, this.time);
   }
 
+  get doors() { return this.arena.doors; }
   get playerAlive() { return this.player.alive; }
 
   /** Custom maps only give a few spawn markers and no roam points: fill both in from the nav grid. */
@@ -134,7 +135,7 @@ class TDM {
   }
 
   /** A grenade of ours caught us. */
-  hurtSelf(dmg) { this.player.takeDamage(dmg, 'body', this.player); }
+  hurtSelf(dmg) { this.player.takeDamage(dmg, 'body', this.player, null, 'grenade'); }
 
   dispose() {
     this.pickups.dispose();
@@ -180,13 +181,13 @@ class TDM {
     }
   }
 
-  onKill(killer, victim, head) {
+  onKill(killer, victim, head, weapon) {
     if (this.ended) return;
     if (killer !== victim) killer.kills = (killer.kills ?? 0) + 1;
     victim.deaths = (victim.deaths ?? 0) + 1;
     const team = victim.team === 'ally' ? 'enemy' : 'ally';
     this.score[team]++;
-    this.ui.feed(killer, victim, head);
+    this.ui.feed(killer, victim, head, weapon);
     if (killer === this.player) this.ui.toast(`Eliminated ${victim.name}`, head);
     if (victim !== this.player) this.respawns.push({ bot: victim, t: RESPAWN_BOT });
     this.ui.score(this.score, this.time);
@@ -225,9 +226,11 @@ class TDM {
         _a.copy(mv.feet).setY(mv.feet.y + 0.3);
         _b.copy(mv.feet).setY(mv.feet.y + mv.height - 0.4);
         const r = raySegment(ray, _a, _b);
-        return r.dist < 0.34 ? { dist: r.t, zone: 'body' } : null;
+        if (r.dist >= 0.34) return null;
+        const y = ray.origin.y + ray.direction.y * r.t - mv.feet.y;
+        return { dist: r.t, zone: y < mv.height * 0.47 ? 'legs' : 'body' };
       },
-      takeDamage(dmg, zone, attacker) {
+      takeDamage(dmg, zone, attacker, dir, weapon) {
         if (!this.alive || this.shield > 0 || tdm.ended) return false;
         tdm.vitals.damage(dmg);
         tdm.ui.hurt(tdm.vitals.hp / PLAYER_HP, attacker === this ? null : tdm.#bearing(attacker.pos));
@@ -237,7 +240,7 @@ class TDM {
           this.alive = false;
           this.deathT = 0;
           this.killer = attacker;
-          tdm.onKill(attacker, this, zone === 'head');
+          tdm.onKill(attacker, this, zone === 'head', weapon);
           tdm.ui.death(attacker.name, RESPAWN_PLAYER);
           return true;
         }

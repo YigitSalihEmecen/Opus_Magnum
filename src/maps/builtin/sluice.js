@@ -44,7 +44,7 @@ export function sluice() {
   for (const x of [-2, 2]) for (const z of [-2, 2]) dock(x, z);
   put('container', 0, 0, 90, 0, P.ivory);
   for (const x of [-1.9, 1.9]) put('crate', x, x < 0 ? -1.2 : 1.2, 0, 0, P.kraft);
-  for (const x of [-6, -2, 2, 6]) put('floor', x, -10, 0, 3.2, P.manilla);
+  for (const x of [-6, -2, 2, 6]) put('floor', x, -10, 0, 3.5, P.manilla);
   for (const x of [-6.6, 0, 6.6]) for (const z of [-11.4, -8.6]) stilt(x, z, 3.2);
   put('parapet', -2, -12, 0, 3.5, P.manilla);
   put('parapet', 2, -12, 0, 3.5, P.manilla);
@@ -52,7 +52,7 @@ export function sluice() {
 
   // south platform and the plank to the island
   for (const x of [-4, 0, 4]) dock(x, 10);
-  put('floor_strip', 0, 6, 90, -0.3, P.kraft);
+  put('floor_strip', 0, 6, 90, 0, P.kraft);
   put('jersey', 0, 11, 0, 0, P.ivory);
 
   // the lock wall along the south edge: one long face to wallrun along between the piers and the platform
@@ -86,7 +86,7 @@ export function sluice() {
 
     // middle: a container barge riding in the channel
     put('container', s * 8, -2, 0, WATER - 0.3, team);
-    put('gun_snake', s * 8, -2, 0, WATER - 0.3 + 2.6);
+    put('gun_snake', s * 8, -2, 0, WATER - 0.3 + 2.4);
 
     put('item_grenade', s * 4, 10);
     put('lamp', s * 12.7, -7.3, 0, 0, P.slate);
@@ -94,7 +94,7 @@ export function sluice() {
 
   // prizes
   put('gun_kestrel', 0, -10, 0, 3.5);
-  put('item_armour3', 0, 0, 0, 2.6);
+  put('item_armour3', 0, 0, 0, 2.4);
   put('gun_grizzly', 0, -3.5);
   put('item_medkit', 0, 3.5);
   put('item_charger', 2.5, 9.4);

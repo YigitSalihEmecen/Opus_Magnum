@@ -6,7 +6,7 @@ const PORT = 8899;
 const srv = spawn('node', ['index.js'], { cwd: import.meta.dirname, env: { ...process.env, PORT, LIMIT: 3, END_PAUSE: 1 } });
 await new Promise((r) => srv.stdout.once('data', r));
 
-function client(name) {
+function client(name, room = 'test') {
   const ws = new WebSocket(`ws://localhost:${PORT}`, { origin: 'http://localhost:5173' });
   const inbox = [];
   ws.on('message', (d) => inbox.push(JSON.parse(d)));
@@ -19,7 +19,7 @@ function client(name) {
       setTimeout(poll, 10);
     })();
   });
-  return new Promise((r) => ws.on('open', () => { ws.send(JSON.stringify({ t: 'hello', v: 2, name, room: 'test', mapId: 'builtin-duel', maps: ['builtin-duel', 'builtin-lido', 'builtin-sluice'], weapons: 5 })); r({ ws, next, inbox, send: (m) => ws.send(JSON.stringify(m)) }); }));
+  return new Promise((r) => ws.on('open', () => { ws.send(JSON.stringify({ t: 'hello', v: 3, name, room, mapId: 'builtin-duel', maps: ['builtin-duel', 'builtin-lido', 'builtin-sluice'], weapons: 5 })); r({ ws, next, inbox, send: (m) => ws.send(JSON.stringify(m)) }); }));
 }
 
 const a = await client('A');
@@ -44,10 +44,11 @@ assert.equal(a.inbox.filter((m) => m.t === 's').length, 0);
 
 a.send({ t: 'hit', id: wb.id, zone: 'body', dmg: 100 });
 assert.equal((await b.next('hurt')).hp, 50);
-a.send({ t: 'hit', id: wb.id, zone: 'head', dmg: 100 });
+a.send({ t: 'hit', id: wb.id, zone: 'head', dmg: 100, w: 'panther' });
 const kill = await a.next('kill');
 assert.equal(kill.v, wb.id);
 assert.equal(kill.head, true);
+assert.equal(kill.w, 'panther'); // the kill feed shows what did it
 assert.equal(kill.score[wa.team], 1);
 assert.equal((await b.next('hurt')).hp, 0);
 a.send({ t: 'hit', id: wb.id, zone: 'body', dmg: 100 }); // round over: no more damage
@@ -104,11 +105,37 @@ const restart = await b.next('restart');
 assert.equal(restart.mapId, 'builtin-sluice');
 assert.deepEqual(restart.score, { a: 0, b: 0 });
 
+// doors: a push is relayed to the others and kept for whoever joins later
+a.send({ t: 'door', id: 'o3', open: true, dir: -1 });
+const door = await b.next('door');
+assert.deepEqual([door.id, door.open, door.dir], ['o3', true, -1]);
+b.send({ t: 'door', id: 'nope', open: true }); // not a door id: ignored
+await new Promise((r) => setTimeout(r, 100));
+assert.equal(a.inbox.filter((m) => m.t === 'door').length, 0);
+
 // a client on another protocol is told why
 const old = new WebSocket(`ws://localhost:${PORT}`, { origin: 'http://localhost:5173' });
-const err = await new Promise((r) => { old.on('open', () => old.send(JSON.stringify({ t: 'hello', v: 1, name: 'Old', room: 'test' }))); old.on('message', (d) => r(JSON.parse(d))); });
+const err = await new Promise((r) => { old.on('open', () => old.send(JSON.stringify({ t: 'hello', v: 2, name: 'Old', room: 'test' }))); old.on('message', (d) => r(JSON.parse(d))); });
 assert.equal(err.t, 'error');
 assert.match(err.msg, /reload/);
+
+// three players: the round only ends when a whole team is down
+const t1 = await client('T1', 'teams'), w1 = await t1.next('welcome');
+const t2 = await client('T2', 'teams'), w2 = await t2.next('welcome');
+const t3 = await client('T3', 'teams'), w3 = await t3.next('welcome');
+assert.deepEqual([w1.team, w2.team, w3.team], ['a', 'b', 'a']);
+await new Promise((r) => setTimeout(r, 1600)); // spawn shield
+t2.send({ t: 'hit', id: w1.id, zone: 'body', dmg: 300 });
+const k1 = await t3.next('kill');
+assert.equal(k1.v, w1.id);
+assert.deepEqual(k1.score, { a: 0, b: 0 }); // T3 is still up: no round yet
+await new Promise((r) => setTimeout(r, 300));
+assert.equal(t3.inbox.filter((m) => m.t === 'round').length, 0);
+t2.send({ t: 'hit', id: w3.id, zone: 'body', dmg: 300 });
+await t1.next('kill'); // its own death
+assert.deepEqual((await t1.next('kill')).score, { a: 0, b: 1 }); // team a wiped: b takes the round
+assert.equal((await t1.next('round')).n, 2);
+for (const c of [t1, t2, t3]) c.ws.close();
 
 a.ws.close(); b.ws.close();
 // a page on another site is refused

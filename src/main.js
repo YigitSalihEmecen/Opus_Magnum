@@ -55,7 +55,7 @@ const MODES = [
     load: async (mapId) => {
       if (mapId && getMap(mapId)) {
         const w = await customWorld(mapId);
-        return { octree: w.octree, spawn: w.spawn, targets: w.raycastTargets, pickups: new Pickups(scene, { octree: w.octree, spots: w.pickups, respawn: 20 }), update: () => {} };
+        return { octree: w.octree, spawn: w.spawn, targets: w.raycastTargets, doors: w.doors, pickups: new Pickups(scene, { octree: w.octree, spots: w.pickups, respawn: 20 }), update: () => {} };
       }
       const range = new TestRange(scene);
       const dummies = new Dummies(scene, range.dummySpots);
@@ -265,6 +265,7 @@ function bindWorld() {
   grenades = level.grenades = new Grenades(scene, { octree: level.octree, audio, camera, onBlast });
   mv.octree = level.octree;
   targets = level.targets;
+  if (level.doors) Object.assign(level.doors, { audio, camera }).attach(level.octree);
 }
 
 const title = new Title(document.getElementById('title'), {
@@ -309,7 +310,7 @@ input.onLockError = (err) => (level ? menu : title).notice(
 // clicking the game view while it isn't captured (dev mode, or lock lost) recaptures the mouse
 canvas.addEventListener('click', () => { if (level && !level.frame && !level.ended && !input.pointerLocked) { input.lock(); audio.init(); } });
 
-const _fwd = new THREE.Vector3(), _right = new THREE.Vector3();
+const _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _doorDir = new THREE.Vector3();
 
 /** Where a dropped gun lands: a step ahead of the feet. */
 function dropPoint() {
@@ -333,7 +334,7 @@ function onBlast(pos, mine) {
   if (d < 14) rig.punch(-(1 - d / 14) * 4, (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 4);
   if (!mine || !level) return;
   for (const h of grenades.reach(pos, targets)) {
-    const res = h.target.damage(h.dmg, 'blast', h.point, h.dir, now);
+    const res = h.target.damage(h.dmg, 'blast', h.point, h.dir, now, 'grenade');
     if (!res) continue;
     hud.hitmarker(res.killed ? 'kill' : 'hit');
     hud.damageNumber(h.point, h.dmg, false);
@@ -403,7 +404,7 @@ function tick(dt) {
   if (live) {
     if (input.pressed('KeyF') || (vm.inspect && input.clicked(2))) setInspect(!vm.inspect);
     // V: quick knife swing (the gun drops out of the way and comes back)
-    if (input.pressed('KeyV') && !vm.inspect && !inv.busy && pendingSwitch === null && mv.state !== 'mantle' && mv.state !== 'vault') melee.start();
+    if (input.pressed('KeyV') && !vm.inspect && !inv.busy && pendingSwitch === null && mv.state !== 'mantle' && mv.state !== 'vault') melee.start({ camera, targets, octree: mv.octree });
     if (!vm.inspect && !inv.busy && !melee.busy) {
       inv.guns.forEach((i, k) => { if (input.pressed(`Digit${k + 1}`)) switchWeapon(i); });
       const n = inv.guns.length, k = inv.guns.indexOf(current);
@@ -418,6 +419,12 @@ function tick(dt) {
     const target = [look, touch].find((p) => p && inv.wants(p) === 'prompt') ?? null;
     prompt = target ? inv.promptFor(target) : null;
     if (target && input.pressed('KeyE') && !inv.busy && !melee.busy && pendingSwitch === null) level.pickups.claim(target);
+    // E on a door when there's nothing to pick up: open or shut it
+    const door = !target && level.doors?.facing(camera.position, camera.getWorldDirection(_doorDir));
+    if (door) {
+      prompt = door.open ? 'Close door' : 'Open door';
+      if (input.pressed('KeyE')) level.doors.toggle(door, mv.feet);
+    }
     // zoom-matched: a mouse inch moves the target the same distance on screen at any magnification
     if (!vm.inspect) rig.look(input, 1 / rig.zoom);
     mv.update(dt, input, rig.yaw);
@@ -441,6 +448,7 @@ function tick(dt) {
   handheld.update(dt, inv.action ?? melee.action, now);
   level?.update(dt, { camera, now, gun });
   level.pickups.update(dt);
+  level.doors?.update(dt, level.bots);
   grenades.update(dt);
   scoreboard.update(dt, input.locked && input.down('Tab') && level?.scoreRows ? level.scoreRows() : null);
   fx.update(dt, camera);

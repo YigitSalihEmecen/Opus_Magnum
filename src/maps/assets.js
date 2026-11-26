@@ -65,9 +65,22 @@ function collider(g, geo, x, y, z) {
 
 // ───────────────────────────── walls ─────────────────────────────
 
-const WALL_H = 3.2, WALL_T = 0.3, FOUND = 2;
-/** Floor slab thickness. Walls standing on a slab reach down over its edge; slabs reach out to a wall's outer face. */
-const SLAB = 0.3;
+/*
+  Shared measurements. Every piece is cut from these, so pieces meet without steps or gaps:
+    · GRID 4 m bays: walls, floors, rooms, walkways, docks all tile on it
+    · STOREY 3.5 m: every walking surface sits at a multiple of it (half storeys for steps and ramps);
+      a walkable piece's top is its record's y (floor slabs, room floors, walkways, docks, the pool deck)
+    · a wall is a storey minus the slab it stands on; doorways, windows and steps share one size each
+    · CRATE 1.2 m stacks: two crates are a container's height, so crates climb onto containers
+*/
+const GRID = 4, STOREY = 3.5, HALF_STOREY = STOREY / 2;
+const SLAB = 0.3, WALL_T = 0.3, FOUND = 2;
+const WALL_H = STOREY - SLAB;
+const DOOR = { w: 1.3, h: 2.3 }, WINDOW = { sill: 1.0, head: 2.3 };
+const STEP_RISE = 0.25;
+const CRATE = 1.2, CONTAINER = { L: 6.06, H: 2 * CRATE, D: 2.44 };
+export { DOOR };
+// walls standing on a slab reach down over its edge; slabs reach out to a wall's outer face
 const FLUSH = WALL_T / 2 - 0.006; // a slab's reach past a wall's centre line: just inside its outer face (no coplanar faces)
 
 /**
@@ -93,6 +106,9 @@ function wall(color, ctx, { len = 4, h = WALL_H, t = WALL_T, holes = [], drop = 
     rbox(g, o.x1 - o.x0 - 2 * F, F, fd, (o.x0 + o.x1) / 2, o.y1 - F / 2, 0, frame, 0.02);
     if (o.y0 > 0) sbox(g, o.x1 - o.x0 + 0.2, 0.09, t + 0.2, (o.x0 + o.x1) / 2, o.y0 + SILL - 0.045, 0, mat(P.ink));
   }
+  // door-sized openings at the wall's foot: the clear gap inside the frame, where play hangs a door (maps/doors.js)
+  const doorways = holes.filter((o) => o.y0 === 0 && [1, 2].some((k) => Math.abs(o.x1 - o.x0 - k * DOOR.w) < 0.02));
+  if (doorways.length) g.userData.doorways = doorways.map((o) => ({ x0: o.x0 + F, x1: o.x1 - F, h: o.y1 - F }));
   if (ctx?.ground) piece(-L, L, -FOUND, 0);
   // standing on a floor slab: cover the slab's edge so the facade runs on from the storey below
   else if (drop || ctx?.slabUnderWall?.()) piece(-L, L, -(drop || SLAB), 0);
@@ -141,8 +157,8 @@ function floor(color, ctx, { w = 4, d = 4 } = {}) {
     if (open.pz) z1 += FLUSH;
     if (open.nz) z0 -= FLUSH;
   }
-  gbox(g, x1 - x0, SLAB, z1 - z0, (x0 + x1) / 2, SLAB / 2, (z0 + z1) / 2, color);
-  if (ctx?.ground) gbox(g, w, FOUND, d, 0, -FOUND / 2, 0, color);
+  gbox(g, x1 - x0, SLAB, z1 - z0, (x0 + x1) / 2, -SLAB / 2, (z0 + z1) / 2, color);
+  if (ctx?.ground) gbox(g, w, FOUND, d, 0, -SLAB - FOUND / 2, 0, color);
   return g;
 }
 
@@ -154,12 +170,14 @@ function slab(g, color, run, rise, w, t = 0.4) {
   return m;
 }
 
+/** Half a storey up over 6 m, low end at +Z: meets steps, podium half-levels and a slab at HALF_STOREY. */
 function ramp(color) {
   const g = new THREE.Group();
-  slab(g, color, 6, 2.4, 2.5, 0.5);
+  const run = 6, rise = HALF_STOREY;
+  slab(g, color, run, rise, 2.5, 0.5);
   for (const s of [-1, 1]) {
-    const k = sbox(g, 0.12, 0.12, Math.hypot(6, 2.4), s * 1.31, 1.26, 0, mat(P.ink));
-    k.rotation.x = Math.atan2(2.4, 6);
+    const k = sbox(g, 0.12, 0.12, Math.hypot(run, rise), s * 1.31, rise / 2 + 0.06, 0, mat(P.ink));
+    k.rotation.x = Math.atan2(rise, run);
   }
   return g;
 }
@@ -167,7 +185,7 @@ function ramp(color) {
 /** Stepped flight with a hidden ramp to walk on (movement has no step-up). */
 function stairs(color, ctx, { rise = 3.5, run = 6, w = 2, rail = true } = {}) {
   const g = new THREE.Group();
-  const n = Math.round(rise / 0.25);
+  const n = Math.round(rise / STEP_RISE);
   const tread = run / n, stepH = rise / n;
   const geos = [];
   for (let i = 0; i < n; i++) {
@@ -373,7 +391,7 @@ function sidewalk(color, ctx) {
 
 function container(color) {
   const g = new THREE.Group();
-  const L = 6.06, H = 2.6, D = 2.44;
+  const { L, H, D } = CONTAINER;
   const body = mat(color), dark = mat(P.slate), ink = mat(P.ink);
   rbox(g, L - 0.2, H - 0.24, D - 0.1, 0, H / 2, 0, body, 0.03);
   const ribs = [];
@@ -394,7 +412,7 @@ function container(color) {
 
 function crate(color) {
   const g = new THREE.Group();
-  const s = 1.2, wood = mat(color), band = mat(P.bookcloth);
+  const s = CRATE, wood = mat(color), band = mat(P.bookcloth);
   rbox(g, s - 0.06, s - 0.06, s - 0.06, 0, s / 2, 0, wood, 0.05);
   for (const y of [0.09, s - 0.09]) rbox(g, s, 0.16, s, 0, y, 0, band, 0.04);
   for (const x of [-1, 1]) for (const z of [-1, 1]) rbox(g, 0.14, s - 0.3, 0.14, x * (s / 2 - 0.07), s / 2, z * (s / 2 - 0.07), band, 0.04);
@@ -798,7 +816,7 @@ export function buildJoints(records, groundAt) {
     const same = ends.filter((e) => e.l.kind === kind);
     const h = Math.max(...same.map((e) => e.l.h)), t = Math.max(...same.map((e) => e.l.t));
     const ground = groundAt ? Math.abs(gp.y - groundAt(gp.x, gp.z)) < 0.35 : gp.y < 0.05;
-    const onSlab = !ground && kind === 'wall' && [-2, 2].some((dx) => [-2, 2].some((dz) => slabs.has(slabKey(gp.x + dx, gp.y - SLAB, gp.z + dz))));
+    const onSlab = !ground && kind === 'wall' && [-2, 2].some((dx) => [-2, 2].some((dz) => slabs.has(slabKey(gp.x + dx, gp.y, gp.z + dz))));
     const post = jointPost(kind, h, t, top.l.r.color ?? top.l.a.colors[0], ground, onSlab);
     post.position.set(gp.x, gp.y, gp.z);
     post.rotation.y = Math.atan2(-top.l.dz, top.l.dx);
@@ -810,13 +828,12 @@ export function buildJoints(records, groundAt) {
 // ─────────────────────────── prefabs ───────────────────────────
 // Whole buildings built from the same kit, as one piece: big footprints without thousands of records.
 
-const STOREY = 3.5;
 const HOLES = {
-  window: [{ x0: -0.7, x1: 0.7, y0: 1.0, y1: 2.3 }],
-  wide: [{ x0: -1.4, x1: 1.4, y0: 1.0, y1: 2.3 }],
-  door: [{ x0: -0.65, x1: 0.65, y0: 0, y1: 2.3 }],
-  shop: [{ x0: -1.7, x1: -0.5, y0: 0, y1: 2.4 }, { x0: -0.3, x1: 1.7, y0: 0.55, y1: 2.4 }],
-  gate: [{ x0: -1.25, x1: 1.25, y0: 0, y1: 2.6 }],
+  window: [{ x0: -0.7, x1: 0.7, y0: WINDOW.sill, y1: WINDOW.head }],
+  wide: [{ x0: -1.4, x1: 1.4, y0: WINDOW.sill, y1: WINDOW.head }],
+  door: [{ x0: -DOOR.w / 2, x1: DOOR.w / 2, y0: 0, y1: DOOR.h }],
+  shop: [{ x0: -1.75, x1: -1.75 + DOOR.w, y0: 0, y1: DOOR.h }, { x0: -0.25, x1: 1.75, y0: 0.55, y1: DOOR.h }],
+  gate: [{ x0: -DOOR.w, x1: DOOR.w, y0: 0, y1: DOOR.h }],
   plain: [],
 };
 function place(g, child, x, y, z, rot = 0) { child.position.set(x, y, z); child.rotation.y = rot; g.add(child); return child; }
@@ -892,6 +909,66 @@ function podium(color, ctx) {
   return g;
 }
 
+// ─────────────────────────── doors ───────────────────────────
+
+const DOOR_FRAME = 0.09; // a wall opening's jambs and head (wall() frames every hole with this)
+const DOOR_TINTS = [P.sage, P.sky, P.clay, P.kraft, P.slate, P.olive];
+
+/**
+ * One door leaf `w` × `h`, hinged at its local origin and reaching along +X (or -X when `flip`): a panelled
+ * slab with a kick plate and a handle on both faces. Shared by the editor piece and the working doors.
+ */
+export function doorLeaf(w, h, color, flip = false) {
+  const g = new THREE.Group();
+  const s = flip ? -1 : 1, t = 0.06, body = mat(color), trim = mat(P.ink);
+  rbox(g, w, h, t, s * w / 2, h / 2, 0, body, 0.02);
+  for (const z of [-1, 1]) {
+    for (const [y, ph] of [[h * 0.71, h * 0.36], [h * 0.27, h * 0.34]]) rbox(g, w - 0.3, ph, 0.02, s * w / 2, y, z * (t / 2 + 0.006), mat(P.cloud), 0.01).userData.noCollide = true;
+    sbox(g, w - 0.06, 0.16, 0.012, s * w / 2, 0.1, z * (t / 2 + 0.006), trim).userData.noCollide = true;
+    const knob = add(g, new THREE.SphereGeometry(0.035, 12, 8), trim, s * (w - 0.1), 1.0, z * (t / 2 + 0.05));
+    knob.userData.noCollide = true;
+    sbox(g, 0.024, 0.024, 0.05, s * (w - 0.1), 1.0, z * (t / 2 + 0.025), trim).userData.noCollide = true;
+  }
+  for (const y of [0.3, h - 0.3]) add(g, cyl(0.022, 0.14, 8), trim, 0, y, 0).userData.noCollide = true; // hinges
+  return g;
+}
+
+/** The leaves a doorway { x0, x1, h } takes (in its wall's frame): one, or a pair for a double-width gate. */
+export function doorLeaves({ x0, x1, h }) {
+  const gap = 0.006, w = x1 - x0, hh = h - 0.03;
+  if (w < DOOR.w * 1.5) return [{ x: x0 + gap, w: w - 2 * gap, h: hh, flip: false }];
+  return [{ x: x0 + gap, w: w / 2 - 1.5 * gap, h: hh, flip: false }, { x: x1 - gap, w: w / 2 - 1.5 * gap, h: hh, flip: true }];
+}
+
+export const doorTint = (x, z) => DOOR_TINTS[Math.abs(Math.round(x * 7 + z * 13)) % DOOR_TINTS.length];
+
+/** Editor piece: a doorway's leaf, closed. In play it's a working door (maps/doors.js), not this. */
+function doorPiece(color, ctx) {
+  const g = new THREE.Group();
+  const way = { x0: -DOOR.w / 2 + DOOR_FRAME, x1: DOOR.w / 2 - DOOR_FRAME, h: DOOR.h - DOOR_FRAME };
+  for (const l of doorLeaves(way)) g.add(doorLeaf(l.w, l.h, color, l.flip)).children.at(-1).position.x = l.x;
+  g.userData.doorways = [way];
+  return g;
+}
+
+// ─────────────────────────── sized blocks ───────────────────────────
+
+/**
+ * A solid of any outline: the record's `pts` [[x, z], …] (and optional `holes`), relative to the record,
+ * extruded `h` metres up from its y. Imported maps (tools/maps/stl2map.py) build their walls, pillars and
+ * odd-shaped boxes from these; without an outline it's a 2 × 2 × 2 m cube.
+ */
+function block(color, ctx) {
+  const g = new THREE.Group();
+  const r = ctx?.rec ?? {};
+  const pts = r.pts ?? [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+  const shape = new THREE.Shape(pts.map(([x, z]) => new THREE.Vector2(x, -z)));
+  for (const hole of r.holes ?? []) shape.holes.push(new THREE.Path(hole.map(([x, z]) => new THREE.Vector2(x, -z))));
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: r.h ?? 2, bevelEnabled: false }).rotateX(-Math.PI / 2);
+  add(g, geo, mat(color));
+  return g;
+}
+
 // ─────────────────────────── waterfront ───────────────────────────
 // For flooded maps (map.water): solid concrete that reaches below the waterline, so nothing floats.
 
@@ -964,7 +1041,7 @@ function pool(color) {
   const g = new THREE.Group();
   const { x: X, z: Z, shallow: S, deep: D, outX, outZ } = POOL;
   const deco = (m) => { m.userData.noCollide = true; return m; };
-  const t = 0.3, top = -0.05;
+  const t = 0.3, top = -0.13; // the paved deck (0.13 thick) is flush with the ground
   // basin floor: flat shallow end, an incline, flat deep end
   gbox(g, 4, t, 2 * Z, -X + 2, -S - t / 2, 0, color);
   gbox(g, 5, t, 2 * Z, X - 2.5, -D - t / 2, 0, color);
@@ -1269,12 +1346,12 @@ export const ASSETS = [
   { id: 'parapet', cat: 'Walls', name: 'Parapet', note: 'roof edge', colors: WALL_COLORS, link: W(4, 0.75), build: (c, x) => wall(c, x, { h: 0.75 }) },
   { id: 'pillar', cat: 'Walls', name: 'Pillar', note: 'column', colors: WALL_COLORS, build: pillar },
 
-  { id: 'floor', cat: 'Parts', name: 'Floor slab', note: '4 × 4 · storey 3.5 m', colors: [P.ivory, P.oat, P.manilla, P.slate, P.sage], build: (c, x) => floor(c, x) },
+  { id: 'floor', cat: 'Parts', name: 'Floor slab', note: '4 × 4 · top at its height', colors: [P.ivory, P.oat, P.manilla, P.slate, P.sage], build: (c, x) => floor(c, x) },
   { id: 'floor_strip', cat: 'Parts', name: 'Floor strip', note: '2 × 4', colors: [P.ivory, P.oat, P.manilla, P.slate, P.sage], build: (c, x) => floor(c, x, { w: 4, d: 2 }) },
   { id: 'stairs', cat: 'Parts', name: 'Staircase', note: 'one storey', colors: [P.ivory, P.oat, P.kraft, P.cloud, P.slate], build: (c, x) => stairs(c, x) },
   { id: 'stairs_open', cat: 'Parts', name: 'Open stairs', note: 'one storey · no rails', colors: [P.oat, P.ivory, P.kraft, P.cloud, P.slate], build: (c, x) => stairs(c, x, { rail: false }) },
   { id: 'steps', cat: 'Parts', name: 'Steps', note: 'rises 1.75 m', colors: [P.ivory, P.oat, P.kraft, P.slate], build: (c, x) => stairs(c, x, { rise: 1.75, run: 3, rail: false }) },
-  { id: 'ramp', cat: 'Parts', name: 'Ramp', note: 'rises 2.4 m', colors: [P.manilla, P.sky, P.ivory, P.sage], build: ramp },
+  { id: 'ramp', cat: 'Parts', name: 'Ramp', note: 'rises half a storey', colors: [P.manilla, P.sky, P.ivory, P.sage], build: ramp },
   { id: 'roof', cat: 'Parts', name: 'Roof slope', note: 'pair for 8 m', colors: [P.clay, P.slate, P.sage, P.kraft, P.sky], build: roofSlope },
   { id: 'gable', cat: 'Parts', name: 'Gable', note: '8 m end', colors: WALL_COLORS, build: gable },
   { id: 'canopy', cat: 'Parts', name: 'Shade canopy', note: '4 × 4 · walk under', colors: [P.clay, P.sky, P.sage, P.kraft], tile: 4, build: canopy },
@@ -1283,6 +1360,8 @@ export const ASSETS = [
   { id: 'room', cat: 'Buildings', name: 'Room', note: 'stacks · auto-joins', colors: [P.manilla, P.ivory, P.sky, P.sage, P.kraft, P.clay, P.bookcloth, P.oat, P.slate], tile: 4, build: room },
   { id: 'tower3', cat: 'Buildings', name: 'Tower · 3', note: '12 × 12 · enterable', colors: [P.ivory, P.manilla, P.oat, P.sky, P.sage, P.kraft, P.slate], snap: 2, build: tower(3) },
   { id: 'tower5', cat: 'Buildings', name: 'Tower · 5', note: '12 × 12 · roof access', colors: [P.oat, P.ivory, P.manilla, P.sky, P.sage, P.bookcloth, P.slate], snap: 2, build: tower(5) },
+  { id: 'door', cat: 'Parts', name: 'Door', note: 'in a door opening · opens with E', colors: [P.sage, P.sky, P.clay, P.kraft, P.slate], build: doorPiece },
+  { id: 'block', cat: 'Parts', name: 'Block', note: 'sized solid · outline from the map file', colors: [P.oat, P.manilla, P.kraft, P.cloud, P.slate], build: block },
   { id: 'dock', cat: 'Waterfront', name: 'Dock', note: '4 × 4 · deck at its height, body under water', colors: [P.oat, P.ivory, P.manilla], tile: 4, build: dock },
   { id: 'seawall', cat: 'Waterfront', name: 'Sea wall', note: '4 m · 3.5 m over its deck line', colors: [P.oat, P.ivory, P.cloud], build: seawall },
   { id: 'stilt', cat: 'Waterfront', name: 'Stilt', note: 'under a raised deck · top at its height', colors: [P.slate, P.cloud, P.oat], build: stilt },
@@ -1366,7 +1445,7 @@ export function makeContext(records, groundAt) {
     /** Wall-family pieces only: is there a floor slab on either side whose top this wall stands on? */
     slabUnderWall() {
       if (assetById(rec.type)?.link?.kind !== 'wall') return false;
-      const t = ((rec.rot ?? 0) * Math.PI) / 180, nx = Math.sin(t) * 2, nz = Math.cos(t) * 2, y = (rec.y ?? 0) - SLAB;
+      const t = ((rec.rot ?? 0) * Math.PI) / 180, nx = Math.sin(t) * 2, nz = Math.cos(t) * 2, y = rec.y ?? 0;
       return [1, -1].some((s) => tiles.get(k('floor', rec.x + nx * s, y, rec.z + nz * s)));
     },
   });

@@ -2,21 +2,21 @@ import * as THREE from 'three';
 import { PALETTE as P, toon, gridTexture } from '../core/toon.js';
 
 /*
-  Heightfield ground: (seg + 1)² heights on a 2 m lattice over the build square (seg = size / 2).
+  Heightfield ground: (seg + 1)² heights over the build square, a 2 m lattice by default (seg = size / 2);
+  a map can bring a finer one (col-2 uses 0.5 m so floor steps hide under its walls).
   Saved on the map as map.terrain = { seg, h: [...] } (row-major, z then x); missing means flat.
   Pieces don't follow the terrain after placement; flatten a pad first, then build on it.
 */
 
 export const LIMIT = { min: -8, max: 16 };
 export const segFor = (size) => Math.round(size / 2);
-const segOf = (h) => Math.round(Math.sqrt(h.length)) - 1;
+export const segOf = (h) => Math.round(Math.sqrt(h.length)) - 1;
 
 export function emptyHeights(seg) { return new Float32Array((seg + 1) * (seg + 1)); }
 
 export function heightsOf(map, size = map.size ?? 96) {
-  const seg = segFor(size);
   const t = map.terrain;
-  if (!t?.h || t.seg !== seg || t.h.length !== (seg + 1) ** 2) return emptyHeights(seg);
+  if (!t?.h || !(t.seg >= segFor(size)) || t.h.length !== (t.seg + 1) ** 2) return emptyHeights(segFor(size));
   return Float32Array.from(t.h);
 }
 
@@ -39,12 +39,12 @@ const _c = new THREE.Color();
  * Vertex tint over the oat paper: flat low ground stays paper (streets and lots read clean), slopes and
  * raised ground turn grassy, steep banks show dirt. Needs normals.
  */
-export function tintGround(geo) {
+export function tintGround(geo, { grass: lush = true } = {}) {
   const pos = geo.attributes.position, nor = geo.attributes.normal;
   const col = geo.attributes.color?.count === pos.count ? geo.attributes.color : new THREE.BufferAttribute(new Float32Array(pos.count * 3), 3);
   for (let i = 0; i < pos.count; i++) {
     const y = pos.getY(i), ny = nor.getY(i);
-    const grass = THREE.MathUtils.smoothstep(y, 0.4, 2.2) * 0.75 + THREE.MathUtils.smoothstep(1 - ny, 0.015, 0.08) * 0.35;
+    const grass = lush ? THREE.MathUtils.smoothstep(y, 0.4, 2.2) * 0.75 + THREE.MathUtils.smoothstep(1 - ny, 0.015, 0.08) * 0.35 : 0;
     const dirt = THREE.MathUtils.smoothstep(1 - ny, 0.12, 0.3);
     _c.copy(PAPER).lerp(GRASS, Math.min(1, grass)).lerp(DIRT, dirt * 0.8);
     col.setXYZ(i, _c.r, _c.g, _c.b);
@@ -54,8 +54,7 @@ export function tintGround(geo) {
 }
 
 /** Ground mesh for a size × size square; heights applied by setHeights. */
-export function terrainMesh(size, { grid = false } = {}) {
-  const seg = segFor(size);
+export function terrainMesh(size, { grid = false, seg = segFor(size) } = {}) {
   const geo = new THREE.PlaneGeometry(size, size, seg, seg).rotateX(-Math.PI / 2);
   // world-scale UVs: one grid tile per 4 m, lined up with the editor's 1 m snap
   const pos = geo.attributes.position, uv = geo.attributes.uv;
@@ -67,12 +66,13 @@ export function terrainMesh(size, { grid = false } = {}) {
 }
 
 /** Vertex i of the rotated plane is lattice (ix, iz) with i = iz * (seg + 1) + ix, z running -half → +half. */
-export function setHeights(mesh, h) {
+/** opts.grass: false keeps raised ground paper-coloured (built-up maps, where height isn't hillside). */
+export function setHeights(mesh, h, opts) {
   const pos = mesh.geometry.attributes.position;
   for (let i = 0; i < pos.count; i++) pos.setY(i, h[i]);
   pos.needsUpdate = true;
   mesh.geometry.computeVertexNormals();
-  tintGround(mesh.geometry);
+  tintGround(mesh.geometry, opts);
   mesh.geometry.computeBoundingSphere();
   mesh.geometry.computeBoundingBox();
 }

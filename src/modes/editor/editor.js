@@ -4,7 +4,7 @@ import { PALETTE as P, toon } from '../../core/toon.js';
 import { ASSETS, CATEGORIES, assetById, buildPiece, buildJoints, makeContext } from '../../maps/assets.js';
 import { listMaps, getMap, saveMap, deleteMap, hasSpawns } from '../../maps/storage.js';
 import { MAP_SIZE } from '../../maps/mapWorld.js';
-import { terrainMesh, setHeights, heightsOf, packHeights, heightAt, brush } from '../../maps/terrain.js';
+import { terrainMesh, setHeights, heightsOf, packHeights, heightAt, brush, segOf } from '../../maps/terrain.js';
 import { applySky } from '../../world/sky.js';
 import './editor.css';
 
@@ -107,7 +107,7 @@ class Editor {
   #sizeTo(size) {
     this.size = size;
     this.bounds.clear();
-    this.ground = terrainMesh(size, { grid: true });
+    this.ground = terrainMesh(size, { grid: true, seg: segOf(this.h) });
     setHeights(this.ground, this.h);
     this.bounds.add(this.ground);
     const half = size / 2;

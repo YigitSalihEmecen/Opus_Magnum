@@ -81,10 +81,13 @@ src/
                           item/gun pickups; connectors and adaptive road/sidewalk/dock tiles, rounded bends
     terrain.js            heightfield ground + sculpt brushes (raise/lower/smooth/flatten)
     mapWorld.js           saved map → playable world: batched draw calls, slim collision proxy, pickups,
-                          water (map.water: a sheet at that height, and falling in kills)
+                          water (map.water: a sheet at that height, and falling in kills), doors
+    doors.js              working doors in every ground-level doorway: E opens away from you, solid to
+                          movement and bullets, bots push through, synced online
     storage.js            maps in localStorage (om.maps) + the built-in ones
     builtin/              settlement.js ("Saltgrass" city); online rotation: duel.js ("Duel"),
-                          lido.js ("Lido", villa round a drained pool), sluice.js ("Sluice", the water kills)
+                          lido.js ("Lido", villa round a drained pool), sluice.js ("Sluice", the water kills),
+                          col2.js ("col-2", rebuilt from a map model; col2.data.js is generated)
   modes/tdm/              Team Deathmatch, loaded only when picked (see below)
     tdm.js                match rules, player death/respawn, loadout, item spots, score
     arena.js              "Kiln" 5v5 map, point-symmetric (+ collision octree, nav grid)
@@ -107,6 +110,7 @@ server/
   test.js                 end-to-end test against a live server
 public/audio/             CC0 sounds — see public/audio/CREDITS.md
 tools/audio/              scripts used to slice the source recordings
+tools/maps/stl2map.py     map model (STL) → map module: floor lattice, traced walls, props
 ```
 
 Dependencies only point downward: `core` knows nothing about the game, `world`/`player`/`weapons`
@@ -118,6 +122,13 @@ import each other.
 (`src/modes/tdm/`), online play (`src/net/`) and the editor (`src/modes/editor/`) don't import each
 other: delete a folder and its `MODES` entry to remove it. Maps live in `src/maps/` because all of
 them use maps.
+
+**Measurements:** pieces share one set of sizes (top of `maps/assets.js`): 4 m bays, 3.5 m storeys, a
+walkable piece's top at its record's y, 1.3 × 2.3 m doorways, 0.25 m step rise, 1.2 m crates (two make a
+container). Build new pieces from these so they meet the rest without steps.
+
+**Damage:** the head takes each gun's `headMultiplier`, the chest ×1, legs ×0.72 (`ZONE` in `weapons.js`);
+`stats.falloff` eases damage down with distance (steep for the SMG, almost none for the sniper).
 
 **Adding an editor piece:** write a `build(color)` in `maps/assets.js` (origin on the floor, forward −Z,
 flat colours from `mat()`) and list it in `ASSETS`; it gets a library thumbnail and collision
