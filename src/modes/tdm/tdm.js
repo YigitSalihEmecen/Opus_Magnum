@@ -1,12 +1,13 @@
 import * as THREE from 'three';
 import { Arena } from './arena.js';
 import { NavGrid } from './nav.js';
-import { Bot, MAX_HP, raySegment } from './bot.js';
+import { Bot, raySegment } from './bot.js';
+import { MAX_HP } from '../../player/vitals.js';
 import { WorldFX } from '../../weapons/effects.js';
 import { WEAPONS } from '../../weapons/weapons.js';
 import { Pickups } from '../../items/pickups.js';
 import { pickupSpec } from '../../items/items.js';
-import './tdm.css';
+import { MatchHud } from '../../ui/matchHud.js';
 
 /*
   Team Deathmatch: you + 4 allied bots (sky) vs 5 enemy bots (clay) in the Kiln arena.
@@ -82,7 +83,7 @@ class TDM {
     this.targets = [...this.arena.raycastTargets, ...this.bots.flatMap((b) => b.hitboxes)];
     this.pickups = new Pickups(scene, { octree: this.octree, spots: this.#itemSpots(), respawn: ITEM_RESPAWN });
     this.spawn = this.#pickSpawn('ally');
-    this.ui = new TdmHud();
+    this.ui = new MatchHud({ limit: SCORE_LIMIT });
     this.ui.score(this.score, this.time);
   }
 
@@ -325,100 +326,3 @@ class TDM {
 }
 
 // ───────────────────────────── HUD overlay ─────────────────────────────
-
-const fmtTime = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
-
-export class TdmHud {
-  constructor({ ally = 'Allies', enemy = 'Enemy', limit = SCORE_LIMIT } = {}) {
-    const root = (this.root = document.createElement('div'));
-    root.className = 'tdm';
-    root.innerHTML = `
-      <div class="tdm-score card">
-        <div class="side ally"><span class="label">${esc(ally)}</span><b class="a">0</b></div>
-        <div class="mid"><span class="clock">10:00</span><span class="label">First to ${limit}</span></div>
-        <div class="side enemy"><b class="e">0</b><span class="label">${esc(enemy)}</span></div>
-      </div>
-      <div class="tdm-feed"></div>
-      <div class="tdm-vignette"></div>
-      <div class="tdm-dirs"></div>
-      <div class="tdm-toast"></div>
-      <div class="tdm-death card" hidden><span class="label">Eliminated by</span><b class="who"></b><span class="label cd"></span></div>
-      <div class="tdm-end" hidden>
-        <section class="card">
-          <div class="label end-map">Match over</div>
-          <h2 class="verdict"></h2>
-          <div class="final"></div>
-          <div class="actions"><button class="btn again" type="button">Play again →</button><button class="btn ghost title" type="button">Main menu</button></div>
-        </section>
-      </div>`;
-    document.body.appendChild(root);
-    const $ = (s) => root.querySelector(s);
-    this.el = {
-      a: $('.a'), e: $('.e'), clock: $('.clock'), feed: $('.tdm-feed'),
-      vig: $('.tdm-vignette'), dirs: $('.tdm-dirs'), toast: $('.tdm-toast'), death: $('.tdm-death'), who: $('.tdm-death .who'), cd: $('.tdm-death .cd'), end: $('.tdm-end'),
-    };
-    $('.again').addEventListener('click', () => location.reload());
-    $('.title').addEventListener('click', () => { location.href = location.pathname; });
-    this.hp = 1;
-    this.vig = 0;
-  }
-
-  score(s, time) {
-    this.el.a.textContent = s.ally;
-    this.el.e.textContent = s.enemy;
-    this.el.clock.textContent = fmtTime(time);
-  }
-
-  feed(killer, victim, head) {
-    const row = document.createElement('div');
-    row.className = 'card';
-    row.innerHTML = `<span class="${killer.team}">${esc(killer.name)}</span><em>${head ? '◆' : '▸'}</em><span class="${victim.team}">${esc(victim.name)}</span>`;
-    this.el.feed.prepend(row);
-    setTimeout(() => row.classList.add('out'), 5000);
-    setTimeout(() => row.remove(), 5600);
-    while (this.el.feed.children.length > 5) this.el.feed.lastChild.remove();
-  }
-
-  toast(text, head) {
-    const t = this.el.toast;
-    t.textContent = text;
-    t.classList.toggle('head', !!head);
-    t.classList.remove('show');
-    void t.offsetWidth;
-    t.classList.add('show');
-  }
-
-  hurt(frac, bearing) {
-    this.hp = Math.max(0, frac);
-    if (bearing !== null && bearing !== undefined) {
-      this.vig = Math.min(1, this.vig + 0.45);
-      const d = document.createElement('i');
-      d.style.transform = `rotate(${bearing}rad)`;
-      this.el.dirs.appendChild(d);
-      setTimeout(() => d.remove(), 1100);
-    }
-  }
-
-  death(name, t) {
-    this.el.death.hidden = !name;
-    if (name) {
-      this.el.who.textContent = name;
-      this.el.cd.textContent = t > 0 ? `Redeploy in ${Math.ceil(t)}` : 'Redeploying';
-    }
-  }
-
-  end(result, s, map) {
-    this.el.end.hidden = false;
-    this.el.end.querySelector('.end-map').textContent = `Match over · ${map}`;
-    this.el.end.dataset.r = result;
-    this.el.end.querySelector('.verdict').textContent = result === 'win' ? 'Victory' : result === 'loss' ? 'Defeat' : 'Draw';
-    this.el.end.querySelector('.final').innerHTML = `<span class="ally">${s.ally}</span><span class="dash">—</span><span class="enemy">${s.enemy}</span>`;
-  }
-
-  update(dt, s, time) {
-    this.el.clock.textContent = fmtTime(time);
-    this.vig = Math.max(0, this.vig - dt * 1.6);
-    this.el.vig.style.opacity = Math.max(this.vig, (1 - this.hp) * 0.55).toFixed(3);
-  }
-}

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
-import { Bot, MAX_HP } from '../modes/tdm/bot.js';
-import { TdmHud } from '../modes/tdm/tdm.js';
+import { Avatar } from '../character/avatar.js';
+import { MAX_HP } from '../player/vitals.js';
+import { MatchHud } from '../ui/matchHud.js';
 import { WorldFX } from '../weapons/effects.js';
 import { WEAPONS } from '../weapons/weapons.js';
 import { Pickups } from '../items/pickups.js';
@@ -60,11 +61,11 @@ export async function createOnline({ opts, getMap, buildWorld, ...ctx }) {
   return new Online({ ...ctx, ws, welcome, queue, arena, getMap, buildWorld, mapId: welcome.mapId });
 }
 
-/** Another player: the TDM bot body, posed from snapshots; hits on it are reported to the server. */
-class Remote extends Bot {
+/** Another player: an Avatar posed from their poses on the wire; hits on it are reported to the server. */
+class Remote extends Avatar {
   constructor(net, info) {
-    super(net, { team: info.team === net.team ? 'ally' : 'enemy', name: info.name, gun: 'rifle', skill: 0, char: info.char });
-    Object.assign(this, { id: info.id, hopY: 0, phase: 0, reloadT: 0, buf: [], lastStep: 0, poseTarget: {}, off: null });
+    super({ team: info.team === net.team ? 'ally' : 'enemy', name: info.name, char: info.char });
+    Object.assign(this, { world: net, id: info.id, buf: [], lastStep: 0, poseTarget: {}, off: null });
     this.alive = info.alive;
     this.root.visible = false; // until the first snapshot places it
   }
@@ -141,7 +142,7 @@ class Remote extends Bot {
       p.air = b.st === 'air' ? 1 : 0;
       p.mantle = b.st === 'mantle' || b.st === 'vault' ? 1 : 0;
       p.ads = b.ads ? 1 : 0;
-      this.reloadT = b.rl ? this.gun.reload * 0.5 : 0;
+      this.reloadT = b.rl ? this.reloadTime * 0.5 : 0;
       // footsteps on the gait, only while running on something
       const step = Math.floor(this.phase / Math.PI);
       if (step !== this.lastStep) {
@@ -179,7 +180,7 @@ class Online {
     this.names = new Map([[this.id, 'You']]);
     this.stats = new Map(welcome.players.map((p) => [p.id, { kills: p.kills ?? 0, deaths: p.deaths ?? 0 }]));
     this.remotes = new Map();
-    this.ui = new TdmHud({ ally: 'You', enemy: 'Them', limit: this.limit });
+    this.ui = new MatchHud({ ally: 'You', enemy: 'Them', limit: this.limit });
     this.mid = this.ui.root.querySelector('.mid .label');
     for (const p of welcome.players) if (p.id !== this.id) this.#add(p);
     this.spawn = this.#pickSpawn();

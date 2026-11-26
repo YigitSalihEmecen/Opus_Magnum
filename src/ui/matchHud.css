@@ -1,4 +1,4 @@
-/* TDM overlay — sits on top of the shared HUD (uses its tokens and .card/.label/.btn). */
+/* Team match overlay (TDM and online) — sits on top of the shared HUD (uses its tokens and .card/.label/.btn). */
 .tdm { position: fixed; inset: 0; pointer-events: none; user-select: none; --ally: #9fb4c7; --enemy: #d97757; }
 .tdm[hidden] { display: none; }
 
