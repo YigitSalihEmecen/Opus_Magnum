@@ -1,7 +1,8 @@
 const CONTROLS = [
   ['WASD', 'Move'], ['Mouse', 'Look'], ['Space', 'Jump · wall-jump'], ['Shift', 'Sprint (toggle)'],
   ['C / Ctrl', 'Crouch · slide'], ['LMB', 'Fire'], ['RMB', 'Aim down sights'], ['R', 'Reload'],
-  ['1 – 5', 'Switch weapon'], ['F', 'Gunsmith'], ['B', 'Fire mode'], ['Tab', 'Scoreboard'], ['Esc / P', 'Pause · settings'],
+  ['1 – 5', 'Switch weapon'], ['E', 'Pick up · swap'], ['T', 'Drop weapon'], ['G', 'Throw grenade'], ['Q', 'Heal'],
+  ['X', 'Charge armour'], ['F', 'Gunsmith'], ['B', 'Fire mode'], ['Tab', 'Scoreboard'], ['Esc / P', 'Pause · settings'],
 ];
 
 const DEFAULTS = { sensitivity: 1.0, fov: 104, volume: 0.8, graphics: 'high' };

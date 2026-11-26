@@ -3,6 +3,9 @@ import { Arena } from './arena.js';
 import { NavGrid } from './nav.js';
 import { Bot, MAX_HP, raySegment } from './bot.js';
 import { WorldFX } from '../../weapons/effects.js';
+import { WEAPONS } from '../../weapons/weapons.js';
+import { Pickups } from '../../items/pickups.js';
+import { pickupSpec } from '../../items/items.js';
 import './tdm.css';
 
 /*
@@ -20,6 +23,13 @@ const PLAYER_HP = MAX_HP;
 const RESPAWN_BOT = 5;
 const RESPAWN_PLAYER = 4;
 const SPAWN_SHIELD = 1.5;
+const ITEM_RESPAWN = 25;
+const WEAPON_IDS = WEAPONS.map((w) => w.id);
+// what you deploy with each life: carbine + sidearm, three spare mags, one grenade, two bandages
+const LOADOUT = { guns: ['panther', 'lynx'].map((id) => WEAPON_IDS.indexOf(id)), maxGuns: 2, mags: 3, items: { grenade: 1, bandage: 2 } };
+// handed out over the roam hotspots in order (Kiln: centre, then mirrored pairs), plus a starter pair by each base
+const ITEM_PLAN = ['armour3', 'gun_kestrel', 'gun_grizzly', 'medkit', 'medkit', 'armour2', 'armour2', 'charger', 'charger', 'ammo', 'ammo', 'grenade', 'grenade', 'gun_snake'];
+const BASE_ITEMS = ['bandage', 'armour1', 'ammo'];
 
 const ROSTER = {
   ally: [
@@ -38,8 +48,9 @@ export function createTDM(ctx) { return new TDM(ctx); }
 
 class TDM {
   /** arena: optional prebuilt world (e.g. a custom map) with octree · raycastTargets · spawns · bounds · dispose. */
-  constructor({ scene, camera, audio, mv, rig, arsenal, arena }) {
-    Object.assign(this, { scene, camera, audio, mv, rig, arsenal });
+  constructor({ scene, camera, audio, mv, rig, arsenal, arena, inv, vitals }) {
+    Object.assign(this, { scene, camera, audio, mv, rig, arsenal, inv, vitals });
+    this.loadout = LOADOUT;
     this.arena = arena ?? new Arena(scene);
     this.mapName = this.arena.name ?? 'Kiln';
     this.octree = this.arena.octree;
@@ -69,6 +80,7 @@ class TDM {
     this.bots.forEach((b, i) => this.respawns.push({ bot: b, t: 0.2 + (i % 5) * 0.35 }));
 
     this.targets = [...this.arena.raycastTargets, ...this.bots.flatMap((b) => b.hitboxes)];
+    this.pickups = new Pickups(scene, { octree: this.octree, spots: this.#itemSpots(), respawn: ITEM_RESPAWN });
     this.spawn = this.#pickSpawn('ally');
     this.ui = new TdmHud();
     this.ui.score(this.score, this.time);
@@ -101,7 +113,30 @@ class TDM {
     }
   }
 
+  /** The map's own item spots, or a fixed plan over the hotspots (seeded, so every match lays out the same). */
+  #itemSpots() {
+    const a = this.arena;
+    if (a.pickups?.length) return a.pickups;
+    let seed = 7;
+    const rng = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    const at = (x, z, r) => this.nav.randomPoint(rng, x, z, r);
+    const spots = [];
+    a.hotspots.forEach((h, i) => {
+      const p = at(h.x, h.z, 1.5), spec = pickupSpec(ITEM_PLAN[i % ITEM_PLAN.length], WEAPON_IDS);
+      if (p && spec) spots.push({ ...spec, position: p });
+    });
+    for (const team of ['ally', 'enemy']) {
+      const base = a.spawns[team][0].position, inward = -Math.sign(base.x) || 1;
+      BASE_ITEMS.forEach((type, i) => { const p = at(base.x + inward * 6, base.z + (i - 1) * 3, 1); if (p) spots.push({ type, position: p }); });
+    }
+    return spots;
+  }
+
+  /** A grenade of ours caught us. */
+  hurtSelf(dmg) { this.player.takeDamage(dmg, 'body', this.player); }
+
   dispose() {
+    this.pickups.dispose();
     this.arena.dispose();
     for (const b of this.bots) this.scene.remove(b.root);
     this.ui.root.remove();
@@ -146,7 +181,7 @@ class TDM {
 
   onKill(killer, victim, head) {
     if (this.ended) return;
-    killer.kills = (killer.kills ?? 0) + 1;
+    if (killer !== victim) killer.kills = (killer.kills ?? 0) + 1;
     victim.deaths = (victim.deaths ?? 0) + 1;
     const team = victim.team === 'ally' ? 'enemy' : 'ally';
     this.score[team]++;
@@ -174,7 +209,8 @@ class TDM {
   #playerProxy() {
     const tdm = this, mv = this.mv;
     return {
-      team: 'ally', name: 'You', alive: true, hp: PLAYER_HP, shield: 0, deathT: 0, killer: null,
+      team: 'ally', name: 'You', alive: true, shield: 0, deathT: 0, killer: null,
+      get hp() { return tdm.vitals.hp; },
       get pos() { return mv.feet; },
       get vel() { return mv.vel; },
       eye(out = new THREE.Vector3()) { return out.copy(tdm.camera.position); },
@@ -192,12 +228,11 @@ class TDM {
       },
       takeDamage(dmg, zone, attacker) {
         if (!this.alive || this.shield > 0 || tdm.ended) return false;
-        this.hp -= dmg;
-        this.lastHurt = tdm.now;
-        tdm.ui.hurt(this.hp / PLAYER_HP, tdm.#bearing(attacker.pos));
+        tdm.vitals.damage(dmg);
+        tdm.ui.hurt(tdm.vitals.hp / PLAYER_HP, attacker === this ? null : tdm.#bearing(attacker.pos));
         tdm.audio.play('land', { volume: 0.25, rate: 1.5 });
         tdm.rig.punch(-0.6 - Math.random() * 0.4, (Math.random() - 0.5) * 0.8, (Math.random() - 0.5) * 1.2);
-        if (this.hp <= 0) {
+        if (tdm.vitals.dead) {
           this.alive = false;
           this.deathT = 0;
           this.killer = attacker;
@@ -225,9 +260,9 @@ class TDM {
     this.mv.respawn(s);
     this.rig.yaw = s.yaw;
     this.rig.pitch = 0;
-    for (const { gun } of this.arsenal) gun.ammo = gun.magSize;
+    this.inv.reset(LOADOUT);
+    this.vitals.reset();
     p.alive = true;
-    p.hp = PLAYER_HP;
     p.shield = SPAWN_SHIELD;
     this.ui.death(null);
     this.ui.hurt(1, null);
@@ -269,7 +304,7 @@ class TDM {
     const p = this.player;
     if (p.alive) {
       p.shield = Math.max(0, p.shield - dt);
-      if (this.now - (p.lastHurt ?? -99) > 5 && p.hp < PLAYER_HP) { p.hp = Math.min(PLAYER_HP, p.hp + 30 * dt); this.ui.hurt(p.hp / PLAYER_HP, null); }
+      this.ui.hurt(this.vitals.hp / PLAYER_HP, null); // vignette follows health (regen and heals happen in Vitals)
       if (this.mv.feet.y < -20) this.#respawnPlayer();
     } else if (!this.ended) {
       p.deathT += dt;
@@ -305,7 +340,6 @@ export class TdmHud {
         <div class="side enemy"><b class="e">0</b><span class="label">${esc(enemy)}</span></div>
       </div>
       <div class="tdm-feed"></div>
-      <div class="tdm-hp card"><div class="row"><span class="label">Health</span><span class="num">150</span></div><div class="bar"><b></b><i></i></div></div>
       <div class="tdm-vignette"></div>
       <div class="tdm-dirs"></div>
       <div class="tdm-toast"></div>
@@ -321,13 +355,12 @@ export class TdmHud {
     document.body.appendChild(root);
     const $ = (s) => root.querySelector(s);
     this.el = {
-      a: $('.a'), e: $('.e'), clock: $('.clock'), feed: $('.tdm-feed'), hpNum: $('.tdm-hp .num'), hpBar: $('.tdm-hp .bar b'), hpGhost: $('.tdm-hp .bar i'),
+      a: $('.a'), e: $('.e'), clock: $('.clock'), feed: $('.tdm-feed'),
       vig: $('.tdm-vignette'), dirs: $('.tdm-dirs'), toast: $('.tdm-toast'), death: $('.tdm-death'), who: $('.tdm-death .who'), cd: $('.tdm-death .cd'), end: $('.tdm-end'),
     };
     $('.again').addEventListener('click', () => location.reload());
     $('.title').addEventListener('click', () => { location.href = location.pathname; });
     this.hp = 1;
-    this.ghost = 1;
     this.vig = 0;
   }
 
@@ -385,11 +418,6 @@ export class TdmHud {
 
   update(dt, s, time) {
     this.el.clock.textContent = fmtTime(time);
-    this.ghost = Math.max(this.hp, this.ghost - dt * 0.5);
-    this.el.hpBar.style.width = `${this.hp * 100}%`;
-    this.el.hpGhost.style.width = `${this.ghost * 100}%`;
-    this.el.hpNum.textContent = Math.ceil(this.hp * PLAYER_HP);
-    this.el.hpBar.parentElement.classList.toggle('low', this.hp < 0.35);
     this.vig = Math.max(0, this.vig - dt * 1.6);
     this.el.vig.style.opacity = Math.max(this.vig, (1 - this.hp) * 0.55).toFixed(3);
   }

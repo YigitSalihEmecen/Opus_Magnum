@@ -29,6 +29,15 @@ expressive. Everything on screen should read instantly.
 - **First-person framing.** Guns sit low and to the right, angled toward the crosshair. They're present
   but never crowd the centre of the screen.
 
+## Items
+- **Same family as the guns.** Chunky rounded forms, ink outlines, one identifying colour each: red medkit,
+  ivory bandage, cyan charger, clay-banded grenade, olive ammo box with brass showing.
+- **Rarity is colour and shape.** Armour tiers go sand, blue, purple, and the chest badge shows one to three bars.
+- **Readable on the floor.** Pickups hover over a soft ring in their colour and turn slowly; small items are
+  shown larger than life.
+- **Effects stay in style.** An explosion is one lumpy, ink-outlined fireball with banded, mottled fire that
+  cools from pale yellow through orange and red into grey smoke — no particle soup.
+
 ## Interface
 - **Neo-brutalist, but calm.** Solid ivory cards, thick dark borders and hard offset shadows, paired with
   an elegant, minimal layout and generous spacing.

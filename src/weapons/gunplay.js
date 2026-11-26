@@ -20,6 +20,7 @@ export class Gunplay {
     for (const slot of def.slots) this.vm.equip(slot, findAttachment(slot, this.loadout[slot]), false);
     this.stats = this.#statsFor(this.loadout);
     this.ammo = this.stats.magSize;
+    this.reserve = Infinity; // spare rounds; the inventory sets a finite count where ammo is scarce
     this.vm.flashScale = this.stats.flash;
     this.pump = !!def.vm.pump;
     this.bolt = !!def.vm.bolt;
@@ -73,7 +74,9 @@ export class Gunplay {
     this.stats = this.#statsFor(this.loadout);
     this.vm.flashScale = this.stats.flash;
     if (slot === 'mag') {
-      this.ammo = this.stats.magSize;
+      // a fresh mag is free only where ammo is (the range); elsewhere the rounds carry over
+      if (this.reserve === Infinity) this.ammo = this.stats.magSize;
+      else { const spare = Math.max(0, this.ammo - this.stats.magSize); this.ammo -= spare; this.reserve += spare; }
       this.vm.boltLocked = false;
       this.hud.setMagSize(this.stats.magSize);
     }
@@ -109,7 +112,7 @@ export class Gunplay {
     if (this.loading && input.clicked(0) && this.ammo > 0) this.loading.stop = true;
 
     // reload
-    if (input.pressed('KeyR') && this.ammo < this.magSize && !reloading && canAct) this.#reload();
+    if (input.pressed('KeyR') && this.ammo < this.magSize && this.reserve > 0 && !reloading && canAct) this.#reload();
 
     // trigger
     const held = input.mouse(0);
@@ -123,7 +126,7 @@ export class Gunplay {
       else if (this.cooldown <= 0) this.#shot(mv, camera, targets, now);
     } else if (held && ready) {
       if (this.ammo === 0) {
-        if (pressed) { this.audio.play('click', { volume: 0.7, rate: 0.9 }); this.#reload(); }
+        if (pressed) { this.audio.play('click', { volume: 0.7, rate: 0.9 }); if (this.reserve > 0) this.#reload(); else this.hud.toast('No ammo'); }
       } else if (this.cooldown <= 0 && (this.mode === 'auto' || pressed)) {
         if (this.cooldown < -0.05) this.cooldown = 0;
         if (this.mode === 'burst') this.burstLeft = this.S.burst;
@@ -257,9 +260,16 @@ export class Gunplay {
   /** Shell loop: keep loading until full (or the trigger was pulled), then roll back — or toss and rack if it ran dry. */
   #nextLoadStep(finished) {
     if (finished !== 'reloadStart' && finished !== 'reloadShell') { this.loading = null; return; }
-    const more = this.ammo < this.magSize && !this.loading.stop;
+    const more = this.ammo < this.magSize && this.reserve > 0 && !this.loading.stop;
     const next = more ? 'reloadShell' : this.loading.empty ? 'reloadEndEmpty' : 'reloadEnd';
     this.vm.playClip(next, this.S.reloadRate / this.stats.reload);
+  }
+
+  /** Move up to n rounds from the reserve into the gun. */
+  #refill(n) {
+    const k = Math.max(0, Math.min(n, this.magSize - this.ammo, this.reserve));
+    this.ammo += k;
+    this.reserve -= k;
   }
 
   #onAnimEvent(name, data) {
@@ -269,7 +279,7 @@ export class Gunplay {
       case 'magRelease': a.play('click', { volume: 0.5, rate: 0.8 }); break;
       case 'magDrop': a.play('magOut', { volume: 0.6 }); a.play('magDrop', { volume: 0.5, delay: 0.42 }); break;
       case 'magIn': a.play('magIn', { volume: 0.7 }); break;
-      case 'magSeat': a.play('magSeat', { volume: 0.9 }); this.ammo = this.magSize; break;
+      case 'magSeat': a.play('magSeat', { volume: 0.9 }); this.#refill(this.magSize - this.ammo); break;
       case 'slap': a.play('click', { volume: 0.6, rate: 0.7 }); break;
       case 'boltBack': a.play('boltBack', { volume: 0.9 }); break;
       case 'boltForward': a.play('boltForward', { volume: 1.0 }); break;
@@ -277,7 +287,7 @@ export class Gunplay {
       case 'shellGrab': a.play('click', { volume: 0.2, rate: 1.6 }); break;
       case 'shellIn':
         a.play('magIn', { volume: 0.55, rate: 1.45 });
-        this.ammo = Math.min(this.magSize, this.ammo + 1);
+        this.#refill(1);
         break;
       case 'clipEnd': if (this.loading) this.#nextLoadStep(data); break;
       case 'pumpBack': a.play('pumpBack', { volume: 0.9 }); break;

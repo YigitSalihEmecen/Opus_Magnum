@@ -231,6 +231,50 @@ export class AudioBank {
     if (head) burst(0.002, 0.009, 'highpass', 5200, 5200, 0.8, 0.7); // dry tick
   }
 
+  /**
+   * Explosion, from noise and one sub: a dry crack, a low-passed body that sweeps down as it decays, a sub
+   * drop for weight, and a rumbling tail. `near` (0..1) adds the close-up crack and more sub.
+   */
+  explosion({ volume = 1, pan = 0, near = 0 } = {}) {
+    if (!this.ready) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const out = ctx.createGain();
+    out.gain.value = volume;
+    let node = out;
+    if (pan) { const p = ctx.createStereoPanner(); p.pan.value = pan; out.connect(p); node = p; }
+    node.connect(this.#hitBus());
+    const burst = (at, dur, type, f0, f1, q, amp, attack = 0.002) => {
+      const src = ctx.createBufferSource();
+      src.buffer = this.noise;
+      const f = ctx.createBiquadFilter();
+      f.type = type;
+      f.Q.value = q;
+      f.frequency.setValueAtTime(f0, t + at);
+      f.frequency.exponentialRampToValueAtTime(f1, t + at + dur);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t + at);
+      g.gain.exponentialRampToValueAtTime(amp, t + at + attack);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + at + dur);
+      src.connect(f).connect(g).connect(out);
+      src.start(t + at, Math.random() * 1.5);
+      src.stop(t + at + dur + 0.05);
+    };
+    burst(0, 0.06, 'highpass', 3000, 1200, 0.6, 0.35 + near * 0.6);   // crack
+    burst(0.004, 0.9, 'lowpass', 2400, 120, 0.7, 1.2, 0.006);         // body
+    burst(0.05, 1.8, 'lowpass', 500, 60, 0.9, 0.45, 0.08);            // rumble tail
+    const o = ctx.createOscillator();
+    o.frequency.setValueAtTime(78, t);
+    o.frequency.exponentialRampToValueAtTime(28, t + 0.6);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.7 + near * 0.5, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+    o.connect(g).connect(out);
+    o.start(t);
+    o.stop(t + 0.75);
+    this.play('land', { volume: 0.5 * volume, rate: 0.55 });
+  }
+
   setVolume(v) {
     this.volume = v;
     if (this.master) this.master.gain.setTargetAtTime(v, this.ctx.currentTime, 0.05);

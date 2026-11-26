@@ -26,7 +26,7 @@ export class HUD {
     const $ = (s) => root.querySelector(s);
     this.el = {
       fps: $('.fps'), xhair: $('.xhair'), hit: $('.hitmarker'), killflash: $('.killflash'), dmgs: $('.dmgs'),
-      weapon: $('.weapon'), mag: $('.mag'), pipsBox: $('.pips'), pips: [],
+      weapon: $('.weapon'), mag: $('.mag'), res: $('.res'), pipsBox: $('.pips'), pips: [],
       modesBox: $('.modes'), modes: [], toast: $('.toast'),
       bars: ['.t', '.b', '.l', '.r'].map((s) => root.querySelector(`.xhair ${s}`)),
       ring: root.querySelector('.xhair .o'),
@@ -135,6 +135,11 @@ export class HUD {
     this.el.xhair.style.opacity = String(Math.max(0, 1 - gun.adsEased * 2.5) * (mv.sprinting ? 0.35 : 1));
 
     // weapon panel
+    if (gun.reserve !== this.lastReserve) {
+      this.lastReserve = gun.reserve;
+      this.el.res.textContent = `/ ${gun.reserve === Infinity ? '∞' : gun.reserve}`;
+      this.el.res.classList.toggle('low', gun.reserve === 0);
+    }
     if (gun.ammo !== this.lastAmmo) {
       this.lastAmmo = gun.ammo;
       this.el.mag.textContent = String(gun.ammo).padStart(2, '0');
