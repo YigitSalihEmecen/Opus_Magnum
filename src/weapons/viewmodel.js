@@ -6,6 +6,7 @@ import { ClipPlayer } from './anim.js';
 import { buildClips } from './animations.js';
 import { SLOTS } from './attachments.js';
 import { FX_LAYER } from '../core/renderer.js';
+import { MOVE } from '../player/movement.js';
 
 const D2R = Math.PI / 180;
 const damp = (a, b, rate, dt) => a + (b - a) * (1 - Math.exp(-rate * dt));
@@ -375,7 +376,7 @@ export class Viewmodel {
     w.sprint = damp(w.sprint, mv.sprinting && onGround ? 1 : 0, 9, dt);
     w.slide = damp(w.slide, mv.state === 'slide' ? 1 : 0, 10, dt);
     w.wall = damp(w.wall, mv.state === 'wallrun' ? mv.wallSide : 0, 8, dt);
-    w.walk = damp(w.walk, onGround || mv.state === 'wallrun' ? Math.min(1, mv.speed / 7.8) : 0, 10, dt);
+    w.walk = damp(w.walk, onGround || mv.state === 'wallrun' ? Math.min(1, mv.speed / MOVE.sprintSpeed) : 0, 10, dt);
     w.air = damp(w.air, mv.state === 'air' ? THREE.MathUtils.clamp(mv.vel.y / 8, -1, 1) : 0, 8, dt);
     w.crouch = damp(w.crouch, mv.crouched ? 1 : 0, 10, dt);
     w.strafe = damp(w.strafe, axes.x, 8, dt);

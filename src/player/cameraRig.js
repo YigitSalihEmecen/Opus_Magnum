@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { SPEED } from './movement.js';
 
 const D2R = Math.PI / 180;
 const damp = (a, b, rate, dt) => a + (b - a) * (1 - Math.exp(-rate * dt));
@@ -69,7 +70,7 @@ export class CameraRig {
 
     // head bob from gait
     const moving = (mv.state === 'ground' && mv.grounded) || mv.state === 'wallrun';
-    const speedT = Math.min(1, mv.speed / 8);
+    const speedT = Math.min(1, mv.speed / (8 * SPEED));
     this.bobWeight = damp(this.bobWeight, moving ? speedT : 0, 10, dt);
     const ph = mv.gaitPhase;
     const amp = this.bobWeight * (1 - ads * 0.8);
@@ -95,7 +96,7 @@ export class CameraRig {
     const pr = this.punchRoll.update(dt);
 
     // FOV: speed kick, ADS zoom
-    const fast = THREE.MathUtils.clamp((mv.speed - 6) / 6, 0, 1);
+    const fast = THREE.MathUtils.clamp((mv.speed / SPEED - 6) / 6, 0, 1);
     this.fovKick = damp(this.fovKick, fast * 7 + (mv.state === 'slide' ? 3 : 0), 5, dt);
     this.zoom = 1 + ads * (zoom - 1);
     const cam = this.camera;

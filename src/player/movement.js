@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { Capsule } from 'three/examples/jsm/math/Capsule.js';
 
+/** Global horizontal pace: every ground/air/wall speed below is scaled by it (jumps and falls are not). */
+export const SPEED = 0.7;
+
 /** All movement tuning lives here. Units: metres, seconds. */
 export const MOVE = {
   radius: 0.35,
@@ -13,34 +16,34 @@ export const MOVE = {
   jumpSpeed: 7.1,
   coyoteTime: 0.12,
   jumpBuffer: 0.14,
-  maxSpeed: 24,
+  maxSpeed: 24 * SPEED,
 
-  walkSpeed: 5.2,
-  sprintSpeed: 7.8,
-  crouchSpeed: 2.9,
+  walkSpeed: 5.2 * SPEED,
+  sprintSpeed: 7.8 * SPEED,
+  crouchSpeed: 2.9 * SPEED,
   groundAccel: 13,
   friction: 7.5,
-  stopSpeed: 2.4,
+  stopSpeed: 2.4 * SPEED,
   airAccel: 2.4,
-  airWishSpeed: 4.4,
+  airWishSpeed: 4.4 * SPEED,
 
-  slideMinSpeed: 5.6,
-  slideBoost: 2.8,
-  slideBoostCap: 11.5,
+  slideMinSpeed: 5.6 * SPEED,
+  slideBoost: 2.8 * SPEED,
+  slideBoostCap: 11.5 * SPEED,
   slideBoostCooldown: 1.8,
-  slideDecel: 3.2,
+  slideDecel: 3.2 * SPEED,
   slideSlopeScale: 1.05,
-  slideEndSpeed: 3.0,
+  slideEndSpeed: 3.0 * SPEED,
   slideSteerAccel: 4,
 
-  wallrunMinSpeed: 4.6,
-  wallrunSpeed: 9.2,
+  wallrunMinSpeed: 4.6 * SPEED,
+  wallrunSpeed: 9.2 * SPEED,
   wallrunAccel: 9,
   wallrunMaxTime: 1.85,
   wallrunGravity: 2.6,
   wallrunReach: 0.55,
   wallrunEntryLift: 1.6,
-  wallJumpOut: 6.4,
+  wallJumpOut: 6.4 * SPEED,
   wallJumpUp: 6.8,
   wallrunCooldown: 0.3,
 
@@ -50,14 +53,14 @@ export const MOVE = {
   mantleRiseTime: 0.2,
   mantleRisePerMetre: 0.09,
   mantleForwardTime: 0.14,
-  mantleExitSpeed: 4.2,
+  mantleExitSpeed: 4.2 * SPEED,
 
   vaultMinHeight: 0.45,
   vaultMaxHeight: 1.35, // cover, rails, half walls, window sills
   vaultMaxDepth: 1.7, // anything thicker is climbed onto instead
   vaultReach: 0.55, // + vaultReachPerSpeed × speed: sprinting spots the obstacle earlier
   vaultReachPerSpeed: 0.11,
-  vaultMinSpeed: 5.4, // carried over the top; faster approaches keep their speed
+  vaultMinSpeed: 5.4 * SPEED, // carried over the top; faster approaches keep their speed
   vaultClear: 0.06, // feet over the top
   vaultTuck: 1.0, // body height while vaulting (legs tucked): what has to fit through a window
 };
@@ -240,7 +243,7 @@ export class Movement {
       this.vel.x *= ns / s;
       this.vel.z *= ns / s;
     }
-    this.#accelerate(c.wish, 1.6, MOVE.slideSteerAccel, dt);
+    this.#accelerate(c.wish, 1.6 * SPEED, MOVE.slideSteerAccel, dt);
 
     if (this.speed < MOVE.slideEndSpeed || !c.crouchHeld) {
       this.state = 'ground';
@@ -463,7 +466,7 @@ export class Movement {
    * (a window you didn't line up) slide sideways onto the nearest clear line.
    */
   #tryVault(c, air = false) {
-    if (c.axes.y <= 0 || this.state === 'slide' && this.speed < 3) return false;
+    if (c.axes.y <= 0 || this.state === 'slide' && this.speed < 3 * SPEED) return false;
     // airborne, heights count from the floor below us (an early jump mustn't make tall things vaultable)
     const base = air ? this.#cast(_v2.copy(this.feet).setY(this.feet.y + 0.05), new THREE.Vector3(0, -1, 0), 3)?.position.y : this.feet.y;
     if (base === undefined) return false;
