@@ -44,6 +44,8 @@ function connect(url, hello) {
       if (msg.t === 'error') { clearTimeout(timer); ws.close(); reject(new Error(msg.msg)); return; }
       if (msg.t !== 'welcome') { queue.push(msg); return; }
       clearTimeout(timer);
+      // an older server half-works (no pickups, no vote): say so instead of playing on it
+      if (msg.v !== PROTOCOL) { ws.close(); reject(new Error('The match server is out of date: update and restart it (git pull, then node server/index.js)')); return; }
       resolve({ ws, welcome: msg, queue });
     };
   });
