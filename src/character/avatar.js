@@ -28,12 +28,13 @@ const damp = (a, b, k, dt) => a + (b - a) * (1 - Math.exp(-k * dt));
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const ss = THREE.MathUtils.smoothstep;
 const UP = new THREE.Vector3(0, 1, 0), RIGHT = new THREE.Vector3(1, 0, 0);
-// gaits: the speed (m/s) at which each loop plays alone (walking pace, our run, our sprint); between them they
-// cross-fade on one stride phase
-const GAITS = [['walk', 1.4], ['jog', 3.6], ['sprint', 5.4]];
-// playback follows speed / the clip's own ground speed, eased (^CADENCE): the stylised run and sprint cycles are
-// authored faster than we move, and slowing them fully would look floaty — a touch of stride stretch reads better
-const CADENCE = 0.75;
+// gaits: the speed (m/s) at which each loop plays alone; between them they cross-fade on one stride phase.
+// Anything quicker than a strafe is a sprint
+const GAITS = [['walk', 1.4], ['jog', 2.8], ['sprint', 4.2]];
+// The run cycles are authored for faster ground speeds than ours (the sprint ~8 m/s). Slowing them down to
+// match looks like slow motion, so they keep close to their own cadence and the stride shortens instead (the
+// legs swing less): speed ratio r → cadence r^0.2 (clamped), leg swing r / cadence, feet stay planted
+const CADENCE = 0.2;
 const LOWER = ['hips', 'thigh_L', 'shin_L', 'foot_L', 'thigh_R', 'shin_R', 'foot_R'];
 const UPPER = ['spine', 'chest', 'neck', 'head', 'shoulder_L', 'shoulder_R'];
 const FLINCH = ['spine', 'chest', 'neck', 'head'];
@@ -164,7 +165,10 @@ export class Avatar {
     const crouchLoop = C.crouchWalk;
     dur = THREE.MathUtils.lerp(dur, crouchLoop.duration, w.crouch);
     speed = THREE.MathUtils.lerp(speed, crouchLoop.speed * scale, w.crouch);
-    const rate = THREE.MathUtils.clamp(Math.pow(sp / Math.max(0.3, speed), CADENCE), 0.4, 2.2) / dur; // cycles per second
+    const ratio = sp / Math.max(0.3, speed);
+    const cadence = THREE.MathUtils.clamp(Math.pow(ratio, CADENCE), 0.85, 1.2);
+    const stride = THREE.MathUtils.clamp(ratio / cadence, 0.5, 1.2);
+    const rate = cadence / dur; // cycles per second
     this.cycle += dt * rate * dir * move;
     this.idleT += dt;
     this.phase = this.cycle * Math.PI * 2; // footsteps: one per half cycle
@@ -189,6 +193,7 @@ export class Avatar {
       { clip: 'hit', t: T.hit, w: hit, bones: FLINCH },
     ];
     const m = this.motion.blend(layers);
+    m.swing(LEGS, THREE.MathUtils.lerp(1, stride, base * move)); // shorter steps at our slower speeds
 
     // the legs and hips swing toward travel; the torso stays square to the aim, bladed behind the rifle,
     // and carries the aim's pitch; the head looks along it

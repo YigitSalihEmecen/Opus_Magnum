@@ -96,6 +96,17 @@ export class Motion {
     return this;
   }
 
+  /** Scale how far some bones are turned from rest (k < 1: smaller swings, e.g. a shorter stride). */
+  swing(bones, k) {
+    if (k === 1) return this;
+    for (const b of bones) {
+      _q.copy(this.rest[b]).invert().premultiply(this.world[b]); // world = turn · rest → turn
+      _a.identity().slerp(_q, k);
+      this.world[b].copy(_a).multiply(this.rest[b]);
+    }
+    return this;
+  }
+
   /** Write the character-space rotations back to the bones as local rotations, and place the hips. */
   apply() {
     for (const b of BONES) {
