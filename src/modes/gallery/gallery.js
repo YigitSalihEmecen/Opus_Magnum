@@ -1,69 +1,61 @@
 import * as THREE from 'three';
 import { Avatar } from '../../character/avatar.js';
 import { CHARACTERS } from '../../character/characters.js';
-import { motionClips } from '../../character/motion.js';
 import { textTexture } from '../../core/toon.js';
 import { FX_LAYER } from '../../core/renderer.js';
 
 /*
-  Animation gallery: every animation on every robot, on an open floor you can walk around.
-  Per character, two rows facing you:
-    clips   — each captured clip on its own, exactly as authored (one-shots repeat after a pause)
-    in game — the body as bots and online players show it: clips blended and shaped by speed, direction,
-              stance and aim, the way the game drives them, running in place
-  [ and ] slow down / speed up time, \\ freezes it. Robots far from you rest hidden (labels stay up).
-  Loaded only when picked (main.js MODES).
+  Animation demo: three bots lap a ring on an open floor, each looping a short gameplay routine (sprint, slide,
+  crouch, strafe, backpedal, jump, reload, take a hit…), driven exactly as the game drives bots: speed, travel
+  direction against facing, stance, aim. A tag over each says what it's doing.
+  [ and ] slow down / speed up time, \ pauses it. Loaded only when picked (main.js MODES).
 */
 
-const GAP = 3.4, ROW = 7, LABEL_Y = 2.45;
-const NEAR = 26; // robots further than this from you rest hidden (sixty bodies at once is a lot of draw calls)
+const CENTRE = new THREE.Vector3(0, 0, -4);
 const SPEEDS = [0, 0.1, 0.25, 0.5, 1, 1.5];
-const NAMES = { idle: 'Idle', walk: 'Walk', jog: 'Jog', sprint: 'Sprint', crouchIdle: 'Crouch idle', crouchWalk: 'Crouch walk', jump: 'Jump start', air: 'In the air', land: 'Landing', hit: 'Hit', slide: 'Slide', climb: 'Climb up' };
+const BOTS = [{ char: 0, r: 3.5, start: 0 }, { char: 1, r: 6, start: 9 }, { char: 0, r: 8.5, start: 18 }];
 
-// what the game drives: speed (m/s), travel direction relative to facing (°), stance, and scripted changes
-const STATES = [
-  { label: 'Idle', sp: 0 },
-  { label: 'Walk', sp: 1.4 },
-  { label: 'Run', sp: 3.6 },
-  { label: 'Sprint', sp: 5.4 },
-  { label: 'Strafe', sp: 3.6, dir: 90 },
-  { label: 'Backpedal', sp: 3.0, dir: 180 },
-  { label: 'Run in a circle', sp: 4.5, turn: 1.4 },
-  { label: 'Start / stop', sp: (t) => (t % 3 < 1.5 ? 5.4 : 0) },
-  { label: 'Crouch', sp: 0, pose: { crouch: 1 } },
-  { label: 'Crouch walk', sp: 2.0, pose: { crouch: 1 } },
-  { label: 'Slide', sp: 6.5, pose: { slide: 1, crouch: 1 } },
-  { label: 'Jump / land', sp: 4, pose: (t) => ({ air: t % 2.4 < 1.0 ? 1 : 0 }) },
-  { label: 'Wallrun', sp: 6, pose: { wall: 1 } },
-  { label: 'Climb (mantle)', sp: 1, pose: (t) => ({ mantle: t % 2 < 0.9 ? 1 : 0 }) },
-  { label: 'Aim sweep', sp: 0, pitch: (t) => Math.sin(t * 1.3) * 0.9 },
-  { label: 'Aiming down sights', sp: 0, pose: { ads: 1 } },
-  { label: 'Reload', sp: 0, reload: 2.4 },
-  { label: 'Hit flinch', sp: 0, hit: 1.4 },
+// one routine step: seconds, speed (m/s), facing against travel (° — 90 strafes, 180 backpedals), stance, extras
+const ROUTINE = [
+  { label: 'Sprint', t: 3, sp: 5.7 },
+  { label: 'Slide', t: 0.9, sp: 6.5, pose: { slide: 1, crouch: 1 } },
+  { label: 'Crouch walk', t: 2, sp: 2, pose: { crouch: 1 } },
+  { label: 'Crouch, aim around', t: 1.6, sp: 0, pose: { crouch: 1 }, pitch: true },
+  { label: 'Run', t: 2, sp: 4.2 },
+  { label: 'Jump', t: 0.9, sp: 4.6, pose: { air: 1 } },
+  { label: 'Run', t: 1.2, sp: 4.6 },
+  { label: 'Strafe', t: 1.6, sp: 3.4, face: 90 },
+  { label: 'Strafe', t: 1.6, sp: 3.4, face: 90, flip: true },
+  { label: 'Backpedal', t: 1.6, sp: 3, face: 180 },
+  { label: 'Stop, reload', t: 2.4, sp: 0, reload: true },
+  { label: 'Walk', t: 2.2, sp: 1.4 },
+  { label: 'Hit', t: 1, sp: 0, hit: true },
+  { label: 'Aim down sights', t: 1.6, sp: 0, pose: { ads: 1 }, pitch: true },
 ];
+const LOOP = ROUTINE.reduce((s, r) => s + r.t, 0);
 
-function label(text, wide = false) {
-  const tex = textTexture([{ text }], { width: wide ? 1024 : 640, height: 128, font: '600 64px "Space Grotesk", sans-serif', align: 'center', pad: 24 });
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthWrite: false, toneMapped: false }));
-  s.scale.set(wide ? 3.6 : 2.2, wide ? 0.45 : 0.44, 1);
-  s.layers.set(FX_LAYER);
-  return s;
+const tags = new Map();
+function tag(text) {
+  if (!tags.has(text)) {
+    const tex = textTexture([{ text }], { width: 640, height: 128, font: '600 64px "Space Grotesk", sans-serif', align: 'center', pad: 24 });
+    tags.set(text, new THREE.SpriteMaterial({ map: tex, depthWrite: false, toneMapped: false }));
+  }
+  return tags.get(text);
+}
+
+function stepAt(t) {
+  let u = ((t % LOOP) + LOOP) % LOOP;
+  for (const s of ROUTINE) { if (u < s.t) return [s, u]; u -= s.t; }
+  return [ROUTINE[0], 0];
 }
 
 export async function createGallery({ scene, hud, buildWorld }) {
-  const clips = Object.values(motionClips());
-  const rows = CHARACTERS.flatMap((ch) => [
-    { title: `${ch.name} · clips`, char: ch.id, items: clips.map((c) => ({ clip: c.name, label: NAMES[c.name] ?? c.name })) },
-    { title: `${ch.name} · in game`, char: ch.id, items: STATES },
-  ]);
-  const width = Math.max(...rows.map((r) => r.items.length)) * GAP;
-  const size = Math.ceil((width + 16) / 8) * 8;
-  const world = await buildWorld({ size, pieces: [{ type: 'spawn_ally', x: 0, y: 0, z: 9, rot: 0 }] });
-  return new Gallery({ scene, hud, world, rows });
+  const world = await buildWorld({ size: 40, pieces: [{ type: 'spawn_ally', x: 0, y: 0, z: 9, rot: 0 }] });
+  return new Gallery({ scene, hud, world });
 }
 
 class Gallery {
-  constructor({ scene, hud, world, rows }) {
+  constructor({ scene, hud, world }) {
     Object.assign(this, { scene, hud, world });
     this.octree = world.octree;
     this.spawn = world.spawns.ally[0];
@@ -71,27 +63,17 @@ class Gallery {
     this.group = new THREE.Group();
     scene.add(this.group);
     this.time = 0;
-    this.speed = 4; // index into SPEEDS: real time
-    this.bodies = [];
-    rows.forEach((row, r) => {
-      const z = -r * ROW;
-      const x0 = (-(row.items.length - 1) * GAP) / 2;
-      const title = label(row.title, true);
-      title.position.set(x0 - GAP * 1.4, 1.2, z);
-      this.group.add(title);
-      row.items.forEach((item, i) => {
-        const a = new Avatar({ team: 'enemy', name: item.label, char: row.char });
-        a.alive = true;
-        a.root.visible = true;
-        a.pos.set(x0 + i * GAP, 0, z);
-        a.home = a.pos.clone();
-        a.item = item;
-        this.group.add(a.root);
-        const tag = label(item.label);
-        tag.position.set(a.pos.x, LABEL_Y, z);
-        this.group.add(tag);
-        this.bodies.push(a);
-      });
+    this.speed = 4;
+    this.bots = BOTS.map((b) => {
+      const a = new Avatar({ team: 'enemy', name: '', char: CHARACTERS[b.char].id });
+      a.alive = true;
+      a.root.visible = true;
+      a.lap = { ...b, theta: 0, step: null };
+      a.label = new THREE.Sprite(tag('…'));
+      a.label.scale.set(2.2, 0.44, 1);
+      a.label.layers.set(FX_LAYER);
+      this.group.add(a.root, a.label);
+      return a;
     });
     this.onKey = (e) => {
       if (e.code === 'BracketLeft') this.speed = Math.max(1, this.speed - 1);
@@ -104,32 +86,30 @@ class Gallery {
     setTimeout(() => this.hud.toast('[ ] slow down / speed up · \\ pause'), 1200);
   }
 
-  update(dt, { camera }) {
-    const k = SPEEDS[this.speed], step = dt * k;
+  update(dt) {
+    const step = dt * SPEEDS[this.speed];
+    if (!step) return;
     this.time += step;
-    const t = this.time;
-    for (const a of this.bodies) {
-      a.root.visible = a.home.distanceTo(camera.position) < NEAR;
-      if (!a.root.visible) continue;
-      const s = a.item;
-      if (s.clip) {
-        // a one-shot clip plays, holds a beat, plays again
-        const c = a.motion.clips[s.clip];
-        a.showClip(s.clip, c.loop ? t : t % (c.duration + 0.7));
-        continue;
+    for (const a of this.bots) {
+      const L = a.lap;
+      const [s, u] = stepAt(this.time + L.start);
+      if (s !== L.step) {
+        L.step = s;
+        a.label.material = tag(s.label);
+        if (s.reload) a.reloadT = a.reloadTime;
+        if (s.hit) a.flash = 0.08;
       }
-      if (!step) continue;
-      const sp = typeof s.sp === 'function' ? s.sp(t) : s.sp;
-      const heading = s.turn ? t * s.turn : ((s.dir ?? 0) * Math.PI) / 180;
-      a.aimYaw = s.turn ? heading : 0;
-      a.vel.set(Math.sin(heading) * sp, 0, Math.cos(heading) * sp);
-      a.poseTarget = (typeof s.pose === 'function' ? s.pose(t) : s.pose) ?? {};
-      a.aimPitch = s.pitch ? s.pitch(t) : 0;
-      if (s.reload && t % s.reload < step) a.reloadT = a.reloadTime;
+      // round the ring anticlockwise; travel along its tangent, face per the step
+      L.theta += (s.sp * step) / L.r;
+      a.pos.set(CENTRE.x + Math.cos(L.theta) * L.r, 0, CENTRE.z - Math.sin(L.theta) * L.r);
+      const heading = Math.atan2(-Math.sin(L.theta), -Math.cos(L.theta));
+      a.vel.set(Math.sin(heading) * s.sp, 0, Math.cos(heading) * s.sp);
+      a.aimYaw = heading - (((s.face ?? 0) * (s.flip ? -1 : 1)) * Math.PI) / 180;
+      a.aimPitch = s.pitch ? Math.sin(u * 2.2) * 0.6 : 0;
+      a.poseTarget = s.pose ?? {};
       a.reloadT = Math.max(0, a.reloadT - step);
-      if (s.hit && t % s.hit < step) a.flash = 0.08;
-      a.pos.copy(a.home); // running in place
       a.pose(step);
+      a.label.position.copy(a.pos).setY(2.45);
     }
   }
 

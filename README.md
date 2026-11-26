@@ -97,7 +97,7 @@ src/
   modes/editor/           map editor UI, loaded only when picked
     editor.js             grid, orbit camera, place/select/drag, inspector, undo, open/save UI
   modes/gallery/          animation gallery, loaded only when picked
-    gallery.js            every captured clip and every in-game movement state on both robots; [ ] \ time
+    gallery.js            animation demo: three bots lap a ring through a gameplay routine; [ ] \ time
   net/
     online.js             online mode: remote players, poses, server-owned vitals, pickups, map vote
   ui/

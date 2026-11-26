@@ -91,7 +91,7 @@ const MODES = [
     load: async () => (await import('./modes/editor/editor.js')).createEditor({ renderer, scene, canvas, onExit: () => { location.href = location.pathname; } }),
   },
   {
-    id: 'gallery', index: '05 / LAB', title: 'Animation Gallery', short: 'Every robot animation', accent: '#87867f',
+    id: 'gallery', index: '05 / LAB', title: 'Animation Demo', short: 'Bots showing every move', accent: '#87867f',
     blurb: 'Every captured clip and every in-game movement state on both robots, side by side. [ and ] change the speed.',
     load: async () => (await import('./modes/gallery/gallery.js')).createGallery({ scene, hud, buildWorld: async (map) => (await import('./maps/mapWorld.js')).buildMapWorld(scene, map) }),
   },
