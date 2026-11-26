@@ -55,8 +55,10 @@ src/
   character/
     characters.js         playable robots (Rivet, Kite): build, first-person arms
     robot.js, kite.js     robot bodies, skeleton, arm IK, baking, box hit volumes per body segment
-    avatar.js             a body in the world holding a gun: poses, flash, marker, death fall
-                          (bots and online players both drive one)
+    avatar.js             a body in the world holding a gun: captured movement shaped by code (legs to travel,
+                          torso to the aim, leans), flash, marker, death fall (bots and online players drive one)
+    motion.js             captured motion mapped onto our rigs and blended (bone turns from rest pose)
+    motion.data.js        generated: Quaternius Universal Animation Library clips (CC0), trimmed and packed
   weapons/
     weapons.js            ★ weapon definitions: stats, recoil, hand poses, slots (start here)
     gunplay.js            ★ firing, fire modes, pellets, ADS, reload flow, spare ammo, recoil, damage
@@ -109,6 +111,7 @@ server/
   test.js                 end-to-end test against a live server
 public/audio/             CC0 sounds — see public/audio/CREDITS.md
 tools/audio/              scripts used to slice the source recordings
+tools/anim/quaternius.py  Quaternius animation libraries (glTF) → src/character/motion.data.js
 ```
 
 Dependencies only point downward: `core` knows nothing about the game, `world`/`player`/`weapons`
