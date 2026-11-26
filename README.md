@@ -58,6 +58,7 @@ src/
     avatar.js             a body in the world holding a gun: captured movement shaped by code (legs to travel,
                           torso to the aim, leans), flash, marker, death fall (bots and online players drive one)
     motion.js             captured motion mapped onto our rigs and blended (bone turns from rest pose)
+    smooth.js             springs + inertializer: no input or pose change ever snaps on a body
     motion.data.js        generated: Quaternius Universal Animation Library clips (CC0), trimmed and packed
   weapons/
     weapons.js            ★ weapon definitions: stats, recoil, hand poses, slots (start here)
@@ -97,7 +98,7 @@ src/
   modes/editor/           map editor UI, loaded only when picked
     editor.js             grid, orbit camera, place/select/drag, inspector, undo, open/save UI
   modes/gallery/          animation gallery, loaded only when picked
-    gallery.js            animation demo: three bots lap a ring through a gameplay routine; [ ] \ time
+    gallery.js            animation demo: three robots run a parkour loop (vault, slide, wallrun, climb, gaps); [ ] \ time
   net/
     online.js             online mode: remote players, poses, server-owned vitals, pickups, map vote
   ui/
