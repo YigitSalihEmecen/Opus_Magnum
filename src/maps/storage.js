@@ -6,11 +6,10 @@ import { settlement } from './builtin/settlement.js';
 import { duel } from './builtin/duel.js';
 import { lido } from './builtin/lido.js';
 import { sluice } from './builtin/sluice.js';
-import { col2 } from './builtin/col2.js';
 
 const KEY = 'om.maps';
 let builtins;
-const BUILTIN = () => (builtins ??= [settlement(), duel(), lido(), sluice(), col2()]);
+const BUILTIN = () => (builtins ??= [settlement(), duel(), lido(), sluice()]);
 
 /** Maps saved before v2 placed floor slabs by their underside; lift those records onto the new convention. */
 function upgrade(map) {

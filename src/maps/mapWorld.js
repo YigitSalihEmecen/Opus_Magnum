@@ -3,7 +3,7 @@ import { Octree } from 'three/examples/jsm/math/Octree.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { PALETTE as P, toon } from '../core/toon.js';
 import { buildPiece, buildJoints, makeContext } from './assets.js';
-import { terrainMesh, setHeights, heightsOf, heightAt, segOf, LIMIT, terrainMaterial, tintGround } from './terrain.js';
+import { terrainMesh, setHeights, heightsOf, heightAt, LIMIT, terrainMaterial, tintGround } from './terrain.js';
 import { applySky } from '../world/sky.js';
 import { Doors } from './doors.js';
 import { pickupSpec } from '../items/items.js';
@@ -23,8 +23,8 @@ export const MAP_SIZE = 96; // buildable square, metres
 export function buildMapScene(map, group) {
   const size = map.size ?? MAP_SIZE;
   const h = heightsOf(map, size);
-  const ground = terrainMesh(size, { seg: segOf(h) });
-  setHeights(ground, h, { grass: !map.terrain?.plain });
+  const ground = terrainMesh(size);
+  setHeights(ground, h);
   group.add(ground);
   const groundAt = (x, z) => heightAt(h, size, x, z);
   const ctx = makeContext(map.pieces, groundAt);
@@ -115,7 +115,7 @@ export function buildMapWorld(scene, map) {
     spawn: spawns.ally[0],
     killY: map.water !== undefined ? map.water - 0.4 : undefined,
     doors: new Doors(group, doorSpots),
-    bounds: { minX: -Math.floor(half), maxX: Math.floor(half), minZ: -Math.floor(half), maxZ: Math.floor(half), cell: 1 }, // nav cells on whole metres
+    bounds: { minX: -half, maxX: half, minZ: -half, maxZ: half, cell: 1 },
     dispose: () => scene.remove(group),
   };
 }

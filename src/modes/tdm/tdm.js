@@ -55,8 +55,7 @@ class TDM {
     this.arena = arena ?? new Arena(scene);
     this.mapName = this.arena.name ?? 'Kiln';
     this.octree = this.arena.octree;
-    const seeds = [...this.arena.spawns.ally, ...this.arena.spawns.enemy].map((s) => s.position);
-    this.nav = this.arena.nav ??= new NavGrid(this.octree, { ...this.arena.bounds, seeds });
+    this.nav = this.arena.nav ??= new NavGrid(this.octree, this.arena.bounds);
     this.#prepareArena();
     this.fx = new WorldFX(scene); // bot tracers/impacts get their own pools
     this.now = 0;
