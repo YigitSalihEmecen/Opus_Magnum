@@ -58,6 +58,36 @@ await new Promise((r) => setTimeout(r, 1600)); // spawn shield
 a.send({ t: 'hit', id: wb.id, zone: 'body', dmg: 40 });
 assert.equal((await b.next('hurt')).hp, 110); // fresh round: full health again
 
+// armour soaks damage first; heals only restore what an item can
+b.send({ t: 'vit', op: 'wear', v: 50 });
+let h = await b.next('hurt');
+assert.deepEqual([h.ar, h.am], [50, 50]);
+a.send({ t: 'hit', id: wb.id, zone: 'body', dmg: 60 });
+h = await b.next('hurt');
+assert.deepEqual([h.ar, h.hp], [0, 100]);
+b.send({ t: 'vit', op: 'heal', v: 999 }); // not an item: ignored
+b.send({ t: 'vit', op: 'heal', v: 40 });
+assert.equal((await b.next('hurt')).hp, 140);
+
+// pickups: the first claim wins, once
+a.send({ t: 'take', id: 'm3' });
+b.send({ t: 'take', id: 'm3' });
+assert.equal((await b.next('took')).by, wa.id);
+assert.equal((await a.next('took')).by, wa.id);
+await new Promise((r) => setTimeout(r, 150));
+assert.equal(b.inbox.filter((m) => m.t === 'took').length, 0);
+b.send({ t: 'drop', w: 2, p: [1, 0, 1], ammo: 5, reserve: 10 });
+const dropped = await a.next('dropped');
+assert.deepEqual([dropped.w, dropped.ammo], [2, 5]);
+a.send({ t: 'take', id: dropped.id });
+assert.equal((await b.next('took')).id, dropped.id);
+
+// your own grenade can kill you; the other side gets the point
+b.send({ t: 'hit', id: wb.id, zone: 'blast', dmg: 300 });
+const selfKill = await a.next('kill');
+assert.equal(selfKill.v, wb.id);
+assert.equal(selfKill.score[wa.team], 2);
+
 a.ws.close(); b.ws.close();
 // a page on another site is refused
 await new Promise((res, rej) => { const bad = new WebSocket(`ws://localhost:${PORT}`, { origin: 'https://evil.example' }); bad.on('open', () => rej(new Error('foreign origin accepted'))); bad.on('error', res); });

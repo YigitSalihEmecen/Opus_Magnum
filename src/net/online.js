@@ -3,11 +3,14 @@ import { Bot, MAX_HP } from '../modes/tdm/bot.js';
 import { TdmHud } from '../modes/tdm/tdm.js';
 import { WorldFX } from '../weapons/effects.js';
 import { WEAPONS } from '../weapons/weapons.js';
+import { Pickups } from '../items/pickups.js';
 
 /*
   Online match against other players through the match server (server/index.js). Same level interface as TDM:
     octree · spawn · targets · playerAlive · ended · update(dt, { camera, gun }) · dispose()
-  This client owns its movement and hit detection; the server owns HP, kills, score and the clock.
+  This client owns its movement and hit detection; the server owns HP, armour, kills, score, the clock and who
+  got which pickup (claims go up as take/drop, answers come back as took/dropped). Grenades are simulated on
+  every client; only the thrower's client reports what its blast hit.
   Other players are drawn INTERP ms in the past, between the two snapshots around that moment.
   Delete src/net/ and its MODES entry in main.js to remove multiplayer.
 */
@@ -117,8 +120,13 @@ class Remote extends Bot {
 }
 
 class Online {
-  constructor({ scene, camera, audio, hud, mv, rig, arsenal, ws, welcome, queue, arena }) {
-    Object.assign(this, { scene, camera, audio, hud, mv, rig, arsenal, ws, arena });
+  constructor({ scene, camera, audio, hud, mv, rig, arsenal, inv, vitals, ws, welcome, queue, arena }) {
+    Object.assign(this, { scene, camera, audio, hud, mv, rig, arsenal, inv, vitals, ws, arena });
+    vitals.serverOwned = true;
+    vitals.sync = (op, v) => this.send({ t: 'vit', op, v });
+    this.pickups = new Pickups(scene, { octree: arena.octree, spots: arena.pickups, net: this });
+    for (const id of welcome.items?.taken ?? []) this.pickups.take(this.pickups.byId(id));
+    for (const d of welcome.items?.drops ?? []) this.pickups.drop({ gun: d.w, ammo: d.ammo, reserve: d.reserve }, new THREE.Vector3(...d.p), d.id);
     this.id = welcome.id;
     this.team = welcome.team;
     this.foe = this.team === 'a' ? 'b' : 'a';
@@ -131,7 +139,6 @@ class Online {
     this.round = welcome.round;
     this.ended = false;
     this.alive = true;
-    this.hp = MAX_HP;
     this.deathT = 0;
     this.sendT = 0;
     this.pingT = 0;
@@ -153,8 +160,14 @@ class Online {
   }
 
   get playerAlive() { return this.alive; }
-  /** Gun-game: main.js keeps the player on this weapon (and blocks switching) while it's set. */
-  get forcedWeapon() { return this.round?.weapon ?? null; }
+  /** Gun-game: every round starts with the round's weapon; one more can be picked up off the map. */
+  get loadout() { return { guns: [this.round?.weapon ?? 0], maxGuns: 2, mags: 3, items: {} }; }
+
+  /** Our grenade left the hand: everyone else simulates the same throw. */
+  onThrow(g) { this.send({ t: 'nade', p: round(g.pos), v: round(g.vel), f: +g.fuse.toFixed(2) }); }
+
+  /** Our own grenade caught us: the server takes it off our health like any hit. */
+  hurtSelf(dmg) { this.send({ t: 'hit', id: this.id, zone: 'blast', dmg }); }
 
   send(msg) { if (this.ws.readyState === 1) this.ws.send(JSON.stringify(msg)); }
 
@@ -162,6 +175,9 @@ class Online {
     this.ws.onclose = null;
     this.ws.close();
     this.arena.dispose();
+    this.pickups.dispose();
+    this.vitals.serverOwned = false;
+    this.vitals.sync = null;
     for (const r of this.remotes.values()) this.scene.remove(r.root);
     this.ui.root.remove();
   }
@@ -225,10 +241,12 @@ class Online {
       }
       case 'fire': this.#remoteFire(m); break;
       case 'hurt': {
-        const hit = m.dmg && m.hp < this.hp;
-        this.hp = m.hp;
+        const v = this.vitals;
+        const hit = m.dmg && m.hp + (m.ar ?? 0) < v.hp + v.armour;
+        if (m.dmg) v.quiet = 0;
+        v.set({ hp: m.hp, armour: m.ar, armourMax: m.am });
         const by = this.remotes.get(m.by);
-        this.ui.hurt(this.hp / MAX_HP, hit && by ? this.#bearing(by.pos) : null);
+        this.ui.hurt(v.hp / MAX_HP, hit && by ? this.#bearing(by.pos) : null);
         if (hit) {
           this.audio.play('land', { volume: 0.25, rate: 1.5 });
           this.rig.punch(-0.6 - Math.random() * 0.4, (Math.random() - 0.5) * 0.8, (Math.random() - 0.5) * 1.2);
@@ -243,7 +261,7 @@ class Online {
         this.ui.feed(killer, victim, m.head);
         if (m.v === this.id) {
           this.alive = false;
-          this.hp = 0;
+          this.vitals.set({ hp: 0 });
           this.killer = killer.name;
           this.deathT = 0;
         } else {
@@ -274,6 +292,9 @@ class Online {
         this.ui.el.end.hidden = true;
         this.#score();
         break;
+      case 'took': this.pickups.grant(m.id, m.by === this.id); break;
+      case 'dropped': this.pickups.drop({ gun: m.w, ammo: m.ammo, reserve: m.reserve }, new THREE.Vector3(...m.p), m.id); break;
+      case 'nade': this.grenades?.spawn(new THREE.Vector3(...m.p), new THREE.Vector3(...m.v), { mine: false, fuse: m.f }); break;
       case 'pong': this.rtt = performance.now() - m.c; break;
     }
   }
@@ -328,9 +349,10 @@ class Online {
     this.mv.respawn(s);
     this.rig.yaw = s.yaw;
     this.rig.pitch = 0;
-    for (const { gun } of this.arsenal) gun.ammo = gun.magSize;
+    this.inv.reset(this.loadout);
+    this.vitals.reset();
+    this.pickups.reset();
     this.alive = true;
-    this.hp = MAX_HP;
     this.ui.death(null);
     this.ui.hurt(1, null);
   }
