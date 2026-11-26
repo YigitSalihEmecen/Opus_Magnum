@@ -115,7 +115,7 @@ export function buildMapWorld(scene, map) {
     spawn: spawns.ally[0],
     killY: map.water !== undefined ? map.water - 0.4 : undefined,
     doors: new Doors(group, doorSpots),
-    bounds: { minX: -half, maxX: half, minZ: -half, maxZ: half, cell: 1 },
+    bounds: { minX: -Math.floor(half), maxX: Math.floor(half), minZ: -Math.floor(half), maxZ: Math.floor(half), cell: 1 }, // nav cells on whole metres
     dispose: () => scene.remove(group),
   };
 }

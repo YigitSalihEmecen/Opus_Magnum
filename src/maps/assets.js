@@ -76,6 +76,7 @@ function collider(g, geo, x, y, z) {
 const GRID = 4, STOREY = 3.5, HALF_STOREY = STOREY / 2;
 const SLAB = 0.3, WALL_T = 0.3, FOUND = 2;
 const WALL_H = STOREY - SLAB;
+const TALL_H = 2 * STOREY - SLAB; // a two-storey wall: lanes you can't see or climb over
 const DOOR = { w: 1.3, h: 2.3 }, WINDOW = { sill: 1.0, head: 2.3 };
 const STEP_RISE = 0.25;
 const CRATE = 1.2, CONTAINER = { L: 6.06, H: 2 * CRATE, D: 2.44 };
@@ -109,14 +110,17 @@ function wall(color, ctx, { len = 4, h = WALL_H, t = WALL_T, holes = [], drop = 
   // door-sized openings at the wall's foot: the clear gap inside the frame, where play hangs a door (maps/doors.js)
   const doorways = holes.filter((o) => o.y0 === 0 && [1, 2].some((k) => Math.abs(o.x1 - o.x0 - k * DOOR.w) < 0.02));
   if (doorways.length) g.userData.doorways = doorways.map((o) => ({ x0: o.x0 + F, x1: o.x1 - F, h: o.y1 - F }));
-  if (ctx?.ground) piece(-L, L, -FOUND, 0);
+  // a wall between two floor levels stands on the upper one; rec.drop runs its face down to the lower
+  const levelDrop = ctx?.rec?.drop ?? 0;
+  if (ctx?.ground || levelDrop > 0) piece(-L, L, -Math.max(levelDrop, ctx?.ground ? FOUND : 0), 0);
   // standing on a floor slab: cover the slab's edge so the facade runs on from the storey below
   else if (drop || ctx?.slabUnderWall?.()) piece(-L, L, -(drop || SLAB), 0);
   // cap and kick stop a few mm short of the wall's ends, jambs and underside, so no face lies on a wall face
   const E = 0.004;
   sbox(g, len - 2 * E, 0.12, t + 0.08, 0, h + 0.06 - E, 0, mat(P.ink)); // just below a ceiling slab's underside
-  if (h > 1) {
-    // kick strip along the foot of the wall, broken at doorways (no sill to trip on)
+  if (h > 1 && !(levelDrop > 0.35)) {
+    // kick strip along the foot of the wall, broken at doorways (no sill to trip on); none where the
+    // ground falls away beside the wall (a ramp or a lower level), where the foot isn't on the floor
     let x = -L;
     for (const o of [...holes.filter((o) => o.y0 === 0), { x0: L, x1: L }].sort((a, b) => a.x0 - b.x0)) {
       if (o.x0 - x > 0.02) sbox(g, o.x0 - x - 2 * E, 0.16, t + 0.05, (x + o.x0) / 2, 0.08 + E, 0, mat(P.slate));
@@ -951,24 +955,6 @@ function doorPiece(color, ctx) {
   return g;
 }
 
-// ─────────────────────────── sized blocks ───────────────────────────
-
-/**
- * A solid of any outline: the record's `pts` [[x, z], …] (and optional `holes`), relative to the record,
- * extruded `h` metres up from its y. Imported maps (tools/maps/stl2map.py) build their walls, pillars and
- * odd-shaped boxes from these; without an outline it's a 2 × 2 × 2 m cube.
- */
-function block(color, ctx) {
-  const g = new THREE.Group();
-  const r = ctx?.rec ?? {};
-  const pts = r.pts ?? [[-1, -1], [1, -1], [1, 1], [-1, 1]];
-  const shape = new THREE.Shape(pts.map(([x, z]) => new THREE.Vector2(x, -z)));
-  for (const hole of r.holes ?? []) shape.holes.push(new THREE.Path(hole.map(([x, z]) => new THREE.Vector2(x, -z))));
-  const geo = new THREE.ExtrudeGeometry(shape, { depth: r.h ?? 2, bevelEnabled: false }).rotateX(-Math.PI / 2);
-  add(g, geo, mat(color));
-  return g;
-}
-
 // ─────────────────────────── waterfront ───────────────────────────
 // For flooded maps (map.water): solid concrete that reaches below the waterline, so nothing floats.
 
@@ -1341,6 +1327,10 @@ export const ASSETS = [
   { id: 'wall_shop', cat: 'Walls', name: 'Shopfront', note: '4 m', colors: WALL_COLORS, link: W(), build: (c, x) => wall(c, x, { holes: [{ x0: -1.7, x1: -0.5, y0: 0, y1: 2.4 }, { x0: -0.3, x1: 1.7, y0: 0.55, y1: 2.4 }] }) },
   { id: 'wall_gate', cat: 'Walls', name: 'Gateway', note: '4 m', colors: WALL_COLORS, link: W(), build: (c, x) => wall(c, x, { holes: [{ x0: -1.25, x1: 1.25, y0: 0, y1: 2.6 }] }) },
   { id: 'wall_short', cat: 'Walls', name: 'Short wall', note: '2 m', colors: WALL_COLORS, link: W(2), build: (c, x) => wall(c, x, { len: 2 }) },
+  { id: 'wall_short_door', cat: 'Walls', name: 'Short door wall', note: '2 m', colors: WALL_COLORS, link: W(2), build: (c, x) => wall(c, x, { len: 2, holes: HOLES.door }) },
+  { id: 'wall_tall', cat: 'Walls', name: 'Tall wall', note: '4 m · two storeys', colors: WALL_COLORS, link: W(4, TALL_H), build: (c, x) => wall(c, x, { h: TALL_H }) },
+  { id: 'wall_tall_short', cat: 'Walls', name: 'Tall short wall', note: '2 m · two storeys', colors: WALL_COLORS, link: W(2, TALL_H), build: (c, x) => wall(c, x, { len: 2, h: TALL_H }) },
+  { id: 'wall_tall_door', cat: 'Walls', name: 'Tall door wall', note: '2 m · two storeys', colors: WALL_COLORS, link: W(2, TALL_H), build: (c, x) => wall(c, x, { len: 2, h: TALL_H, holes: HOLES.door }) },
   { id: 'wall_short_window', cat: 'Walls', name: 'Short window', note: '2 m', colors: WALL_COLORS, link: W(2), build: (c, x) => wall(c, x, { len: 2, holes: [{ x0: -0.5, x1: 0.5, y0: 1.0, y1: 2.3 }] }) },
   { id: 'wall_half', cat: 'Walls', name: 'Half wall', note: 'cover · 4 m', colors: WALL_COLORS, link: W(4, 1.15), build: (c, x) => wall(c, x, { h: 1.15 }) },
   { id: 'parapet', cat: 'Walls', name: 'Parapet', note: 'roof edge', colors: WALL_COLORS, link: W(4, 0.75), build: (c, x) => wall(c, x, { h: 0.75 }) },
@@ -1348,6 +1338,7 @@ export const ASSETS = [
 
   { id: 'floor', cat: 'Parts', name: 'Floor slab', note: '4 × 4 · top at its height', colors: [P.ivory, P.oat, P.manilla, P.slate, P.sage], build: (c, x) => floor(c, x) },
   { id: 'floor_strip', cat: 'Parts', name: 'Floor strip', note: '2 × 4', colors: [P.ivory, P.oat, P.manilla, P.slate, P.sage], build: (c, x) => floor(c, x, { w: 4, d: 2 }) },
+  { id: 'floor_tile', cat: 'Parts', name: 'Floor tile', note: '2 × 2 · roofs, landings', colors: [P.ivory, P.oat, P.manilla, P.slate, P.sage], build: (c, x) => floor(c, x, { w: 2, d: 2 }) },
   { id: 'stairs', cat: 'Parts', name: 'Staircase', note: 'one storey', colors: [P.ivory, P.oat, P.kraft, P.cloud, P.slate], build: (c, x) => stairs(c, x) },
   { id: 'stairs_open', cat: 'Parts', name: 'Open stairs', note: 'one storey · no rails', colors: [P.oat, P.ivory, P.kraft, P.cloud, P.slate], build: (c, x) => stairs(c, x, { rail: false }) },
   { id: 'steps', cat: 'Parts', name: 'Steps', note: 'rises 1.75 m', colors: [P.ivory, P.oat, P.kraft, P.slate], build: (c, x) => stairs(c, x, { rise: 1.75, run: 3, rail: false }) },
@@ -1361,7 +1352,6 @@ export const ASSETS = [
   { id: 'tower3', cat: 'Buildings', name: 'Tower · 3', note: '12 × 12 · enterable', colors: [P.ivory, P.manilla, P.oat, P.sky, P.sage, P.kraft, P.slate], snap: 2, build: tower(3) },
   { id: 'tower5', cat: 'Buildings', name: 'Tower · 5', note: '12 × 12 · roof access', colors: [P.oat, P.ivory, P.manilla, P.sky, P.sage, P.bookcloth, P.slate], snap: 2, build: tower(5) },
   { id: 'door', cat: 'Parts', name: 'Door', note: 'in a door opening · opens with E', colors: [P.sage, P.sky, P.clay, P.kraft, P.slate], build: doorPiece },
-  { id: 'block', cat: 'Parts', name: 'Block', note: 'sized solid · outline from the map file', colors: [P.oat, P.manilla, P.kraft, P.cloud, P.slate], build: block },
   { id: 'dock', cat: 'Waterfront', name: 'Dock', note: '4 × 4 · deck at its height, body under water', colors: [P.oat, P.ivory, P.manilla], tile: 4, build: dock },
   { id: 'seawall', cat: 'Waterfront', name: 'Sea wall', note: '4 m · 3.5 m over its deck line', colors: [P.oat, P.ivory, P.cloud], build: seawall },
   { id: 'stilt', cat: 'Waterfront', name: 'Stilt', note: 'under a raised deck · top at its height', colors: [P.slate, P.cloud, P.oat], build: stilt },

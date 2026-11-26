@@ -17,7 +17,8 @@ const _cap = new Capsule();
 const _n = new THREE.Vector3();
 
 export class NavGrid {
-  constructor(octree, { minX, maxX, minZ, maxZ, cell = 1 }) {
+  /** seeds: points (the spawns) whose regions are kept; without them, the largest region is. */
+  constructor(octree, { minX, maxX, minZ, maxZ, cell = 1, seeds = null }) {
     Object.assign(this, { minX, minZ, cell });
     // cell centres sit on whole metres, like the building grid: doorways land on a centre, walls on a line of cells
     this.w = Math.floor((maxX - minX) / cell) + 1;
@@ -48,7 +49,7 @@ export class NavGrid {
         }
       }
     }
-    this.#keepLargestRegion();
+    this.#keepRegions(seeds);
   }
 
   x(i) { return this.minX + i * this.cell; }
@@ -216,7 +217,8 @@ export class NavGrid {
     return out;
   }
 
-  #keepLargestRegion() {
+  /** Drop walkable islands: keep the regions the seeds stand in (a walled map's outside is often the biggest). */
+  #keepRegions(seeds) {
     const label = new Int32Array(this.ok.length).fill(-1);
     let best = -1, bestSize = 0, id = 0;
     const nb = [];
@@ -233,7 +235,9 @@ export class NavGrid {
       if (size > bestSize) { bestSize = size; best = id; }
       id++;
     }
-    for (let n = 0; n < this.ok.length; n++) if (label[n] !== best) this.ok[n] = 0;
+    const keep = new Set(seeds?.map((p) => this.node(p.x, p.z, p.y)).filter((n) => n >= 0).map((n) => label[n]));
+    if (!keep.size) keep.add(best);
+    for (let n = 0; n < this.ok.length; n++) if (!keep.has(label[n])) this.ok[n] = 0;
   }
 }
 

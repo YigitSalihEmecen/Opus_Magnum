@@ -87,7 +87,7 @@ src/
     storage.js            maps in localStorage (om.maps) + the built-in ones
     builtin/              settlement.js ("Saltgrass" city); online rotation: duel.js ("Duel"),
                           lido.js ("Lido", villa round a drained pool), sluice.js ("Sluice", the water kills),
-                          col2.js ("col-2", rebuilt from a map model; col2.data.js is generated)
+                          col2.js ("col-2", a map model rebuilt from kit pieces on the grid; col2.data.js is generated)
   modes/tdm/              Team Deathmatch, loaded only when picked (see below)
     tdm.js                match rules, player death/respawn, loadout, item spots, score
     arena.js              "Kiln" 5v5 map, point-symmetric (+ collision octree, nav grid)
@@ -110,7 +110,8 @@ server/
   test.js                 end-to-end test against a live server
 public/audio/             CC0 sounds — see public/audio/CREDITS.md
 tools/audio/              scripts used to slice the source recordings
-tools/maps/stl2map.py     map model (STL) → map module: floor lattice, traced walls, props
+tools/maps/stl2map.py     map model (STL) → kit pieces on the 2 m grid: walls, doors at the model's doorways,
+                          half-storey floors and ramps, ceilings, props
 ```
 
 Dependencies only point downward: `core` knows nothing about the game, `world`/`player`/`weapons`
