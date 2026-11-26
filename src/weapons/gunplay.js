@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { findAttachment, loadoutStats } from './attachments.js';
+import { MOVE } from '../player/movement.js';
 
 const D2R = Math.PI / 180;
 
@@ -82,7 +83,8 @@ export class Gunplay {
     }
   }
 
-  update(dt, { input, mv, camera, targets, now, blocked = false }) {
+  update(dt, { input, mv, camera, targets, octree, now, blocked = false }) {
+    this.octree = octree;
     this.cooldown -= dt;
     this.sinceShot += dt;
     if (this.sinceShot > this.S.recoil.resetTime) this.shotIndex = 0;
@@ -141,7 +143,7 @@ export class Gunplay {
     const s = this.S.spread, a = this.adsEased;
     const lerp = THREE.MathUtils.lerp;
     let deg = lerp(s.hip, s.ads, a);
-    deg += Math.min(1, mv.speed / 7.8) * lerp(s.move, s.moveAds, a);
+    deg += Math.min(1, mv.speed / MOVE.sprintSpeed) * lerp(s.move, s.moveAds, a);
     if (mv.state === 'air') deg += lerp(s.air, s.airAds, a);
     if (mv.state === 'slide') deg += s.slide * (1 - a);
     deg += this.bloom * (1 - a * 0.85);
@@ -217,13 +219,16 @@ export class Gunplay {
   #trace(camera, targets, now, muzzle, tally) {
     this.raycaster.set(camera.position, _dir);
     this.raycaster.camera = camera;
-    const hits = this.raycaster.intersectObjects(targets, false);
-    const hit = hits.find((h) => !h.object.userData.dummy?.dead && h.object.layers.test(this.raycaster.layers));
+    // with an octree, meshes are only tested for what can take damage; the world goes through the octree (far cheaper)
+    const hits = this.raycaster.intersectObjects(this.octree ? targets.filter((t) => t.userData.dummy) : targets, false);
+    let hit = hits.find((h) => !h.object.userData.dummy?.dead && h.object.layers.test(this.raycaster.layers));
+    const wall = this.octree?.rayIntersect(this.raycaster.ray);
+    if (wall && wall.distance < this.S.range && (!hit || wall.distance < hit.distance)) hit = { point: wall.position, distance: wall.distance, object: null, normal: wall.triangle.getNormal(new THREE.Vector3()) };
     const end = hit ? hit.point : camera.position.clone().addScaledVector(_dir, this.S.range);
 
     if (hit) {
-      const normal = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : _dir.clone().negate();
-      const dummy = hit.object.userData.dummy;
+      const normal = hit.normal ?? (hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : _dir.clone().negate());
+      const dummy = hit.object?.userData.dummy;
       if (dummy) {
         const head = hit.object.userData.zone === 'head';
         const cb = this.S.closeBonus;
