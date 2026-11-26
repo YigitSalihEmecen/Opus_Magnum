@@ -3,7 +3,7 @@ import { PALETTE as P } from '../core/toon.js';
 import { applySky } from '../world/sky.js';
 import { gripGun } from '../character/robot.js';
 import { CHARACTERS, buildCharacter, selectedCharacter, selectCharacter } from '../character/characters.js';
-import { buildPiece, makeContext } from '../modes/editor/assets.js';
+import { buildPiece, makeContext } from '../maps/assets.js';
 import { WEAPONS } from '../weapons/weapons.js';
 
 /*

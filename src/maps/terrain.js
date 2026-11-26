@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { PALETTE as P, toon, gridTexture } from '../../core/toon.js';
+import { PALETTE as P, toon, gridTexture } from '../core/toon.js';
 
 /*
   Heightfield ground: (seg + 1)² heights on a 2 m lattice over the build square (seg = size / 2).
@@ -26,10 +26,12 @@ export function packHeights(h) {
   return flat ? undefined : { seg: segOf(h), h: Array.from(h, (v) => Math.round(v * 100) / 100) };
 }
 
-const GRID = gridTexture();
-let groundMat;
-/** Paper-gridded ground, tinted per vertex (see tintGround). Shared by the playable terrain and the outer hills. */
-export const terrainMaterial = () => (groundMat ??= toon(P.oat, { map: GRID, rim: 0, vertexColors: true }));
+const mats = {};
+/**
+ * Ground tinted per vertex (see tintGround), flat in play; the editor's copy is papered with a 1 m grid
+ * so pieces can be lined up. Shared by the playable terrain and the outer hills.
+ */
+export const terrainMaterial = (grid = false) => (mats[grid] ??= toon(P.oat, { map: grid ? gridTexture() : null, rim: 0, vertexColors: true }));
 
 const GRASS = new THREE.Color(0.8, 0.9, 0.7), DIRT = new THREE.Color(1.02, 0.95, 0.86), PAPER = new THREE.Color(1, 1, 1);
 const _c = new THREE.Color();
@@ -52,13 +54,13 @@ export function tintGround(geo) {
 }
 
 /** Ground mesh for a size × size square; heights applied by setHeights. */
-export function terrainMesh(size) {
+export function terrainMesh(size, { grid = false } = {}) {
   const seg = segFor(size);
   const geo = new THREE.PlaneGeometry(size, size, seg, seg).rotateX(-Math.PI / 2);
-  // world-scale UVs so the paper grid meets every piece's grid
+  // world-scale UVs: one grid tile per 4 m, lined up with the editor's 1 m snap
   const pos = geo.attributes.position, uv = geo.attributes.uv;
   for (let i = 0; i < pos.count; i++) uv.setXY(i, pos.getX(i) / 4, -pos.getZ(i) / 4);
-  const mesh = new THREE.Mesh(geo, terrainMaterial());
+  const mesh = new THREE.Mesh(geo, terrainMaterial(grid));
   mesh.receiveShadow = true;
   mesh.userData.terrain = true;
   return mesh;

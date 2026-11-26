@@ -1,4 +1,4 @@
-import { PALETTE as P } from '../../../core/toon.js';
+import { PALETTE as P } from '../../core/toon.js';
 import { assetById } from '../assets.js';
 import { segFor, heightAt } from '../terrain.js';
 

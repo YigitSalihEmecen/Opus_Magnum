@@ -54,7 +54,7 @@ export function toon(color, { rim = 0.18, rimColor = 0xffffff, soft = false, ...
   return mat;
 }
 
-/** Grid texture for the "dev range" look: ivory field, 1 m minor and 4 m major lines. */
+/** Grid texture for the map editor's ground: white field, 1 m minor and 4 m major lines. */
 export function gridTexture({ base = '#ffffff', minor = 'rgba(20,20,19,0.10)', major = 'rgba(20,20,19,0.22)', size = 512, cells = 4 } = {}) {
   const c = document.createElement('canvas');
   c.width = c.height = size;
@@ -76,21 +76,6 @@ export function gridTexture({ base = '#ffffff', minor = 'rgba(20,20,19,0.10)', m
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;
   return tex;
-}
-
-/** Scale BoxGeometry UVs so a texture tiles once per `tile` metres on every face. */
-export function worldScaleBoxUVs(geo, w, h, d, tile = 4) {
-  const uv = geo.attributes.uv;
-  const dims = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]];
-  for (let face = 0; face < 6; face++) {
-    const [su, sv] = dims[face];
-    for (let v = 0; v < 4; v++) {
-      const i = face * 4 + v;
-      uv.setXY(i, (uv.getX(i) * su) / tile, (uv.getY(i) * sv) / tile);
-    }
-  }
-  uv.needsUpdate = true;
-  return geo;
 }
 
 /** Text drawn onto a canvas texture — used for range signage. */

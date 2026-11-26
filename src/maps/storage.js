@@ -2,10 +2,10 @@
   Saved maps live in localStorage under one key:
     { [id]: { id, name, updated, size, pieces: [{ type, x, y, z, rot, color }] } }
 */
-import { settlement } from './maps/settlement.js';
-import { duel } from './maps/duel.js';
-import { lido } from './maps/lido.js';
-import { sluice } from './maps/sluice.js';
+import { settlement } from './builtin/settlement.js';
+import { duel } from './builtin/duel.js';
+import { lido } from './builtin/lido.js';
+import { sluice } from './builtin/sluice.js';
 
 const KEY = 'om.maps';
 let builtins;

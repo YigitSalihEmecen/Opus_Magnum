@@ -26,7 +26,7 @@ import { Grenades, BLAST } from './items/grenades.js';
 import { Handheld } from './items/handheld.js';
 import { ITEM_IDS } from './items/items.js';
 import { VitalsHud } from './ui/vitalsHud.js';
-import { listMaps, getMap, hasSpawns } from './modes/editor/storage.js';
+import { listMaps, getMap, hasSpawns } from './maps/storage.js';
 
 const canvas = document.getElementById('game');
 const renderer = new Renderer(canvas);
@@ -43,10 +43,11 @@ const vmCamera = new THREE.PerspectiveCamera(54, innerWidth / innerHeight, 0.01,
     play:  { octree, spawn, targets, update(dt, ctx), playerAlive?, ended? }
     owner: { frame(dt) }  — takes over the whole frame (the map editor)
   load(mapId) gets a saved custom map's id, or null for the mode's own map.
-  TDM (src/modes/tdm/) and the editor (src/modes/editor/) are only loaded when picked: delete a folder and
-  its entry here (plus the storage import above, for the editor) to remove it.
+  TDM (src/modes/tdm/), online play (src/net/) and the editor (src/modes/editor/) are only loaded when
+  picked and don't depend on each other: delete a folder and its entry here to remove it. Maps
+  (src/maps/) are shared by all of them.
 */
-const customWorld = async (mapId) => (await import('./modes/editor/mapWorld.js')).buildMapWorld(scene, getMap(mapId));
+const customWorld = async (mapId) => (await import('./maps/mapWorld.js')).buildMapWorld(scene, getMap(mapId));
 const MODES = [
   {
     id: 'range', index: '01 / PRACTICE', title: 'Shooting Range', short: 'Warm up and tune', accent: '#8a9a7b', builtin: 'Test Range', blurb: 'Targets, wallrun lanes, mantle steps and a slide ramp. Tune your feel and your loadout.',
@@ -80,7 +81,7 @@ const MODES = [
     load: async (mapId, opts) => (await import('./net/online.js')).createOnline({
       scene, camera, audio, hud, mv, rig, arsenal, inv, vitals, getMap,
       opts: { name: 'Player', room: 'duel', server: MODES.find((m) => m.id === 'online').lobby.server, char: selectedCharacter(), maps: listMaps().filter((m) => m.online).map((m) => m.id), ...opts, mapId: mapId ?? 'builtin-duel' },
-      buildWorld: async (map) => (await import('./modes/editor/mapWorld.js')).buildMapWorld(scene, map),
+      buildWorld: async (map) => (await import('./maps/mapWorld.js')).buildMapWorld(scene, map),
     }),
   },
   {

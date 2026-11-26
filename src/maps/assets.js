@@ -1,13 +1,13 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { PALETTE as P, toon, gridTexture } from '../../core/toon.js';
-import { ITEMS, ITEM_IDS } from '../../items/items.js';
-import { pickupModel, GUN_SHOW } from '../../items/pickups.js';
-import { WEAPONS } from '../../weapons/weapons.js';
+import { PALETTE as P, toon } from '../core/toon.js';
+import { ITEMS, ITEM_IDS } from '../items/items.js';
+import { pickupModel, GUN_SHOW } from '../items/pickups.js';
+import { WEAPONS } from '../weapons/weapons.js';
 
 /*
-  Placeable map pieces in the game's language: chunky rounded forms, grid-papered surfaces, ink caps,
+  Placeable map pieces in the game's language: chunky rounded forms in flat colours, ink caps,
   one main colour. build(color, ctx) returns a Group whose origin sits on the floor at the piece's
   centre; walls and fences run along X, "forward" is -Z.
 
@@ -15,20 +15,17 @@ import { WEAPONS } from '../../weapons/weapons.js';
     · linear pieces (walls, fences, rails) are exactly their grid length; connectors are generated at
       their ends by buildJoints(): a pillar where walls turn or meet, shared posts along fences
     · adaptive tiles (road, sidewalk) look at their neighbours and pick markings / curbs
-    · grid-papered surfaces get world-space UVs, so the paper lines run on across pieces
   ctx = { ground: bool (standing on terrain → grows a foundation), near(family, dx, dz) → bool }
 */
 
-const GRID = gridTexture();
 const mats = new Map();
-export function mat(color, grid = false) {
-  const key = `${color}-${grid}`;
-  if (!mats.has(key)) {
-    const m = toon(color, { map: grid ? GRID : null, rim: grid ? 0.12 : 0.2 });
-    m.userData.grid = grid;
-    mats.set(key, m);
-  }
-  return mats.get(key);
+/**
+ * Flat toon colour, shared per colour. Shadows are cast from front faces, so the underside of a slab
+ * compares against its own top and reads as solid shade (back faces striped with acne).
+ */
+export function mat(color) {
+  if (!mats.has(color)) mats.set(color, toon(color, { rim: 0.16, shadowSide: THREE.FrontSide }));
+  return mats.get(color);
 }
 const decal = (color) => toon(color, { rim: 0, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
 const DECALS = { line: decal(P.ivory), dash: decal(P.manilla) };
@@ -40,8 +37,8 @@ function add(g, geo, material, x = 0, y = 0, z = 0) {
   g.add(m);
   return m;
 }
-/** Grid-papered box (UVs are set in world space later). */
-const gbox = (g, w, h, d, x, y, z, color) => add(g, new THREE.BoxGeometry(w, h, d), mat(color, true), x, y, z);
+/** Box in a flat colour. */
+const gbox = (g, w, h, d, x, y, z, color) => add(g, new THREE.BoxGeometry(w, h, d), mat(color), x, y, z);
 /** Plain sharp box: caps, kicks and strips that must butt seamlessly against their neighbours. */
 const sbox = (g, w, h, d, x, y, z, material) => add(g, new THREE.BoxGeometry(w, h, d), material, x, y, z);
 /** Rounded block for stand-alone forms. */
@@ -64,27 +61,6 @@ function collider(g, geo, x, y, z) {
   m.userData.collider = true;
   g.add(m);
   return m;
-}
-
-/** Re-project every grid-papered surface of a placed piece onto world axes (1 m paper lines line up). */
-export function alignUVs(obj) {
-  obj.updateMatrixWorld(true);
-  const v = new THREE.Vector3(), n = new THREE.Vector3(), nm = new THREE.Matrix3();
-  obj.traverse((m) => {
-    if (!m.isMesh || !m.material?.userData?.grid) return;
-    const geo = m.geometry, pos = geo.attributes.position, nor = geo.attributes.normal, uv = geo.attributes.uv;
-    if (!uv || !nor) return;
-    nm.getNormalMatrix(m.matrixWorld);
-    for (let i = 0; i < pos.count; i++) {
-      v.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld);
-      n.fromBufferAttribute(nor, i).applyMatrix3(nm);
-      const ax = Math.abs(n.x), ay = Math.abs(n.y), az = Math.abs(n.z);
-      if (ay >= ax && ay >= az) uv.setXY(i, v.x / 4, -v.z / 4);
-      else if (ax >= az) uv.setXY(i, v.z / 4, v.y / 4);
-      else uv.setXY(i, v.x / 4, v.y / 4);
-    }
-    uv.needsUpdate = true;
-  });
 }
 
 // ───────────────────────────── walls ─────────────────────────────
@@ -138,7 +114,7 @@ function wall(color, ctx, { len = 4, h = WALL_H, t = WALL_T, holes = [], drop = 
 function gable(color) {
   const g = new THREE.Group();
   const geo = prism([[-4.1, 0], [4.1, 0], [0, 2.3]], WALL_T, 'z', 0);
-  add(g, geo, mat(color, true), 0, 0.12, 0);
+  add(g, geo, mat(color), 0, 0.12, 0);
   return g;
 }
 
@@ -198,17 +174,15 @@ function stairs(color, ctx, { rise = 3.5, run = 6, w = 2, rail = true } = {}) {
     const top = stepH * (i + 1);
     geos.push(new THREE.BoxGeometry(w, top, tread).translate(0, top / 2, run / 2 - tread * (i + 0.5)));
   }
-  const steps = add(g, mergeGeometries(geos), mat(color, true));
+  const steps = add(g, mergeGeometries(geos), mat(color));
   steps.userData.noCollide = true;
   const noses = [];
   for (let i = 0; i < n; i++) noses.push(new THREE.BoxGeometry(w + 0.01, 0.04, 0.06).translate(0, stepH * (i + 1) + 0.005, run / 2 - tread * i - 0.025));
   add(g, mergeGeometries(noses), mat(P.ink)).userData.noCollide = true;
-  // walk surface from just below the first step's toe to the top landing edge
-  const z0 = run / 2 + 0.3, y0 = -0.05, z1 = -run / 2, y1 = rise;
-  const rl = Math.hypot(z0 - z1, y1 - y0), ra = Math.atan2(y1 - y0, z0 - z1);
-  // nearly the full width of the flight, so feet never slip off the side through the visual steps
-  const ramp = collider(g, new THREE.BoxGeometry(w - 0.1, 0.1, rl), 0, (y0 + y1) / 2 - 0.05, (z0 + z1) / 2);
-  ramp.rotation.x = ra;
+  // solid wedge under the whole flight: its slope (from just below the first step's toe to the top
+  // landing edge) is what you walk on, and its sides and back block you like the steps look like they do
+  const z0 = run / 2 + 0.3, z1 = -run / 2; // prism() maps the profile's first axis to -Z
+  collider(g, prism([[-z0, -0.05], [-z1, rise], [-z1, -0.05]], w, 'x', 0), 0, 0, 0);
   const len = Math.hypot(run, rise), a = Math.atan2(rise, run);
   if (rail) {
     const railMat = mat(P.slate);
@@ -828,7 +802,6 @@ export function buildJoints(records, groundAt) {
     const post = jointPost(kind, h, t, top.l.r.color ?? top.l.a.colors[0], ground, onSlab);
     post.position.set(gp.x, gp.y, gp.z);
     post.rotation.y = Math.atan2(-top.l.dz, top.l.dx);
-    alignUVs(post);
     out.add(post);
   }
   return out;
@@ -919,6 +892,67 @@ function podium(color, ctx) {
   return g;
 }
 
+// ─────────────────────────── waterfront ───────────────────────────
+// For flooded maps (map.water): solid concrete that reaches below the waterline, so nothing floats.
+
+const SEA_DEEP = 3.4; // how far dock bodies and walls reach below their deck
+
+/**
+ * 4 × 4 concrete dock tile, deck top at the record's y, body down under the water. Sides with no dock
+ * beside them get a painted kerb line, rubber fenders at the waterline and now and then a bollard.
+ */
+function dock(color, ctx) {
+  const g = new THREE.Group();
+  const r = ctx?.rec ?? { x: 0, y: 0, z: 0 };
+  const deco = (m) => { m.userData.noCollide = true; return m; };
+  gbox(g, 4, 0.3, 4, 0, -0.15, 0, color);
+  gbox(g, 3.9, SEA_DEEP - 0.3, 3.9, 0, -0.3 - (SEA_DEEP - 0.3) / 2, 0, P.cloud);
+  const sides = [['N', 0, -1], ['S', 0, 1], ['W', -1, 0], ['E', 1, 0]];
+  const roll = (salt) => { const v = Math.sin(r.x * 12.9898 + r.z * 78.233 + salt * 4.137) * 43758.5453; return v - Math.floor(v); };
+  sides.forEach(([, sx, sz], i) => {
+    if (ctx?.near('dock', sx * 4, sz * 4)) return;
+    const along = sz ? 'x' : 'z';
+    const at = (u, y, out, w, h, d, material) => {
+      const [x, z] = along === 'x' ? [u, sz * (2 - d / 2 + out)] : [sx * (2 - d / 2 + out), u];
+      return along === 'x' ? sbox(g, w, h, d, x, y, z, material) : sbox(g, d, h, w, x, y, z, material);
+    };
+    deco(at(0, 0.006, -0.12, 3.6, 0.012, 0.14, mat(P.manilla))); // painted edge line
+    deco(at(0, -0.152, 0.06, 4.12, 0.3, 0.06, mat(P.ink))); // deck edge, just outside the deck's face
+    for (const u of [-1.1, 1.1]) deco(add(g, new RoundedBoxGeometry(along === 'x' ? 0.7 : 0.24, 0.9, along === 'x' ? 0.24 : 0.7, 2, 0.06), mat(P.slate), along === 'x' ? u : sx * 2.08, -1.25, along === 'x' ? sz * 2.08 : u));
+    if (roll(i) < 0.4) {
+      const [bx, bz] = along === 'x' ? [roll(i + 9) < 0.5 ? -1.5 : 1.5, sz * 1.55] : [sx * 1.55, roll(i + 9) < 0.5 ? -1.5 : 1.5];
+      add(g, cyl(0.16, 0.42, 14), mat(P.slate), bx, 0.21, bz);
+      add(g, cyl(0.22, 0.08, 14), mat(P.ink), bx, 0.44, bz);
+    }
+  });
+  return g;
+}
+
+/** 4 m quay / lock wall: rises from below the water to 3.5 m over the deck line, flat faces for wallrunning. */
+function seawall(color) {
+  const g = new THREE.Group();
+  const deco = (m) => { m.userData.noCollide = true; return m; };
+  const H = SEA_DEEP + STOREY, t = 0.7;
+  gbox(g, 4, H, t, 0, H / 2 - SEA_DEEP, 0, color);
+  gbox(g, 4, 0.22, t + 0.24, 0, STOREY + 0.11, 0, P.oat); // coping
+  sbox(g, 4.02, 0.06, t + 0.28, 0, STOREY + 0.24, 0, mat(P.ink));
+  for (const s of [-1, 1]) {
+    deco(sbox(g, 0.05, H - 0.4, 0.04, 0, H / 2 - SEA_DEEP - 0.2, s * (t / 2 + 0.024), mat(P.cloud))); // pour joint, over the band
+    deco(sbox(g, 3.98, 0.5, 0.04, 0, -1.15, s * (t / 2 + 0.01), mat(P.olive))); // waterline weed band
+    for (const x of [-1.2, 1.2]) deco(add(g, new RoundedBoxGeometry(0.5, 1.1, 0.24, 2, 0.06), mat(P.slate), x, -1.2, s * (t / 2 + 0.12)));
+  }
+  return g;
+}
+
+/** Support column under a raised deck: its top at the record's y, reaching 8 m down. */
+function stilt(color) {
+  const g = new THREE.Group();
+  add(g, cyl(0.24, 8, 16), mat(color), 0, -4.2, 0);
+  sbox(g, 0.7, 0.24, 0.7, 0, -0.12, 0, mat(P.ink));
+  for (const y of [-1.4, -3.2]) add(g, cyl(0.3, 0.12, 16), mat(P.ink), 0, y, 0).userData.noCollide = true;
+  return g;
+}
+
 /**
  * Drained swimming pool, 14 × 7 inside, sunk into the ground: shallow end (-X, 1.15 m, steps) sloping to a
  * deep end (+X, 2.3 m, ladder, diving board, a puddle). The paved surround reaches 10 × 6 from the centre
@@ -943,9 +977,9 @@ function pool(color) {
   for (const sz of [-1, 1]) gbox(g, 2 * X, h, t, 0, bottom + h / 2, sz * (Z + t / 2), color);
   // waterline tile band and lane marks
   const band = mat(P.slate);
-  for (const sx of [-1, 1]) deco(sbox(g, 0.03, 0.18, 2 * Z, sx * (X - 0.015), -0.3, 0, band));
-  for (const sz of [-1, 1]) deco(sbox(g, 2 * X, 0.18, 0.03, 0, -0.3, sz * (Z - 0.015), band));
-  deco(sbox(g, 3.4, 0.02, 0.22, -X + 2.2, -S + 0.01, 0, band));
+  for (const sx of [-1, 1]) deco(sbox(g, 0.03, 0.14, 2 * Z - 0.06, sx * (X - 0.015), -0.13, 0, band));
+  for (const sz of [-1, 1]) deco(sbox(g, 2 * X - 0.06, 0.14, 0.03, 0, -0.13, sz * (Z - 0.015), band));
+  deco(sbox(g, 2.1, 0.02, 0.22, -X + 2.85, -S + 0.01, 0, band));
   deco(sbox(g, 4.4, 0.02, 0.22, X - 2.6, -D + 0.01, 0, band));
   deco(sbox(g, 0.22, 0.02, 1.4, X - 0.55, -D + 0.01, 0, band));
   // paved surround (walkable), its edges flush with the ground beyond
@@ -1026,7 +1060,7 @@ function walkway(color) {
     sbox(g, 4, 0.08, 0.08, 0, 1.0, s * 1.16, mat(P.slate));
     for (const x of [-1.9, 0, 1.9]) sbox(g, 0.07, 0.94, 0.07, x, 0.53, s * 1.16, mat(P.slate));
   }
-  for (const s of [-1, 1]) sbox(g, 4, 0.36, 0.16, 0, -0.42, s * 1.12, mat(P.slate)); // girders
+  for (const s of [-1, 1]) sbox(g, 3.96, 0.36, 0.16, 0, -0.42, s * 1.08, mat(P.slate)); // girders, tucked inside the deck's edge
   for (const x of [-1.5, 0, 1.5]) sbox(g, 0.12, 0.12, 2.1, x, -0.36, 0, mat(P.slate)); // cross ties
   sbox(g, 4, 0.06, 0.08, 0, 0.03, -1.16, mat(P.ink));
   sbox(g, 4, 0.06, 0.08, 0, 0.03, 1.16, mat(P.ink));
@@ -1115,7 +1149,7 @@ function room(color, ctx) {
 
   // slab overhead (the floor of the room above, or the roof), and a floor if this room overhangs air
   gbox(g, 4, 0.3, 4, 0, WALL_H + 0.15, 0, P.oat);
-  if (!below && !ctx?.ground) gbox(g, 4, 0.3, 4, 0, -0.15, 0, P.oat);
+  if (!below && !ctx?.ground && !ctx?.near('dock', 0, 0)) gbox(g, 4, 0.3, 4, 0, -0.15, 0, P.oat);
 
   for (const [side, dx, dz] of SIDES) {
     const nb = ctx?.near('room', dx * 4, dz * 4);
@@ -1220,7 +1254,7 @@ const PAINT = [P.clay, P.sky, P.sage, P.kraft, P.ivory, P.slate, P.olive];
 const LEAF = [P.sage, P.olive, 0x9aa86f, P.kraft];
 const W = (len = 4, h = WALL_H) => ({ kind: 'wall', len, h, t: WALL_T });
 
-export const CATEGORIES = ['Buildings', 'Walls', 'Parts', 'Roads', 'Props', 'Nature', 'Vehicles', 'Barriers', 'Gameplay', 'Items', 'Terrain'];
+export const CATEGORIES = ['Buildings', 'Walls', 'Parts', 'Roads', 'Waterfront', 'Props', 'Nature', 'Vehicles', 'Barriers', 'Gameplay', 'Items', 'Terrain'];
 
 export const ASSETS = [
   { id: 'wall', cat: 'Walls', name: 'Wall', note: '4 m', colors: WALL_COLORS, link: W(), build: (c, x) => wall(c, x) },
@@ -1249,6 +1283,9 @@ export const ASSETS = [
   { id: 'room', cat: 'Buildings', name: 'Room', note: 'stacks · auto-joins', colors: [P.manilla, P.ivory, P.sky, P.sage, P.kraft, P.clay, P.bookcloth, P.oat, P.slate], tile: 4, build: room },
   { id: 'tower3', cat: 'Buildings', name: 'Tower · 3', note: '12 × 12 · enterable', colors: [P.ivory, P.manilla, P.oat, P.sky, P.sage, P.kraft, P.slate], snap: 2, build: tower(3) },
   { id: 'tower5', cat: 'Buildings', name: 'Tower · 5', note: '12 × 12 · roof access', colors: [P.oat, P.ivory, P.manilla, P.sky, P.sage, P.bookcloth, P.slate], snap: 2, build: tower(5) },
+  { id: 'dock', cat: 'Waterfront', name: 'Dock', note: '4 × 4 · deck at its height, body under water', colors: [P.oat, P.ivory, P.manilla], tile: 4, build: dock },
+  { id: 'seawall', cat: 'Waterfront', name: 'Sea wall', note: '4 m · 3.5 m over its deck line', colors: [P.oat, P.ivory, P.cloud], build: seawall },
+  { id: 'stilt', cat: 'Waterfront', name: 'Stilt', note: 'under a raised deck · top at its height', colors: [P.slate, P.cloud, P.oat], build: stilt },
   { id: 'pool', cat: 'Buildings', name: 'Pool', note: '14 × 7 · dig ground to -3 first', colors: [P.sky, P.ivory, P.sage], snap: 2, build: pool },
   { id: 'podium', cat: 'Buildings', name: 'Podium', note: '12 × 12 terrace', colors: [P.manilla, P.oat, P.ivory, P.kraft], snap: 2, build: podium },
   { id: 'shoprow', cat: 'Buildings', name: 'Shop row', note: '12 × 8', colors: [P.ivory, P.manilla, P.sky, P.sage, P.kraft], snap: 2, build: shopRow },
@@ -1378,6 +1415,5 @@ export function buildPiece(rec, ctx, { compact: merge = false } = {}) {
   g.position.set(rec.x, rec.y ?? 0, rec.z);
   g.rotation.y = a.tile ? 0 : ((rec.rot ?? 0) * Math.PI) / 180;
   g.userData.asset = a;
-  alignUVs(g);
   return merge ? compact(g) : g;
 }

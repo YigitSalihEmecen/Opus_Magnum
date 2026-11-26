@@ -1,4 +1,4 @@
-import { PALETTE as P } from '../../../core/toon.js';
+import { PALETTE as P } from '../../core/toon.js';
 
 /*
   "Duel" — a small walled box for 1v1 / 2v2, 56 × 28 m inside a 64 m map.

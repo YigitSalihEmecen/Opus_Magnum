@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Octree } from 'three/examples/jsm/math/Octree.js';
-import { PALETTE as P, toon, gridTexture, worldScaleBoxUVs, textTexture } from '../core/toon.js';
+import { PALETTE as P, toon, textTexture } from '../core/toon.js';
 import { applySky } from './sky.js';
 
 /*
@@ -15,12 +15,10 @@ import { applySky } from './sky.js';
     └─────────────────────────────────────────────────────────┘
 */
 
-const GRID = gridTexture();
 const mats = new Map();
-function mat(color, grid = true) {
-  const key = `${color}-${grid}`;
-  if (!mats.has(key)) mats.set(key, toon(color, { map: grid ? GRID : null, rim: 0.12 }));
-  return mats.get(key);
+function mat(color) {
+  if (!mats.has(color)) mats.set(color, toon(color, { rim: 0.14 }));
+  return mats.get(color);
 }
 
 export class TestRange {
@@ -49,9 +47,9 @@ export class TestRange {
   }
 
   /** Box resting on y = base, centred on x/z. Returns the mesh. */
-  block(x, base, z, w, h, d, color, { rotY = 0, grid = true, collide = true, label } = {}) {
-    const geo = worldScaleBoxUVs(new THREE.BoxGeometry(w, h, d), w, h, d);
-    const mesh = new THREE.Mesh(geo, mat(color, grid));
+  block(x, base, z, w, h, d, color, { rotY = 0, collide = true, label } = {}) {
+    const geo = new THREE.BoxGeometry(w, h, d);
+    const mesh = new THREE.Mesh(geo, mat(color));
     mesh.position.set(x, base + h / 2, z);
     mesh.rotation.y = rotY;
     mesh.castShadow = mesh.receiveShadow = true;
@@ -66,7 +64,7 @@ export class TestRange {
     const len = Math.hypot(run, rise);
     const t = 0.6;
     const angle = Math.atan2(rise, run);
-    const geo = worldScaleBoxUVs(new THREE.BoxGeometry(width, t, len), width, t, len);
+    const geo = new THREE.BoxGeometry(width, t, len);
     const mesh = new THREE.Mesh(geo, mat(color));
     mesh.rotation.x = zHigh < zLow ? angle : -angle;
     mesh.position.set(x, rise / 2 - (t / 2) * Math.cos(angle), (zLow + zHigh) / 2);
@@ -176,7 +174,7 @@ export class TestRange {
     this.block(13, 0, 0, 0.5, 1.2, 70, P.ivory);
     // distance markers
     [[26, '10M'], [16, '20M'], [1, '35M'], [-19, '55M']].forEach(([z, t]) => {
-      const post = this.block(-11.5, 0, z, 1.4, 1.6, 0.3, P.ink, { grid: false, collide: false });
+      const post = this.block(-11.5, 0, z, 1.4, 1.6, 0.3, P.ink, { collide: false });
       this.label(post, t, 0.16, 1.3);
     });
     // cover pieces to practise mantling / peeking
@@ -185,7 +183,7 @@ export class TestRange {
     this.block(-4, 0, 5, 1.6, 2.2, 1.6, P.kraft);
     // elevated perch for vertical targets
     this.block(6, 0, -19, 5, 3, 4, P.ivory);
-    this.block(0, 0, -40, 26, 9, 1.5, P.ink, { grid: false }); // backstop
+    this.block(0, 0, -40, 26, 9, 1.5, P.ink); // backstop
 
     this.dummySpots = [
       { type: 'static', pos: [-4, 0, 26] },
@@ -210,7 +208,7 @@ export class TestRange {
     // long wall for sustained runs + landing deck
     this.block(40, 0, -6, T, H, 52, P.bookcloth);
     this.block(29, 0, -44, 12, 3, 6, P.ivory);
-    this.block(29, 3, -46.5, 12, 0.3, 1, P.ink, { grid: false });
+    this.block(29, 3, -46.5, 12, 0.3, 1, P.ink);
   }
 
   #mantleCourse() {

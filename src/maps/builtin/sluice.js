@@ -1,4 +1,4 @@
-import { PALETTE as P } from '../../../core/toon.js';
+import { PALETTE as P } from '../../core/toon.js';
 import { segFor } from '../terrain.js';
 
 /*
@@ -37,35 +37,37 @@ function terrain() {
 export function sluice() {
   const pieces = [];
   const put = (type, x, z, rot = 0, y = 0, color, extra) => pieces.push({ type, x, y, z, rot, color, ...extra });
-  const slab = (x, z, y = 0, color = P.oat) => put('floor', x, z, 0, y - 0.3, color);
-  const pile = (x, z, top, color = P.cloud) => { put('pillar', x, z, 0, top - 6.4, color); put('pillar', x, z, 0, top - 3.2, color); };
+  const dock = (x, z, color = P.oat) => put('dock', x, z, 0, 0, color);
+  const stilt = (x, z, top) => put('stilt', x, z, 0, top, P.slate);
 
-  // middle: the island with a container stack, and the shared gantry above the north water
-  for (const x of [-2, 2]) for (const z of [-2, 2]) slab(x, z, 0, P.oat);
-  for (const [x, z] of [[-4, -4], [4, -4], [-4, 4], [4, 4]]) pile(x, z, -0.3);
+  // middle: the island with a container stack, and the shared gantry on stilts above the north water
+  for (const x of [-2, 2]) for (const z of [-2, 2]) dock(x, z);
   put('container', 0, 0, 90, 0, P.ivory);
   for (const x of [-1.9, 1.9]) put('crate', x, x < 0 ? -1.2 : 1.2, 0, 0, P.kraft);
-  for (const x of [-6, -2, 2, 6]) slab(x, -10, 3.5, P.manilla);
-  for (const x of [-8, 8]) pile(x, -12, 3.2, P.slate);
+  for (const x of [-6, -2, 2, 6]) put('floor', x, -10, 0, 3.2, P.manilla);
+  for (const x of [-6.6, 0, 6.6]) for (const z of [-11.4, -8.6]) stilt(x, z, 3.2);
   put('parapet', -2, -12, 0, 3.5, P.manilla);
   put('parapet', 2, -12, 0, 3.5, P.manilla);
   put('crate', 3, -9, 20, 3.5, P.sage);
 
   // south platform and the plank to the island
-  for (const x of [-4, 0, 4]) slab(x, 10, 0, P.oat);
-  for (const x of [-6, 6]) pile(x, 12, -0.3);
+  for (const x of [-4, 0, 4]) dock(x, 10);
   put('floor_strip', 0, 6, 90, -0.3, P.kraft);
   put('jersey', 0, 11, 0, 0, P.ivory);
 
+  // the lock wall along the south edge: one long face to wallrun along between the piers and the platform
+  for (let x = -22; x <= 22; x += 4) put('seawall', x, 12.35, 0, 0, P.oat);
+
   for (const s of [-1, 1]) {
     const team = s < 0 ? P.sky : P.clay, inward = s < 0 ? 270 : 90;
-    // pier: 12 × 16 slab on piles
-    for (const x of [14, 18]) for (const z of [-6, -2, 2, 6, 10]) slab(s * x, z, 0, P.oat);
-    for (const [x, z] of [[12, -8], [12, 12], [20, 12]]) pile(s * x, z, -0.3);
+    // pier: 12 × 16 of dock, plus a tongue along the lock wall
+    for (const x of [14, 18, 22]) for (const z of [-6, -2, 2, 6]) dock(s * x, z);
+    for (const x of [14, 18]) dock(s * x, 10);
+    dock(s * 22, -10);
     // hut block along the back, doors on the water side; its roof is the lookout
-    for (const z of [-6, -2, 2, 6]) {
+    for (const z of [-10, -6, -2, 2, 6]) {
       const door = z === -2 || z === 6 ? (s < 0 ? 'E' : 'W') : '';
-      const open = z === -6 || z === 2 ? (s < 0 ? 'E' : 'W') : '';
+      const open = z === -10 || z === 2 ? (s < 0 ? 'E' : 'W') : ''; // catwalk and stairs reach the roof here
       put('room', s * 22, z, 0, 0, z === 2 ? team : P.ivory, { door, open });
     }
     put('stairs_open', s * 17, 2, s < 0 ? 90 : 270, 0, P.cloud);
@@ -78,18 +80,16 @@ export function sluice() {
     put('item_armour1', s * 15, -2);
     put('item_ammo', s * 18.5, -6.5);
 
-    // north high road: catwalks from the hut roof's front corner to the gantry
-    for (const x of [10, 14, 18]) put('walkway', s * x, -8, 0, 3.5, P.slate);
-    pile(s * 12, -9, 3.2, P.slate);
+    // north high road: catwalks from the hut roof's front corner to the gantry, on stilts
+    for (const x of [10, 14, 18]) put('walkway', s * x, -10, 0, 3.5, P.slate);
+    for (const x of [12, 16]) stilt(s * x, -10, 2.9);
 
     // middle: a container barge riding in the channel
     put('container', s * 8, -2, 0, WATER - 0.3, team);
     put('gun_snake', s * 8, -2, 0, WATER - 0.3 + 2.6);
 
-    // south: the lock wall to wallrun along, rising out of the water
-    for (const x of [6, 10, 14, 18, 22]) { put('wall', s * x, 12.2, 0, -1.8, P.cloud); put('wall', s * x, 12.2, 0, 1.4, P.cloud); }
     put('item_grenade', s * 4, 10);
-    put('lamp', s * 23, -9, 0, 0, P.slate);
+    put('lamp', s * 12.7, -7.3, 0, 0, P.slate);
   }
 
   // prizes

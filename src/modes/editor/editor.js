@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PALETTE as P, toon } from '../../core/toon.js';
-import { ASSETS, CATEGORIES, assetById, buildPiece, buildJoints, makeContext } from './assets.js';
-import { listMaps, getMap, saveMap, deleteMap, hasSpawns } from './storage.js';
-import { MAP_SIZE } from './mapWorld.js';
-import { terrainMesh, setHeights, heightsOf, packHeights, heightAt, brush } from './terrain.js';
+import { ASSETS, CATEGORIES, assetById, buildPiece, buildJoints, makeContext } from '../../maps/assets.js';
+import { listMaps, getMap, saveMap, deleteMap, hasSpawns } from '../../maps/storage.js';
+import { MAP_SIZE } from '../../maps/mapWorld.js';
+import { terrainMesh, setHeights, heightsOf, packHeights, heightAt, brush } from '../../maps/terrain.js';
 import { applySky } from '../../world/sky.js';
 import './editor.css';
 
@@ -107,7 +107,7 @@ class Editor {
   #sizeTo(size) {
     this.size = size;
     this.bounds.clear();
-    this.ground = terrainMesh(size);
+    this.ground = terrainMesh(size, { grid: true });
     setHeights(this.ground, this.h);
     this.bounds.add(this.ground);
     const half = size / 2;

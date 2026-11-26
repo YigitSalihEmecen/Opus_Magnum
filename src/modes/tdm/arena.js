@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Octree } from 'three/examples/jsm/math/Octree.js';
-import { PALETTE as P, toon, gridTexture, worldScaleBoxUVs, textTexture } from '../../core/toon.js';
+import { PALETTE as P, toon, textTexture } from '../../core/toon.js';
 import { NavGrid } from './nav.js';
 import { applySky } from '../../world/sky.js';
 
@@ -24,12 +24,10 @@ import { applySky } from '../../world/sky.js';
 */
 
 const W = 45, D = 31;
-const GRID = gridTexture();
 const mats = new Map();
-const mat = (color, grid = true) => {
-  const key = `${color}-${grid}`;
-  if (!mats.has(key)) mats.set(key, toon(color, { map: grid ? GRID : null, rim: 0.12 }));
-  return mats.get(key);
+const mat = (color) => {
+  if (!mats.has(color)) mats.set(color, toon(color, { rim: 0.14 }));
+  return mats.get(color);
 };
 const TEAM = { ally: P.sky, enemy: P.clay };
 
@@ -71,9 +69,9 @@ export class Arena {
 
   // ── builders (side flips x and z for the mirrored copy) ──
 
-  block(x, base, z, w, h, d, color, { grid = true, collide = true, side = 1 } = {}) {
-    const geo = worldScaleBoxUVs(new THREE.BoxGeometry(w, h, d), w, h, d);
-    const mesh = new THREE.Mesh(geo, mat(color, grid));
+  block(x, base, z, w, h, d, color, { collide = true, side = 1 } = {}) {
+    const geo = new THREE.BoxGeometry(w, h, d);
+    const mesh = new THREE.Mesh(geo, mat(color));
     mesh.position.set(x * side, base + h / 2, z * side);
     mesh.castShadow = mesh.receiveShadow = true;
     (collide ? this.colliders : this.group).add(mesh);
@@ -84,7 +82,7 @@ export class Arena {
   ramp(x, zLow, zHigh, width, rise, color, { side = 1, base = 0 } = {}) {
     const run = Math.abs(zHigh - zLow), len = Math.hypot(run, rise), t = 0.6;
     const angle = Math.atan2(rise, run);
-    const geo = worldScaleBoxUVs(new THREE.BoxGeometry(width, t, len), width, t, len);
+    const geo = new THREE.BoxGeometry(width, t, len);
     const mesh = new THREE.Mesh(geo, mat(color));
     const up = (zHigh < zLow) === (side > 0);
     mesh.rotation.x = up ? angle : -angle;
@@ -98,7 +96,7 @@ export class Arena {
   rampX(z, xLow, xHigh, width, rise, color, { side = 1, base = 0 } = {}) {
     const run = Math.abs(xHigh - xLow), len = Math.hypot(run, rise), t = 0.6;
     const angle = Math.atan2(rise, run);
-    const geo = worldScaleBoxUVs(new THREE.BoxGeometry(len, t, width), len, t, width);
+    const geo = new THREE.BoxGeometry(len, t, width);
     const mesh = new THREE.Mesh(geo, mat(color));
     const up = (xHigh > xLow) === (side > 0);
     mesh.rotation.z = up ? angle : -angle;
@@ -175,8 +173,8 @@ export class Arena {
     this.block(-W - T / 2, 0, 0, T, H, 2 * D, P.slate);
     this.block(W + T / 2, 0, 0, T, H, 2 * D, P.slate);
     // cap trim
-    this.block(0, H, -D - T / 2, 2 * W + 2 * T, 0.25, T + 0.2, P.ink, { grid: false });
-    this.block(0, H, D + T / 2, 2 * W + 2 * T, 0.25, T + 0.2, P.ink, { grid: false });
+    this.block(0, H, -D - T / 2, 2 * W + 2 * T, 0.25, T + 0.2, P.ink);
+    this.block(0, H, D + T / 2, 2 * W + 2 * T, 0.25, T + 0.2, P.ink);
   }
 
   #centre() {
@@ -192,7 +190,7 @@ export class Arena {
     }
     // monolith breaks the long axis and anchors the centre
     this.block(1.5, PH, 0, 2.2, 6, 2.2, P.clay);
-    this.block(1.5, PH + 6, 0, 2.5, 0.3, 2.5, P.ink, { grid: false });
+    this.block(1.5, PH + 6, 0, 2.5, 0.3, 2.5, P.ink);
   }
 
   /** One team's half; side = 1 builds the west half, -1 the rotated east copy. */
@@ -204,13 +202,13 @@ export class Arena {
     this.block(-31, 0, -9.5, 1, 2.6, 7, P.ivory, o);
     this.block(-31, 0, 9.5, 1, 2.6, 7, P.ivory, o);
     this.block(-31, 0, 0, 1, 2.6, 4, P.ivory, o);
-    this.block(-31, 2.6, 0, 1.2, 0.2, 26, team, { ...o, grid: false });
+    this.block(-31, 2.6, 0, 1.2, 0.2, 26, team, { ...o });
     this.block(-43, 0, -16, 4, 4, 3, P.slate, o);
     this.block(-43, 0, 16, 4, 4, 3, P.slate, o);
 
     // north gallery: long wallrun wall separating the outer lane from mid
     this.block(-15, 0, -17, 16, 5.5, 0.8, P.bookcloth, o);
-    this.block(-15, 5.5, -17, 16.2, 0.2, 1, P.ink, { ...o, grid: false });
+    this.block(-15, 5.5, -17, 16.2, 0.2, 1, P.ink, { ...o });
     this.block(-20, 0, -24.5, 2.4, 1.2, 2.4, P.kraft, o);
     this.block(-9, 0, -26, 3.2, 1.1, 1.4, P.kraft, o);
     this.block(-3, 0, -22.5, 1.6, 2.2, 1.6, P.kraft, o);
@@ -227,7 +225,7 @@ export class Arena {
     // mid flanks: pillars to chain wallruns, low walls to crouch behind
     for (const [x, z] of [[-9, -10], [-9, 10], [-17, -6]]) {
       this.block(x, 0, z, 1.8, 6, 1.8, P.sky, o);
-      this.block(x, 6, z, 2, 0.2, 2, P.ink, { ...o, grid: false });
+      this.block(x, 6, z, 2, 0.2, 2, P.ink, { ...o });
     }
     this.block(-14, 0, 1, 0.8, 1.15, 6, P.ivory, o);
     this.block(-23, 0, -9, 4, 1.15, 0.8, P.ivory, o);

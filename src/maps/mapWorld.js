@@ -1,12 +1,12 @@
 import * as THREE from 'three';
 import { Octree } from 'three/examples/jsm/math/Octree.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { PALETTE as P, toon } from '../../core/toon.js';
+import { PALETTE as P, toon } from '../core/toon.js';
 import { buildPiece, buildJoints, makeContext } from './assets.js';
 import { terrainMesh, setHeights, heightsOf, heightAt, LIMIT, terrainMaterial, tintGround } from './terrain.js';
-import { applySky } from '../../world/sky.js';
-import { pickupSpec } from '../../items/items.js';
-import { WEAPONS } from '../../weapons/weapons.js';
+import { applySky } from '../world/sky.js';
+import { pickupSpec } from '../items/items.js';
+import { WEAPONS } from '../weapons/weapons.js';
 
 /*
   Turns a saved map into a playable world. The result fits both level users:
