@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { PALETTE as P, toon, gridTexture } from '../../core/toon.js';
+import { ITEMS, ITEM_IDS } from '../../items/items.js';
+import { pickupModel, GUN_SHOW } from '../../items/pickups.js';
+import { WEAPONS } from '../../weapons/weapons.js';
 
 /*
   Placeable map pieces in the game's language: chunky rounded forms, grid-papered surfaces, ink caps,
@@ -738,6 +741,20 @@ function spawn(color) {
   return g;
 }
 
+/** Editor stand-in for a pickup: the item hovering as it will in play over a pad in its accent colour. */
+function pickupPiece(type, gun, color) {
+  const g = new THREE.Group();
+  add(g, new THREE.CircleGeometry(0.46, 32).rotateX(-Math.PI / 2), mat(P.ivory), 0, 0.02, 0).castShadow = false;
+  add(g, new THREE.RingGeometry(0.36, 0.46, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color, toneMapped: false }), 0, 0.03, 0).castShadow = false;
+  const m = pickupModel(type, gun);
+  m.scale.setScalar(type === 'gun' ? GUN_SHOW : ITEMS[type].show);
+  m.position.y = 0.32;
+  g.add(m);
+  g.traverse((o) => { if (o.isMesh) o.userData.noCollide = true; });
+  g.userData.marker = true;
+  return g;
+}
+
 // ─────────────────────────── joints ───────────────────────────
 
 const LINK_PRIORITY = { wall: 4, rail: 3, picket: 2, fence: 1 };
@@ -1145,7 +1162,7 @@ const PAINT = [P.clay, P.sky, P.sage, P.kraft, P.ivory, P.slate, P.olive];
 const LEAF = [P.sage, P.olive, 0x9aa86f, P.kraft];
 const W = (len = 4, h = WALL_H) => ({ kind: 'wall', len, h, t: WALL_T });
 
-export const CATEGORIES = ['Buildings', 'Walls', 'Parts', 'Roads', 'Props', 'Nature', 'Vehicles', 'Barriers', 'Gameplay', 'Terrain'];
+export const CATEGORIES = ['Buildings', 'Walls', 'Parts', 'Roads', 'Props', 'Nature', 'Vehicles', 'Barriers', 'Gameplay', 'Items', 'Terrain'];
 
 export const ASSETS = [
   { id: 'wall', cat: 'Walls', name: 'Wall', note: '4 m', colors: WALL_COLORS, link: W(), build: (c, x) => wall(c, x) },
@@ -1214,6 +1231,10 @@ export const ASSETS = [
 
   { id: 'spawn_ally', cat: 'Gameplay', name: 'Ally spawn', note: 'TDM · you', colors: [P.sky], fixed: true, build: () => spawn(P.sky) },
   { id: 'spawn_enemy', cat: 'Gameplay', name: 'Enemy spawn', note: 'TDM', colors: [P.clay], fixed: true, build: () => spawn(P.clay) },
+
+  // pickups: placed like props, played as items (mapWorld lists them instead of building them)
+  ...ITEM_IDS.map((id) => ({ id: `item_${id}`, cat: 'Items', name: ITEMS[id].name, note: 'pickup', colors: [ITEMS[id].accent], fixed: true, pickup: true, build: () => pickupPiece(id, 0, ITEMS[id].accent) })),
+  ...WEAPONS.map((w, i) => ({ id: `gun_${w.id}`, cat: 'Items', name: w.name, note: `${w.kind} · pickup`, colors: [P.ivory], fixed: true, pickup: true, build: () => pickupPiece('gun', i, P.ink) })),
 ];
 
 export const assetById = (id) => ASSETS.find((a) => a.id === id);

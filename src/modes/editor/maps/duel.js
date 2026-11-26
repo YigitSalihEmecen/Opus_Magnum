@@ -7,6 +7,11 @@ import { PALETTE as P } from '../../../core/toon.js';
   over the centre container. Three lanes connect them: a north alley behind a window wall, an open middle
   with scattered cover, and a south lane of containers you can climb onto from crates.
 
+  Loot is mirrored so neither side is favoured: light armour and ammo on each deck, a grenade and a
+  shotgun in the open middle, a medkit and an SMG up the north alley, a charger and guard armour down the
+  south lane. The two prizes sit on the centre line, where both players have to commit to reach them:
+  heavy armour at the back of the north alley, the Kestrel sniper in the south pinch.
+
     z +14 ┌────────────────────────────────────────────┐
           │ deck        crates   ▢▢   crates       deck│  north alley
     z  +7 │ ▓▓▓▓      ═╪══════╪═══╪══════╪═  window    ▓▓▓▓│
@@ -70,7 +75,19 @@ export function duel() {
     put('crate', s * 11.6, -9.4, 0, 0, P.kraft);
     put('sandbags', s * 2.2, -12.2, 0, 0, P.sage);
     put('barrel', s * 17, -11.6, 0, 0, P.slate);
+
+    // loot
+    put('item_armour1', s * 20.4, 2.6, 0, 3.5);
+    put('item_ammo', s * 20.4, -1.8, 0, 3.5);
+    put('item_grenade', s * 10.4, 0);
+    put('gun_grizzly', s * 4.6, 0);
+    put('item_medkit', s * 12.8, 11.8);
+    put('gun_snake', s * 16.8, 11.6);
+    put('item_charger', s * 11.6, -12.2);
+    put('item_armour2', s * 14.4, -12);
   });
+  put('item_armour3', 0, 12.6);
+  put('gun_kestrel', 0, -11.2);
 
   return { id: 'builtin-duel', builtin: true, name: 'Duel', size: 64, updated: 0, pieces };
 }

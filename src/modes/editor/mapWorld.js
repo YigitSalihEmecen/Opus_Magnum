@@ -5,11 +5,14 @@ import { PALETTE as P, toon } from '../../core/toon.js';
 import { buildPiece, buildJoints, makeContext } from './assets.js';
 import { terrainMesh, setHeights, heightsOf, heightAt, LIMIT, terrainMaterial, tintGround } from './terrain.js';
 import { applySky } from '../../world/sky.js';
+import { pickupSpec } from '../../items/items.js';
+import { WEAPONS } from '../../weapons/weapons.js';
 
 /*
   Turns a saved map into a playable world. The result fits both level users:
-    explore (main.js): octree · spawn · raycastTargets
-    TDM arena:         octree · raycastTargets · spawns { ally, enemy } · bounds · dispose()  (TDM builds nav + hotspots)
+    explore (main.js): octree · spawn · raycastTargets · pickups
+    TDM arena:         octree · raycastTargets · spawns { ally, enemy } · pickups · bounds · dispose()  (TDM builds nav + hotspots)
+  Item and gun pieces aren't built into the world: they come out as pickups [{ type, gun?, position }].
 */
 
 export const MAP_SIZE = 96; // buildable square, metres
@@ -24,7 +27,14 @@ export function buildMapScene(map, group) {
   const groundAt = (x, z) => heightAt(h, size, x, z);
   const ctx = makeContext(map.pieces, groundAt);
   const spawns = { ally: [], enemy: [] };
+  const pickups = [];
+  const weaponIds = WEAPONS.map((w) => w.id);
   for (const rec of map.pieces) {
+    if (/^(item|gun)_/.test(rec.type)) {
+      const spec = pickupSpec(rec.type, weaponIds);
+      if (spec) pickups.push({ ...spec, position: new THREE.Vector3(rec.x, Math.max(rec.y ?? 0, groundAt(rec.x, rec.z)), rec.z) });
+      continue;
+    }
     if (rec.type === 'spawn_ally' || rec.type === 'spawn_enemy') {
       spawns[rec.type === 'spawn_ally' ? 'ally' : 'enemy'].push({ position: new THREE.Vector3(rec.x, rec.y ?? 0, rec.z), yaw: ((rec.rot ?? 0) * Math.PI) / 180 });
       continue;
@@ -33,7 +43,7 @@ export function buildMapScene(map, group) {
     if (piece) group.add(piece);
   }
   group.add(buildJoints(map.pieces, groundAt));
-  return { size, h, groundAt, spawns };
+  return { size, h, groundAt, spawns, pickups };
 }
 
 export function buildMapWorld(scene, map) {
@@ -43,7 +53,7 @@ export function buildMapWorld(scene, map) {
   atmosphere(scene, group, half);
 
   const world = new THREE.Group();
-  const { spawns, groundAt, h } = buildMapScene(map, world);
+  const { spawns, groundAt, h, pickups } = buildMapScene(map, world);
 
   // no wall at the edge: the land rolls on into hills, and an invisible fence keeps players in
   group.add(outerLand(h, half * 2, groundAt));
@@ -79,6 +89,7 @@ export function buildMapWorld(scene, map) {
     octree,
     raycastTargets,
     spawns,
+    pickups,
     spawn: spawns.ally[0],
     bounds: { minX: -half, maxX: half, minZ: -half, maxZ: half, cell: 1 },
     dispose: () => scene.remove(group),
