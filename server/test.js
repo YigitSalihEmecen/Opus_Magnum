@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import WebSocket from 'ws';
 
 const PORT = 8899;
-const srv = spawn('node', ['index.js'], { cwd: import.meta.dirname, env: { ...process.env, PORT } });
+const srv = spawn('node', ['index.js'], { cwd: import.meta.dirname, env: { ...process.env, PORT, LIMIT: 3, END_PAUSE: 1 } });
 await new Promise((r) => srv.stdout.once('data', r));
 
 function client(name) {
@@ -19,7 +19,7 @@ function client(name) {
       setTimeout(poll, 10);
     })();
   });
-  return new Promise((r) => ws.on('open', () => { ws.send(JSON.stringify({ t: 'hello', name, room: 'test', mapId: 'builtin-duel', weapons: 5 })); r({ ws, next, inbox, send: (m) => ws.send(JSON.stringify(m)) }); }));
+  return new Promise((r) => ws.on('open', () => { ws.send(JSON.stringify({ t: 'hello', v: 2, name, room: 'test', mapId: 'builtin-duel', maps: ['builtin-duel', 'builtin-lido', 'builtin-sluice'], weapons: 5 })); r({ ws, next, inbox, send: (m) => ws.send(JSON.stringify(m)) }); }));
 }
 
 const a = await client('A');
@@ -33,13 +33,14 @@ assert.ok(wa.round.weapon >= 0 && wa.round.weapon < 5);
 assert.equal((await a.next('join')).player.name, 'B');
 
 await new Promise((r) => setTimeout(r, 1600)); // spawn shield
-b.send({ t: 's', p: [1, 2, 3], v: [0, 0, 0], y: 0, pi: 0, w: 0, st: 'slide', cr: 1, ads: 1 });
-const snap = await a.next('snap');
-const sb = snap.ps.find((p) => p.id === wb.id);
-assert.deepEqual(sb.p, [1, 2, 3]);
-assert.equal(sb.st, 'slide');
-assert.equal(sb.cr, 1);
-assert.equal(sb.ads, 1);
+const q = [1, 2, 3, 0, 0, 0, 0.5, 0, 0, 2, 3, 0, 12345];
+b.send({ t: 's', q });
+const pose = await a.next('s');
+assert.equal(pose.id, wb.id);
+assert.deepEqual(pose.q, q); // relayed as sent, stamped with the sender's clock
+b.send({ t: 's', q: [1, 2, 'x'] }); // malformed: dropped
+await new Promise((r) => setTimeout(r, 100));
+assert.equal(a.inbox.filter((m) => m.t === 's').length, 0);
 
 a.send({ t: 'hit', id: wb.id, zone: 'body', dmg: 100 });
 assert.equal((await b.next('hurt')).hp, 50);
@@ -82,11 +83,32 @@ assert.deepEqual([dropped.w, dropped.ammo], [2, 5]);
 a.send({ t: 'take', id: dropped.id });
 assert.equal((await b.next('took')).id, dropped.id);
 
-// your own grenade can kill you; the other side gets the point
-b.send({ t: 'hit', id: wb.id, zone: 'blast', dmg: 300 });
+// falling into the water kills you; the other side gets the point
+b.send({ t: 'hit', id: wb.id, zone: 'fall', dmg: 999 });
 const selfKill = await a.next('kill');
 assert.equal(selfKill.v, wb.id);
 assert.equal(selfKill.score[wa.team], 2);
+
+// the third point ends the match: a ballot of the room's maps, most votes picks the next one
+await b.next('round');
+await new Promise((r) => setTimeout(r, 1600));
+a.send({ t: 'hit', id: wb.id, zone: 'head', dmg: 300 });
+const end = await b.next('end');
+assert.deepEqual(end.vote.options, ['builtin-duel', 'builtin-lido', 'builtin-sluice']);
+a.send({ t: 'vote', map: 'builtin-sluice' });
+b.send({ t: 'vote', map: 'builtin-sluice' });
+b.send({ t: 'vote', map: 'nowhere' }); // not on the ballot: ignored
+assert.equal((await a.next('votes')).tally['builtin-sluice'], 1);
+assert.equal((await a.next('votes')).tally['builtin-sluice'], 2);
+const restart = await b.next('restart');
+assert.equal(restart.mapId, 'builtin-sluice');
+assert.deepEqual(restart.score, { a: 0, b: 0 });
+
+// a client on another protocol is told why
+const old = new WebSocket(`ws://localhost:${PORT}`, { origin: 'http://localhost:5173' });
+const err = await new Promise((r) => { old.on('open', () => old.send(JSON.stringify({ t: 'hello', v: 1, name: 'Old', room: 'test' }))); old.on('message', (d) => r(JSON.parse(d))); });
+assert.equal(err.t, 'error');
+assert.match(err.msg, /reload/);
 
 a.ws.close(); b.ws.close();
 // a page on another site is refused

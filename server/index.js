@@ -9,16 +9,24 @@ import { WebSocketServer } from 'ws';
   Clients own their movement and hit detection (friends-only trust model); the server owns HP, armour, kills,
   score, rounds, the clock and who got which pickup, and relays poses at TICK Hz.
   Pickups: map items are named by the clients ('m<index>' in the map's item list, the same on every client); the
-  first to claim one gets it until the next round. Dropped guns get ids here ('d<n>').
+  first to claim one gets it, and it comes back ITEM_RESPAWN s later (or at the next round). Dropped guns get
+  ids here ('d<n>').
+  Poses are relayed the moment they arrive (no server tick in between), stamped with the sender's own clock
+  (q[12]); each receiver lines that clock up with its own and plays the poses back on an even timeline.
+  After a match everyone votes for the next map among the builtin maps the room's opener listed (hello.maps).
 
-  client → server   hello { name, room, char, mapId, map?, weapons } · fire { o, d, w, sup } · hit { id, zone, dmg }
-                    s { p, v, y, pi, w, st, cr, ws, ads, rl }  (pose + crouch, wall side, aiming, reloading flags)
-                    take { id } · drop { w, p, ammo, reserve } · vit { op: heal|wear|charge, v } · nade { p, v, f } · ping { c }
-  server → client   welcome { id, team, mapId, map, players, score, limit, time, round, items }
-                    join { player } · leave { id } · snap { ps } · fire { id, ... } · hurt { hp, ar, am, by?, dmg? }
-                    kill { k, v, head, score } · took { id, by } · dropped { id, w, p, ammo, reserve } · nade { id, p, v, f }
-                    round { n, weapon, score } · end { score } · restart { score, time } · pong { c } · error { msg }
+  client → server   hello { v, name, room, char, mapId, map?, maps, weapons } · fire { o, d, w, sup } · hit { id, zone, dmg }
+                    s { q: [px, py, pz, vx, vy, vz, yaw, pitch, weapon, state, flags, wallSide, clientMs] }
+                    take { id } · drop { w, p, ammo, reserve } · vit { op: heal|wear|charge, v } · nade { p, v, f }
+                    vote { map } · ping { c }
+  server → client   welcome { v, id, team, mapId, map, players, score, limit, time, round, items, vote? }
+                    join { player } · leave { id } · s { id, al, q } · fire { id, ... } · hurt { hp, ar, am, by?, dmg? }
+                    kill { k, v, head, score } · took { id, by } · back { id } · dropped { id, w, p, ammo, reserve }
+                    nade { id, p, v, f } · round { n, weapon, score } · end { score, vote } · votes { tally }
+                    restart { score, time, mapId } · pong { c } · error { msg }
 */
+
+export const PROTOCOL = 2;
 
 const PORT = Number(process.env.PORT ?? 8787);
 // only the Funnel proxy (and this machine) should reach the server; nothing else on the LAN
@@ -32,7 +40,7 @@ const MAX_HP = 150, REGEN_DELAY = 8, REGEN_RATE = 10; // mirrors src/player/vita
 // mirrors src/items/items.js: what a heal can restore and which vests exist
 const HEALS = [40, 150], ARMOUR_CAPS = [25, 50, 75], MAX_DROPS = 24;
 const SHIELD = 1.5, ROUND_PAUSE = 2.2;
-const LIMIT = 10, MATCH_TIME = 600, END_PAUSE = 8;
+const LIMIT = Number(process.env.LIMIT ?? 10), MATCH_TIME = 600, END_PAUSE = Number(process.env.END_PAUSE ?? 14), ITEM_RESPAWN = 30;
 const MAX_PLAYERS = 8;
 
 const rooms = new Map();
@@ -50,11 +58,12 @@ function broadcast(room, msg, except) {
 const pub = (p) => ({ id: p.id, name: p.name, char: p.char, team: p.team, alive: p.alive, kills: p.kills, deaths: p.deaths });
 
 function join(ws, msg) {
+  if (msg.v !== PROTOCOL) return send(ws, { t: 'error', msg: msg.v > PROTOCOL ? 'The match server is out of date: restart it with the latest code' : 'The game is out of date: reload the page' }), null;
   const code = clean(msg.room, 16).toLowerCase() || 'duel';
   let room = rooms.get(code);
   if (!room) {
     if (rooms.size >= MAX_ROOMS) return send(ws, { t: 'error', msg: 'Server is busy' }), null;
-    room = { code, players: new Map(), score: { a: 0, b: 0 }, mapId: String(msg.mapId ?? ''), map: msg.map && typeof msg.map === 'object' && Array.isArray(msg.map.pieces) && msg.map.pieces.length < 20000 ? msg.map : null, time: MATCH_TIME, ended: false, endT: 0, pauseT: 0, weapons: Math.min(16, Math.max(1, msg.weapons | 0)) || 5, round: null, taken: new Set(), drops: new Map(), dropN: 0 };
+    room = { code, players: new Map(), score: { a: 0, b: 0 }, mapId: String(msg.mapId ?? ''), map: msg.map && typeof msg.map === 'object' && Array.isArray(msg.map.pieces) && msg.map.pieces.length < 20000 ? msg.map : null, time: MATCH_TIME, ended: false, endT: 0, pauseT: 0, weapons: Math.min(16, Math.max(1, msg.weapons | 0)) || 5, maps: (Array.isArray(msg.maps) ? msg.maps : []).slice(0, 8).map((m) => clean(m, 32)).filter(Boolean), round: null, taken: new Map(), drops: new Map(), dropN: 0, votes: new Map() };
     room.round = { n: 1, weapon: pickWeapon(room) };
     rooms.set(code, room);
   }
@@ -62,10 +71,10 @@ function join(ws, msg) {
   const count = (t) => [...room.players.values()].filter((p) => p.team === t).length;
   const p = {
     ws, room, id: nextId++, name: clean(msg.name, 16) || 'Player', char: clean(msg.char, 12).toLowerCase() || 'rivet', team: count('a') <= count('b') ? 'a' : 'b',
-    alive: room.pauseT <= 0, kills: 0, deaths: 0, hp: MAX_HP, armour: 0, armourMax: 0, lastHurt: -99, shieldUntil: now() + SHIELD, state: null,
+    alive: room.pauseT <= 0, kills: 0, deaths: 0, hp: MAX_HP, armour: 0, armourMax: 0, lastHurt: -99, shieldUntil: now() + SHIELD, sentHp: MAX_HP,
   };
   room.players.set(p.id, p);
-  send(ws, { t: 'welcome', id: p.id, team: p.team, mapId: room.mapId, map: room.map, players: [...room.players.values()].map(pub), score: room.score, limit: LIMIT, time: room.time, ended: room.ended, round: room.round, items: { taken: [...room.taken], drops: [...room.drops].map(([id, d]) => ({ id, ...d })) } });
+  send(ws, { t: 'welcome', v: PROTOCOL, id: p.id, team: p.team, mapId: room.mapId, map: room.map, players: [...room.players.values()].map(pub), score: room.score, limit: LIMIT, time: room.time, ended: room.ended, vote: room.ended ? voteState(room) : undefined, round: room.round, items: { taken: [...room.taken.keys()], drops: [...room.drops].map(([id, d]) => ({ id, ...d })) } });
   broadcast(room, { t: 'join', player: pub(p) }, p);
   console.log(`${p.name} joined ${code} (${room.players.size})`);
   return p;
@@ -74,6 +83,7 @@ function join(ws, msg) {
 function leave(p) {
   const room = p.room;
   room.players.delete(p.id);
+  room.votes.delete(p.id);
   broadcast(room, { t: 'leave', id: p.id });
   if (!room.players.size) rooms.delete(room.code);
   console.log(`${p.name} left ${room.code} (${room.players.size})`);
@@ -83,13 +93,14 @@ const vitals = (p) => ({ hp: Math.max(0, p.hp), ar: p.armour, am: p.armourMax })
 
 function hit(p, msg) {
   const room = p.room, v = room.players.get(msg.id), t = now();
-  const self = v === p && msg.zone === 'blast'; // caught in your own grenade
-  if (room.ended || room.pauseT > 0 || !p.alive || !v || !v.alive || (v.team === p.team && !self) || t < v.shieldUntil) return;
+  const self = v === p && (msg.zone === 'blast' || msg.zone === 'fall'); // your own grenade, or into the water
+  if (room.ended || room.pauseT > 0 || !p.alive || !v || !v.alive || (v.team === p.team && !self) || (t < v.shieldUntil && !self)) return;
   const dmg = Math.min(300, Math.max(0.1, Math.round((Number(msg.dmg) || 0) * 10) / 10)); // pellets can be fractional
   const soak = Math.min(v.armour, dmg);
   v.armour -= soak;
   v.hp -= dmg - soak;
   v.lastHurt = t;
+  v.sentHp = v.hp;
   send(v.ws, { t: 'hurt', ...vitals(v), by: p.id, dmg });
   if (v.hp > 0) return;
   v.alive = false;
@@ -102,11 +113,11 @@ function hit(p, msg) {
   else room.pauseT = ROUND_PAUSE; // the round is over: a short beat, then everyone resets
 }
 
-/** First claim wins: a map item stays taken until the next round, a dropped gun is gone. */
+/** First claim wins: a map item comes back after ITEM_RESPAWN s (or next round), a dropped gun is gone. */
 function take(p, msg) {
   const room = p.room, id = clean(msg.id, 12);
   if (!p.alive || !id || room.taken.has(id) || (id.startsWith('d') && !room.drops.has(id)) || !/^[md]\d+$/.test(id)) return;
-  if (id.startsWith('d')) room.drops.delete(id); else room.taken.add(id);
+  if (id.startsWith('d')) room.drops.delete(id); else room.taken.set(id, now());
   broadcast(room, { t: 'took', id, by: p.id });
 }
 
@@ -149,16 +160,45 @@ function nextRound(room) {
   broadcast(room, { t: 'round', ...room.round, score: room.score });
 }
 
+/** The maps on the ballot (the current one included) and the votes so far. */
+function voteState(room) {
+  const options = room.maps.includes(room.mapId) || !room.mapId ? room.maps : [room.mapId, ...room.maps];
+  const tally = {};
+  for (const m of room.votes.values()) tally[m] = (tally[m] ?? 0) + 1;
+  return { options, tally, time: Math.max(0, room.endT) };
+}
+
 function end(room) {
   room.ended = true;
   room.endT = END_PAUSE;
-  broadcast(room, { t: 'end', score: room.score });
+  room.votes.clear();
+  broadcast(room, { t: 'end', score: room.score, vote: voteState(room) });
+}
+
+function vote(p, msg) {
+  const room = p.room, map = clean(msg.map, 32);
+  if (!room.ended || !voteState(room).options.includes(map)) return;
+  room.votes.set(p.id, map);
+  broadcast(room, { t: 'votes', tally: voteState(room).tally });
+}
+
+/** Most votes wins, ties drawn at random; nobody voted: the next map in the rotation. */
+function nextMap(room) {
+  const { options, tally } = voteState(room);
+  if (!options.length) return room.mapId;
+  const top = Math.max(0, ...Object.values(tally));
+  if (!top) return options[(options.indexOf(room.mapId) + 1) % options.length];
+  const best = options.filter((m) => tally[m] === top);
+  return best[(Math.random() * best.length) | 0];
 }
 
 function restart(room) {
+  const mapId = nextMap(room);
+  if (mapId !== room.mapId) { room.mapId = mapId; room.map = null; } // a custom map only lives until the vote moves on
   Object.assign(room, { ended: false, score: { a: 0, b: 0 }, time: MATCH_TIME, round: { n: 0, weapon: room.round?.weapon } });
+  room.votes.clear();
   for (const p of room.players.values()) { p.kills = 0; p.deaths = 0; }
-  broadcast(room, { t: 'restart', score: room.score, time: room.time });
+  broadcast(room, { t: 'restart', score: room.score, time: room.time, mapId: room.mapId });
   nextRound(room);
 }
 
@@ -168,15 +208,13 @@ function tick(dt) {
     if (room.ended) { if ((room.endT -= dt) <= 0) restart(room); }
     else if ((room.time -= dt) <= 0) { room.time = 0; end(room); }
     else if (room.pauseT > 0 && (room.pauseT -= dt) <= 0) nextRound(room);
-    const ps = [];
+    for (const [id, at] of room.taken) if (t - at > ITEM_RESPAWN) { room.taken.delete(id); broadcast(room, { t: 'back', id }); }
     for (const p of room.players.values()) {
-      if (p.alive && p.hp < MAX_HP && t - p.lastHurt > REGEN_DELAY) {
-        p.hp = Math.min(MAX_HP, p.hp + REGEN_RATE * dt);
-        send(p.ws, { t: 'hurt', ...vitals(p) });
-      }
-      if (p.state) ps.push({ id: p.id, al: p.alive, ...p.state });
+      if (!p.alive || p.hp >= MAX_HP || t - p.lastHurt <= REGEN_DELAY) continue;
+      p.hp = Math.min(MAX_HP, p.hp + REGEN_RATE * dt);
+      // a few updates a second is plenty for a health bar
+      if (p.hp === MAX_HP || p.hp - p.sentHp >= 3) { p.sentHp = p.hp; send(p.ws, { t: 'hurt', ...vitals(p) }); }
     }
-    if (ps.length) broadcast(room, { t: 'snap', ps });
   }
 }
 
@@ -207,11 +245,10 @@ wss.on('connection', (ws) => {
     if (!msg || typeof msg !== 'object') return;
     if (!p) { if (msg.t === 'hello') { clearTimeout(helloTimer); p = join(ws, msg); if (!p) ws.close(); } return; }
     switch (msg.t) {
-      case 's': {
-        const pos = vec(msg.p);
-        if (pos) p.state = { p: pos, v: vec(msg.v) ?? [0, 0, 0], y: +msg.y || 0, pi: +msg.pi || 0, w: msg.w | 0, st: clean(msg.st, 10), cr: msg.cr ? 1 : 0, ws: Math.sign(+msg.ws || 0), ads: msg.ads ? 1 : 0, rl: msg.rl ? 1 : 0 };
+      case 's':
+        if (Array.isArray(msg.q) && msg.q.length === 13 && msg.q.every(Number.isFinite)) broadcast(p.room, { t: 's', id: p.id, al: p.alive ? 1 : 0, q: msg.q }, p);
         break;
-      }
+      case 'vote': vote(p, msg); break;
       case 'fire':
         if (p.alive && vec(msg.o) && vec(msg.d)) broadcast(p.room, { t: 'fire', id: p.id, o: msg.o, d: msg.d, w: msg.w | 0, sup: !!msg.sup }, p);
         break;

@@ -5,7 +5,7 @@ import { Input } from './core/input.js';
 import { AudioBank } from './core/audio.js';
 import { TestRange } from './world/testRange.js';
 import { Dummies } from './world/dummies.js';
-import { Movement } from './player/movement.js';
+import { Movement, SPEED } from './player/movement.js';
 import { CameraRig } from './player/cameraRig.js';
 import { Viewmodel, addViewmodelLights } from './weapons/viewmodel.js';
 import { Gunplay } from './weapons/gunplay.js';
@@ -79,7 +79,7 @@ const MODES = [
     lobby: { server: /^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? 'ws://localhost:8787' : 'wss://bitter-canavar.tailb7f1ff.ts.net:8443', map: 'builtin-duel' },
     load: async (mapId, opts) => (await import('./net/online.js')).createOnline({
       scene, camera, audio, hud, mv, rig, arsenal, inv, vitals, getMap,
-      opts: { name: 'Player', room: 'duel', server: MODES.find((m) => m.id === 'online').lobby.server, char: selectedCharacter(), ...opts, mapId: mapId ?? 'builtin-duel' },
+      opts: { name: 'Player', room: 'duel', server: MODES.find((m) => m.id === 'online').lobby.server, char: selectedCharacter(), maps: listMaps().filter((m) => m.online).map((m) => m.id), ...opts, mapId: mapId ?? 'builtin-duel' },
       buildWorld: async (map) => (await import('./modes/editor/mapWorld.js')).buildMapWorld(scene, map),
     }),
   },
@@ -241,19 +241,26 @@ async function startMode(id, mapId = null, opts) {
     return;
   }
   if (level.frame) return; // the editor drives its own frame
-  level.pickups ??= new Pickups(scene, { octree: level.octree });
-  level.pickups.onGrant = (p) => { const drawn = inv.receive(p, current); if (drawn !== null) switchWeapon(drawn); };
-  inv.onDrop = (d) => level.pickups.release(d, dropPoint());
-  grenades = level.grenades = new Grenades(scene, { octree: level.octree, audio, camera, onBlast });
+  bindWorld();
+  level.onMap = bindWorld; // online: the map vote swapped the world under us
   handheld.setCharacter(selectedCharacter());
   vitals.reset();
   inv.reset(level.loadout);
   if (!inv.carries(current)) { vm.setActive(false); drawWeapon(inv.guns[0]); }
   iconsStale = true;
-  mv.octree = level.octree;
   mv.respawn(level.spawn);
   rig.yaw = level.spawn.yaw;
   rig.pitch = 0;
+}
+
+/** Hook the player up to the level's world: collision, pickups, grenades, what bullets can hit. */
+function bindWorld() {
+  level.pickups ??= new Pickups(scene, { octree: level.octree });
+  level.pickups.onGrant = (p) => { const drawn = inv.receive(p, current); if (drawn !== null) switchWeapon(drawn); };
+  inv.onDrop = (d) => level.pickups.release(d, dropPoint());
+  grenades?.dispose();
+  grenades = level.grenades = new Grenades(scene, { octree: level.octree, audio, camera, onBlast });
+  mv.octree = level.octree;
   targets = level.targets;
 }
 
@@ -414,7 +421,7 @@ function tick(dt) {
   if (view) { camera.position.set(...view.pos); camera.rotation.set((view.pitch ?? 0) * Math.PI / 180, (view.yaw ?? 0) * Math.PI / 180, 0); }
   camera.updateMatrixWorld();
   if (!live) prompt = null;
-  if (live) gun.update(dt, { input, mv, camera, targets, now, blocked: vm.inspect || vm.inspectEase > 0.25 || vm.swapping || pendingSwitch !== null || inv.busy || vm.holsterT > 0 || !inv.carries(current) });
+  if (live) gun.update(dt, { input, mv, camera, targets, octree: mv.octree, now, blocked: vm.inspect || vm.inspectEase > 0.25 || vm.swapping || pendingSwitch !== null || inv.busy || vm.holsterT > 0 || !inv.carries(current) });
   if (live) gunsmith.update(dt, input, rig.sensitivity);
 
   const ads = gun.adsEased;
@@ -432,8 +439,8 @@ function tick(dt) {
   hud.update(dt, { mv, gun, camera });
   vitalsHud.update(dt, { vitals, inv, prompt });
   audio.setLoops({
-    wind: THREE.MathUtils.clamp((mv.speed - 6) / 9, 0, 1) + (mv.state === 'air' ? Math.min(0.5, Math.abs(mv.vel.y) / 20) : 0),
-    scrape: mv.state === 'slide' ? Math.min(1, mv.speed / 10) : mv.state === 'wallrun' ? 0.35 : 0,
+    wind: THREE.MathUtils.clamp((mv.speed / SPEED - 6) / 9, 0, 1) + (mv.state === 'air' ? Math.min(0.5, Math.abs(mv.vel.y) / 20) : 0),
+    scrape: mv.state === 'slide' ? Math.min(1, mv.speed / SPEED / 10) : mv.state === 'wallrun' ? 0.35 : 0,
   });
 
   renderer.render(scene, camera, vmScene, vmCamera, { eyepiece: vm.eyepieceInfo(), focus: vm.inspectEase });

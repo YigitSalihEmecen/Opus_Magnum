@@ -59,6 +59,7 @@ export class Pickups {
     this.time = 0;
     this.dropN = 0;
     this.onGrant = () => {};
+    this.onTaken = () => {}; // someone else got it (online)
     spots.forEach((s, i) => this.#add({ id: `m${i}`, type: s.type, gun: s.gun, position: s.position, spot: true }));
   }
 
@@ -117,7 +118,7 @@ export class Pickups {
     if (!p.active || p.pending) return;
     if (!this.net) { this.take(p); this.onGrant(p); return; }
     p.pending = true;
-    p.pendingT = 0.6;
+    p.pendingT = 1.5; // a slow connection gets its answer before we ask again
     this.net.send({ t: 'take', id: p.id });
   }
 
@@ -126,17 +127,31 @@ export class Pickups {
     const p = this.byId(id);
     if (!p) return;
     const snapshot = { ...p };
+    const was = p.active;
     this.take(p);
     if (mine) this.onGrant(snapshot);
+    else if (was) this.onTaken(snapshot);
+  }
+
+  /** A map item is back (online: the server's respawn timer). */
+  restore(id) {
+    const p = this.byId(id);
+    if (p && !p.active) this.#show(p);
+  }
+
+  #show(p) {
+    p.active = true;
+    p.pending = false;
+    p.obj.visible = true;
+    p.pop = 0;
   }
 
   /** Everything back: map items in place, drops gone (new round). */
   reset() {
     for (const p of [...this.list]) {
       if (!p.spot) { this.group.remove(p.obj); this.list.splice(this.list.indexOf(p), 1); continue; }
-      p.active = true;
+      if (!p.active) this.#show(p);
       p.pending = false;
-      p.obj.visible = true;
     }
   }
 
@@ -166,13 +181,19 @@ export class Pickups {
     for (const p of this.list) {
       if (p.pending && (p.pendingT -= dt) <= 0) p.pending = false; // no answer: allow another try
       if (!p.active) {
-        if (p.spot && !this.net && (p.t -= dt) <= 0) { p.active = true; p.obj.visible = true; }
+        if (p.spot && !this.net && (p.t -= dt) <= 0) this.#show(p);
         continue;
       }
       if (!p.spot && (p.life -= dt) <= 0) { this.take(p); continue; }
       const ph = this.time + p.phase;
       p.model.position.y = HOVER + Math.sin(ph * 2.1) * BOB;
       p.model.rotation.y = ph * SPIN;
+      if (p.pop !== undefined && p.pop < 1) {
+        // back in play: a quick overshooting grow so it catches the eye
+        p.pop = Math.min(1, p.pop + dt * 2.5);
+        const x = p.pop - 1;
+        p.obj.scale.setScalar(1 + 2.7 * x * x * x + 1.7 * x * x);
+      }
     }
     for (const m of ringMats.values()) m.disc.opacity = 0.13 + 0.05 * Math.sin(this.time * 3);
   }

@@ -46,3 +46,14 @@
 .tdm-end .final .enemy { color: #b4532f; }
 .tdm-end .actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
 .tdm-end .btn.ghost { background: var(--ivory); }
+
+/* online: next-map ballot on the end card */
+.tdm-end .vote { display: grid; gap: 10px; margin: -6px 0 24px; }
+.tdm-end .vote-maps { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+.tdm-end .vote button { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 4px 10px; padding: 12px 14px 10px; text-align: left; background: var(--ivory); border: var(--border); box-shadow: 3px 3px 0 var(--ink); font: inherit; color: var(--ink); cursor: pointer; transition: transform 0.12s, box-shadow 0.12s; }
+.tdm-end .vote button:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--ink); }
+.tdm-end .vote button.mine { background: var(--clay); }
+.tdm-end .vote kbd { grid-row: span 2; display: grid; place-items: center; width: 24px; height: 24px; border: var(--border); font: 800 12px/1 var(--mono); background: var(--pampas, #f0eee6); }
+.tdm-end .vote b { font: italic 600 22px/1 var(--serif); }
+.tdm-end .vote span { font: 700 10px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--cloud); min-height: 10px; }
+.tdm-end .vote em { grid-column: 1 / -1; font: 800 14px/1 var(--mono); font-style: normal; letter-spacing: 0.2em; color: var(--ink); }

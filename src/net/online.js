@@ -11,12 +11,19 @@ import { Pickups } from '../items/pickups.js';
   This client owns its movement and hit detection; the server owns HP, armour, kills, score, the clock and who
   got which pickup (claims go up as take/drop, answers come back as took/dropped). Grenades are simulated on
   every client; only the thrower's client reports what its blast hit.
-  Other players are drawn INTERP ms in the past, between the two snapshots around that moment.
+  Poses go out SEND_HZ times a second stamped with the sender's clock, and the server relays them at once.
+  Each remote keeps the smallest (arrival - sender time) it has seen as its clock offset, so its poses are
+  replayed on the sender's own even timeline, INTERP ms behind, instead of on bunched-up arrival times; when
+  the stream stalls it coasts on the last velocity for a moment rather than freezing.
+  After a match the server runs a map vote; a new map is swapped in place (onMap lets main.js rebind).
   Delete src/net/ and its MODES entry in main.js to remove multiplayer.
 */
 
+export const PROTOCOL = 2; // server/index.js PROTOCOL
 const SEND_HZ = 30;
-const INTERP = 100;
+const INTERP = 80;
+const COAST = 120; // ms of extrapolation past the newest pose
+const STATES = ['ground', 'air', 'slide', 'wallrun', 'mantle', 'vault'];
 
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3();
 const _ray = new THREE.Ray();
@@ -44,32 +51,46 @@ function connect(url, hello) {
 
 export async function createOnline({ opts, getMap, buildWorld, ...ctx }) {
   const local = getMap(opts.mapId);
-  const hello = { name: opts.name, room: opts.room, char: opts.char, weapons: WEAPONS.length, mapId: opts.mapId, map: local && !local.builtin ? local : undefined };
+  const hello = { v: PROTOCOL, name: opts.name, room: opts.room, char: opts.char, weapons: WEAPONS.length, mapId: opts.mapId, maps: opts.maps, map: local && !local.builtin ? local : undefined };
   const { ws, welcome, queue } = await connect(opts.server, hello);
   const map = welcome.map ?? getMap(welcome.mapId) ?? local;
   const arena = await buildWorld(map);
-  return new Online({ ...ctx, ws, welcome, queue, arena });
+  return new Online({ ...ctx, ws, welcome, queue, arena, getMap, buildWorld, mapId: welcome.mapId });
 }
 
 /** Another player: the TDM bot body, posed from snapshots; hits on it are reported to the server. */
 class Remote extends Bot {
   constructor(net, info) {
     super(net, { team: info.team === net.team ? 'ally' : 'enemy', name: info.name, gun: 'rifle', skill: 0, char: info.char });
-    Object.assign(this, { id: info.id, hopY: 0, phase: 0, reloadT: 0, buf: [], lastStep: 0, poseTarget: {} });
+    Object.assign(this, { id: info.id, hopY: 0, phase: 0, reloadT: 0, buf: [], lastStep: 0, poseTarget: {}, off: null });
     this.alive = info.alive;
     this.root.visible = false; // until the first snapshot places it
   }
 
+  /** Pellets and same-frame hits add up here; Online sends them as one hit per frame. */
   damage(amount, zone) {
     if (!this.alive || this.team === 'ally') return null;
-    this.world.send({ t: 'hit', id: this.id, zone, dmg: amount });
+    const h = (this.pending ??= { dmg: 0, head: false });
+    h.dmg += amount;
+    h.head ||= zone === 'head';
     return { killed: false };
   }
 
-  push(s, t) {
-    if (s.al && !this.alive) this.revive();
-    this.buf.push({ t, p: new THREE.Vector3(...s.p), v: new THREE.Vector3(...s.v), y: s.y, pi: s.pi, w: s.w, st: s.st, cr: s.cr, ws: s.ws, ads: s.ads, rl: s.rl });
-    if (this.buf.length > 30) this.buf.shift();
+  flushHits() {
+    if (!this.pending) return;
+    this.world.send({ t: 'hit', id: this.id, zone: this.pending.head ? 'head' : 'body', dmg: Math.round(this.pending.dmg * 10) / 10 });
+    this.pending = null;
+  }
+
+  /** A pose from the wire (see PROTOCOL in server/index.js); arrival is our clock when it landed. */
+  push(q, al, arrival) {
+    if (al && !this.alive) this.revive();
+    const t = q[12], last = this.buf.at(-1);
+    if (last && t <= last.t) return; // late or repeated
+    const off = arrival - t;
+    if (this.off === null || off < this.off) this.off = off;
+    this.buf.push({ t, p: new THREE.Vector3(q[0], q[1], q[2]), v: new THREE.Vector3(q[3], q[4], q[5]), y: q[6], pi: q[7], w: q[8], st: STATES[q[9]] ?? 'ground', cr: q[10] & 1, ads: (q[10] >> 1) & 1, rl: (q[10] >> 2) & 1, ws: q[11] });
+    if (this.buf.length > 40) this.buf.shift();
     this.root.visible ||= this.alive;
   }
 
@@ -87,15 +108,26 @@ class Remote extends Bot {
     this.fallDir = dir ? Math.atan2(dir.x, dir.z) - this.aimYaw : Math.PI;
   }
 
-  update(dt, t) {
+  update(dt, now) {
     const buf = this.buf;
+    // the offset creeps up slowly so a route that got slower is followed; any faster pose pulls it back down
+    if (this.off !== null) this.off += dt * 2;
     if (buf.length && this.alive) {
+      const t = now - this.off - INTERP;
       let i = buf.length - 1;
       while (i > 0 && buf[i - 1].t > t) i--;
       const a = buf[Math.max(0, i - 1)], b = buf[i];
       const k = b.t > a.t ? THREE.MathUtils.clamp((t - a.t) / (b.t - a.t), 0, 1) : 1;
-      this.pos.lerpVectors(a.p, b.p, k);
-      this.vel.lerpVectors(a.v, b.v, k);
+      if (t > b.t) {
+        // stream behind: coast along the last velocity for a moment
+        this.pos.copy(b.p).addScaledVector(b.v, Math.min(t - b.t, COAST) / 1000);
+        this.vel.copy(b.v);
+      } else {
+        // a jump of metres between poses is a respawn or a teleport: snap, don't slide
+        const kp = a.p.distanceToSquared(b.p) < 16 ? k : 1;
+        this.pos.lerpVectors(a.p, b.p, kp);
+        this.vel.lerpVectors(a.v, b.v, kp);
+      }
       this.aimYaw = lerpAngle(a.y, b.y, k);
       this.aimPitch = a.pi + (b.pi - a.pi) * k;
       if (WEAPONS[b.w]) this.holdWeapon(WEAPONS[b.w]);
@@ -120,18 +152,17 @@ class Remote extends Bot {
 }
 
 class Online {
-  constructor({ scene, camera, audio, hud, mv, rig, arsenal, inv, vitals, ws, welcome, queue, arena }) {
-    Object.assign(this, { scene, camera, audio, hud, mv, rig, arsenal, inv, vitals, ws, arena });
+  constructor({ scene, camera, audio, hud, mv, rig, arsenal, inv, vitals, ws, welcome, queue, arena, getMap, buildWorld, mapId }) {
+    Object.assign(this, { scene, camera, audio, hud, mv, rig, arsenal, inv, vitals, ws, getMap, buildWorld });
     vitals.serverOwned = true;
     vitals.sync = (op, v) => this.send({ t: 'vit', op, v });
-    this.pickups = new Pickups(scene, { octree: arena.octree, spots: arena.pickups, net: this });
+    this.onMap = () => {};
+    this.#setArena(arena, mapId);
     for (const id of welcome.items?.taken ?? []) this.pickups.take(this.pickups.byId(id));
     for (const d of welcome.items?.drops ?? []) this.pickups.drop({ gun: d.w, ammo: d.ammo, reserve: d.reserve }, new THREE.Vector3(...d.p), d.id);
     this.id = welcome.id;
     this.team = welcome.team;
     this.foe = this.team === 'a' ? 'b' : 'a';
-    this.mapName = arena.name ?? 'Online';
-    this.octree = arena.octree;
     this.fx = new WorldFX(scene);
     this.limit = welcome.limit;
     this.score = welcome.score;
@@ -152,11 +183,45 @@ class Online {
     this.spawn = this.#pickSpawn();
     this.#refreshTargets();
     this.#score();
-    if (welcome.ended) this.#end(this.score);
+    if (welcome.ended) this.#end(this.score, welcome.vote);
 
-    ws.onmessage = (e) => this.#on(JSON.parse(e.data));
+    this.inbox = null; // set while a new map loads: messages wait in it
+    ws.onmessage = (e) => { const m = JSON.parse(e.data); if (this.inbox) this.inbox.push(m); else this.#on(m); };
     ws.onclose = () => this.#lost();
     for (const m of queue) this.#on(m);
+    this.onKey = (e) => {
+      const n = Number(e.code.match(/^Digit(\d)$/)?.[1]);
+      if (this.ended && this.vote && n >= 1) this.#vote(this.vote.options[n - 1]);
+    };
+    addEventListener('keydown', this.onKey);
+  }
+
+  #setArena(arena, mapId) {
+    this.arena = arena;
+    this.mapId = mapId;
+    this.mapName = arena.name ?? this.getMap(mapId)?.name ?? 'Online';
+    this.octree = arena.octree;
+    this.pickups = new Pickups(this.scene, { octree: arena.octree, spots: arena.pickups, net: this });
+    this.pickups.onTaken = (p) => this.#heard(p.pos, 'magIn', 0.35);
+  }
+
+  /** The vote moved the room to another map: tear this one down and build that one where we stand. */
+  async #changeMap(mapId) {
+    this.inbox = [];
+    const map = this.getMap(mapId);
+    if (map) {
+      const onGrant = this.pickups.onGrant;
+      this.arena.dispose();
+      this.pickups.dispose();
+      this.#setArena(await this.buildWorld(map), mapId);
+      this.pickups.onGrant = onGrant;
+      for (const r of this.remotes.values()) r.buf.length = 0;
+      this.#refreshTargets();
+      this.onMap();
+    } else this.ui.toast('Unknown map: reload to update the game');
+    const waiting = this.inbox;
+    this.inbox = null;
+    for (const m of waiting) this.#on(m);
   }
 
   get playerAlive() { return this.alive; }
@@ -172,6 +237,7 @@ class Online {
   send(msg) { if (this.ws.readyState === 1) this.ws.send(JSON.stringify(msg)); }
 
   dispose() {
+    removeEventListener('keydown', this.onKey);
     this.ws.onclose = null;
     this.ws.close();
     this.arena.dispose();
@@ -222,9 +288,7 @@ class Online {
   #on(m) {
     const now = performance.now();
     switch (m.t) {
-      case 'snap':
-        for (const s of m.ps) this.remotes.get(s.id)?.push(s, now);
-        break;
+      case 's': this.remotes.get(m.id)?.push(m.q, m.al, now); break;
       case 'join':
         this.#add(m.player);
         this.#refreshTargets();
@@ -283,16 +347,23 @@ class Online {
         this.#respawn();
         this.ui.toast(`Round ${m.n} · ${WEAPONS[m.weapon]?.name ?? ''}`);
         break;
-      case 'end': this.#end(m.score); break;
+      case 'end': this.#end(m.score, m.vote); break;
+      case 'votes':
+        if (this.vote) { this.vote.tally = m.tally; this.#drawVote(); }
+        break;
       case 'restart':
         for (const s of this.stats.values()) { s.kills = 0; s.deaths = 0; }
         this.ended = false;
+        this.vote = null;
         this.score = m.score;
         this.time = m.time;
         this.ui.el.end.hidden = true;
         this.#score();
+        if (!document.pointerLockElement) this.ui.toast('Click to play');
+        if (m.mapId && m.mapId !== this.mapId) this.#changeMap(m.mapId);
         break;
       case 'took': this.pickups.grant(m.id, m.by === this.id); break;
+      case 'back': this.pickups.restore(m.id); break;
       case 'dropped': this.pickups.drop({ gun: m.w, ammo: m.ammo, reserve: m.reserve }, new THREE.Vector3(...m.p), m.id); break;
       case 'nade': this.grenades?.spawn(new THREE.Vector3(...m.p), new THREE.Vector3(...m.v), { mine: false, fuse: m.f }); break;
       case 'pong': this.rtt = performance.now() - m.c; break;
@@ -318,6 +389,16 @@ class Online {
     _c.subVectors(_a, cam).normalize();
     _b.setFromMatrixColumn(this.camera.matrixWorld, 0);
     this.audio.play(WEAPONS[m.w]?.sound ?? 'fire', { volume: vol, pan: THREE.MathUtils.clamp(_c.dot(_b), -1, 1) * 0.8, rate: 0.96 + Math.random() * 0.08 });
+  }
+
+  /** A sound at a world position, quieter with distance and panned. */
+  #heard(pos, name, volume, range = 24) {
+    const cam = this.camera.position, d = pos.distanceTo(cam);
+    const vol = volume * Math.pow(THREE.MathUtils.clamp(1 - d / range, 0, 1), 1.6);
+    if (vol < 0.01) return;
+    _c.subVectors(pos, cam).normalize();
+    _b.setFromMatrixColumn(this.camera.matrixWorld, 0);
+    this.audio.play(name, { volume: vol, pan: THREE.MathUtils.clamp(_c.dot(_b), -1, 1) * 0.7 });
   }
 
   /** A remote player's footstep, quieter with distance and panned. */
@@ -349,6 +430,7 @@ class Online {
     this.mv.respawn(s);
     this.rig.yaw = s.yaw;
     this.rig.pitch = 0;
+    this.drowned = false;
     this.inv.reset(this.loadout);
     this.vitals.reset();
     this.pickups.reset();
@@ -357,12 +439,46 @@ class Online {
     this.ui.hurt(1, null);
   }
 
-  #end(score) {
+  #end(score, vote) {
     this.ended = true;
     this.score = score;
     const me = score[this.team], them = score[this.foe];
     this.ui.end(me > them ? 'win' : me < them ? 'loss' : 'draw', { ally: me, enemy: them }, this.mapName);
-    this.ui.el.end.querySelector('.label.end-map').textContent = `Match over · ${this.mapName} · next round in a few seconds`;
+    this.ui.el.end.querySelector('.again').hidden = true;
+    this.vote = vote?.options?.length ? { ...vote, mine: null, endsAt: performance.now() + vote.time * 1000 } : null;
+    this.#drawVote();
+    if (document.pointerLockElement) document.exitPointerLock(); // free the mouse for the ballot
+  }
+
+  #vote(map) {
+    if (!map || !this.vote) return;
+    this.vote.mine = map;
+    this.send({ t: 'vote', map });
+    this.#drawVote();
+  }
+
+  /** The ballot on the end card: one button per map, its key, its votes; yours is marked. */
+  #drawVote() {
+    const sec = this.ui.el.end.querySelector('section');
+    let box = sec.querySelector('.vote');
+    if (!this.vote) { box?.remove(); return; }
+    if (!box) {
+      box = document.createElement('div');
+      box.className = 'vote';
+      box.addEventListener('click', (e) => this.#vote(e.target.closest('button')?.dataset.map));
+      sec.insertBefore(box, sec.querySelector('.actions'));
+    }
+    const { options, tally, mine } = this.vote;
+    box.innerHTML = `<div class="label">Vote for the next map <span class="vote-t"></span></div><div class="vote-maps">${options.map((id, i) => {
+      const n = tally[id] ?? 0;
+      return `<button type="button" data-map="${id}" class="${id === mine ? 'mine' : ''}"><kbd>${i + 1}</kbd><b>${this.getMap(id)?.name ?? id}</b><span>${id === this.mapId ? 'again' : ''}</span><em>${'●'.repeat(n) || '·'}</em></button>`;
+    }).join('')}</div>`;
+    this.#voteClock();
+  }
+
+  #voteClock() {
+    const el = this.vote && this.ui.el.end.querySelector('.vote-t');
+    if (el) el.textContent = `· ${Math.max(0, Math.ceil((this.vote.endsAt - performance.now()) / 1000))} s`;
   }
 
   #lost() {
@@ -379,7 +495,10 @@ class Online {
 
     const mv = this.mv;
     if (this.alive) {
-      if (mv.feet.y < -20) { mv.respawn(this.spawn); this.rig.yaw = this.spawn.yaw; }
+      if (this.arena.killY !== undefined && mv.feet.y < this.arena.killY) {
+        // in the water: that's the round (once; the server's kill takes it from here)
+        if (!this.drowned) { this.drowned = true; this.send({ t: 'hit', id: this.id, zone: 'fall', dmg: 999 }); this.audio.play('land', { volume: 0.6, rate: 0.5 }); }
+      } else if (mv.feet.y < -20) { mv.respawn(this.spawn); this.rig.yaw = this.spawn.yaw; }
       if (gun && gun.sinceShot === 0) {
         camera.getWorldDirection(_a);
         this.send({ t: 'fire', o: round(camera.position), d: round(_a), w: this.arsenal.findIndex((x) => x.gun === gun), sup: !!gun.stats.suppressed });
@@ -389,16 +508,20 @@ class Online {
       this.ui.death(this.killer, Math.max(0, 2.2 - this.deathT));
     }
 
+    // a steady cadence: carry the remainder over instead of restarting the timer each send
     if ((this.sendT -= dt) <= 0) {
-      this.sendT = 1 / SEND_HZ;
+      this.sendT = Math.max(0, this.sendT + 1 / SEND_HZ);
       const w = this.arsenal.findIndex((x) => x.gun === gun);
       const g = this.arsenal[w];
-      this.send({ t: 's', p: round(mv.feet), v: round(mv.vel), y: +(this.rig.yaw + Math.PI).toFixed(3), pi: +this.rig.pitch.toFixed(3), w, st: mv.state, cr: mv.crouched ? 1 : 0, ws: mv.wallSide, ads: g && g.gun.adsEased > 0.5 ? 1 : 0, rl: g && g.vm.reloading ? 1 : 0 });
+      const f = (mv.crouched ? 1 : 0) | (g && g.gun.adsEased > 0.5 ? 2 : 0) | (g && g.vm.reloading ? 4 : 0);
+      const r2 = (x) => Math.round(x * 100) / 100, r3 = (x) => Math.round(x * 1000) / 1000;
+      this.send({ t: 's', q: [r3(mv.feet.x), r3(mv.feet.y), r3(mv.feet.z), r2(mv.vel.x), r2(mv.vel.y), r2(mv.vel.z), r3(this.rig.yaw + Math.PI), r3(this.rig.pitch), w, Math.max(0, STATES.indexOf(mv.state)), f, mv.wallSide || 0, Math.round(performance.now())] });
     }
     if ((this.pingT -= dt) <= 0) { this.pingT = 2; this.send({ t: 'ping', c: performance.now() }); }
 
-    const t = performance.now() - INTERP;
-    for (const r of this.remotes.values()) r.update(dt, t);
+    const now = performance.now();
+    for (const r of this.remotes.values()) { r.flushHits(); r.update(dt, now); }
+    if (this.ended) this.#voteClock();
     this.fx.update(dt, camera);
     this.ui.update(dt, { ally: 0, enemy: 0 }, this.time);
     const wpn = WEAPONS[this.round?.weapon]?.name;
