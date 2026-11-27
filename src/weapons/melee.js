@@ -48,7 +48,7 @@ function sample(keys, t) {
 export class Melee {
   constructor({ audio, hud, fx, rig }) {
     Object.assign(this, { audio, hud, fx, rig });
-    this.action = null; // { id: 'knife', kind: 'melee', t, time, pose }
+    this.action = null; // { id: 'knife', kind: 'melee', name (the swing), t, time, pose }
     this.side = 0; // which way the next slash goes
     this.wait = 0;
   }
@@ -58,10 +58,11 @@ export class Melee {
   /** ctx: { camera, targets, octree } — someone close in front gets the stab. */
   start(ctx) {
     if (this.action || this.wait > 0) return false;
-    let s;
-    if (ctx && this.#fan(SWINGS.stab, ctx, MELEE.range - 0.3)) s = SWINGS.stab;
-    else s = (this.side ^= 1) ? SWINGS.slashLeft : SWINGS.slashRight;
-    this.action = { id: 'knife', kind: 'melee', t: 0, time: s.time, swing: s, pose: REST, struck: false };
+    let name;
+    if (ctx && this.#fan(SWINGS.stab, ctx, MELEE.range - 0.3)) name = 'stab';
+    else name = (this.side ^= 1) ? 'slashLeft' : 'slashRight';
+    const s = SWINGS[name];
+    this.action = { id: 'knife', kind: 'melee', name, t: 0, time: s.time, swing: s, pose: REST, struck: false };
     this.audio.play('cloth', { volume: 0.35, rate: 1.3 });
     return true;
   }

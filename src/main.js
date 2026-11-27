@@ -81,7 +81,7 @@ const MODES = [
     id: 'online', index: '03 / ONLINE', title: 'Multiplayer', short: 'Play with friends', accent: '#6b6a4f',
     lobby: { server: /^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? 'ws://localhost:8787' : 'wss://bitter-canavar.tailb7f1ff.ts.net:8443', map: 'builtin-duel' },
     load: async (mapId, opts) => (await import('./net/online.js')).createOnline({
-      scene, camera, audio, hud, mv, rig, arsenal, inv, vitals, getMap,
+      scene, camera, audio, hud, mv, rig, arsenal, inv, melee, vitals, getMap,
       opts: { name: 'Player', room: 'duel', server: MODES.find((m) => m.id === 'online').lobby.server, char: selectedCharacter(), maps: listMaps().filter((m) => m.online).map((m) => m.id), ...opts, mapId: mapId ?? 'builtin-duel' },
       buildWorld: async (map) => (await import('./maps/mapWorld.js')).buildMapWorld(scene, map),
     }),

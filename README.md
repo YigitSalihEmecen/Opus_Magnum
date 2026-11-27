@@ -59,6 +59,7 @@ src/
                           torso to the aim, leans), flash, marker, death fall (bots and online players drive one)
     motion.js             captured motion mapped onto our rigs and blended (bone turns from rest pose)
     smooth.js             springs + inertializer: no input or pose change ever snaps on a body
+    actions.js            the free hand's moves others see: knife swings, grenade throw, using a heal
     motion.data.js        generated: Quaternius Universal Animation Library clips (CC0), trimmed and packed
   weapons/
     weapons.js            ★ weapon definitions: stats, recoil, hand poses, slots (start here)

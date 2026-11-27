@@ -6,6 +6,7 @@ import { buildCharacter } from './characters.js';
 import { WEAPONS } from '../weapons/weapons.js';
 import { Motion, BONES } from './motion.js';
 import { Spring, Inertializer } from './smooth.js';
+import { HandActs } from './actions.js';
 
 /*
   A character in the world holding a gun: the robot body, the third-person gun with its muzzle flash, the
@@ -16,7 +17,8 @@ import { Spring, Inertializer } from './smooth.js';
   stride phase matched to its real speed (run backwards when backpedalling), crouch, air, slide, climbing,
   vaulting (built here from the tucked jump: push off, legs swing aside over a planted hand, land), landing and
   flinching — then shaped in code: the legs turn toward travel while the torso stays on the aim,
-  the body leans into speed, acceleration and turns, and the hands stay on the gun.
+  the body leans into speed, acceleration and turns, and the hands stay on the gun — unless the left one is busy
+  (actions.js: a knife swing, a throw, a heal). The gun kicks when it fires, dips to reload and to swap.
   Nothing snaps (smooth.js): every input (aim, speed, stance, leans, the reload hand) follows its target on a
   spring, one-shot clips fade in from zero, and the finished pose passes an inertializer that eases out any
   jump that still gets through. A respawn is the one cut.
@@ -24,8 +26,7 @@ import { Spring, Inertializer } from './smooth.js';
 
 const NO_POSE = {};
 const POSE_KEYS = ['crouch', 'slide', 'air', 'ads', 'mantle', 'vault'];
-const NO_POSE_W = Object.fromEntries(POSE_KEYS.map((k) => [k, 0]));
-const HL = { aim: 0.045, speed: 0.09, pose: 0.07, legs: 0.07, lean: 0.1, hand: 0.06 }; // spring halflives (s)
+const HL = { aim: 0.045, speed: 0.09, pose: 0.07, legs: 0.07, lean: 0.1, hand: 0.06, reload: 0.08, swap: 0.07, kick: 0.05 }; // spring halflives (s)
 const STANCE = -0.5; // torso bladed (left shoulder forward) behind the rifle
 const G = {
   flash: new THREE.PlaneGeometry(0.34, 0.34),
@@ -94,8 +95,10 @@ export class Avatar {
     this.plant = { matrix: new THREE.Matrix4(), k: 0, curl: 0.55, fixed: false };
     r.root.updateWorldMatrix(true, true);
     this.footRest = b.foot_L.getWorldPosition(new THREE.Vector3()).y; // the foot bone's height standing
-    this.sm = Object.fromEntries(['yaw', 'pitch', 'speed', 'legYaw', 'leanX', 'leanY', 'hand', ...POSE_KEYS].map((k) => [k, new Spring()]));
-    this.poseW = { ...NO_POSE_W };
+    this.sm = Object.fromEntries(['yaw', 'pitch', 'speed', 'legYaw', 'leanX', 'leanY', 'hand', 'reload', 'swap', 'kick', ...POSE_KEYS].map((k) => [k, new Spring()]));
+    this.hands = new HandActs(r.arms.L.hand);
+    this.lastFlashT = 0;
+    this.poseW = Object.fromEntries(POSE_KEYS.map((k) => [k, 0]));
     this.inert = new Inertializer(BONES);
 
     // the gun pitches with the aim from the right shoulder; both hands are solved onto its grips every frame
@@ -130,8 +133,17 @@ export class Avatar {
     this.root.visible = false;
   }
 
-  /** Swap the third-person gun model (built once per weapon, kept for later swaps). */
+  /** Swap the third-person gun model (built once per weapon, kept for later swaps). A body in play lowers the gun
+   *  first and brings the new one up (see animate); otherwise it's instant. */
   holdWeapon(def) {
+    if (this.live && this.weapon && this.root.visible) {
+      this.swapTo = def === this.weapon ? null : def;
+      return;
+    }
+    this.#swap(def);
+  }
+
+  #swap(def) {
     if (this.weapon === def) return;
     if (this.weapon) this.guns.get(this.weapon.id).visible = false;
     let gun = this.guns.get(def.id);
@@ -285,10 +297,18 @@ export class Avatar {
     const skim = Math.max(w.vault, w.mantle);
     if (skim > 0.01) this.#skim(skim);
 
+    // a new gun: down out of sight, swapped at the bottom, back up
+    if (this.swapTo && this.sm.swap.x > 0.92) { this.#swap(this.swapTo); this.swapTo = null; }
+    this.sm.swap.to(this.swapTo ? 1 : 0, HL.swap, dt);
+    // a shot (the muzzle flash was just lit): the gun kicks up and settles
+    if (this.flashT > this.lastFlashT) this.sm.kick.v += 7;
+    this.sm.kick.to(0, HL.kick, dt);
+
     this.dt = dt;
     this.#holdGun(w);
 
     this.flashT -= dt;
+    this.lastFlashT = this.flashT;
     this.flashMesh.visible = this.flashT > 0;
     this.flash = Math.max(0, (this.flash ?? 0) - dt);
     const e = this.flash > 0 ? 0.5 : 0;
@@ -313,14 +333,25 @@ export class Avatar {
     this.arms.quaternion.copy(this.motion.world.chest).invert().multiply(_lean).multiply(_aim);
     // aiming: the gun comes up to the eye line and in toward the centre
     this.arms.position.set(-0.1 + w.ads * 0.05, 0.24 + w.ads * 0.1, 0.02 + w.ads * 0.04);
-    // reload: gun dips and rolls, the support hand goes to the magazine; sliding tips it up
-    const rl = this.reloadT > 0 ? Math.sin(Math.min(1, this.reloadT / this.reloadTime) * Math.PI) : 0;
-    this.arms.quaternion.multiply(_aim.setFromEuler(_e.set(rl * 0.6 + w.slide * 0.3, 0, rl * 0.5)));
+    // reload: gun dips and rolls, the support hand goes to the magazine; sliding tips it up; swapping lowers it
+    // out of sight; a shot kicks it up; a busy left hand (knife, grenade, heal) dips it out of the way
+    const dt = this.dt ?? 1 / 60;
+    const rl = this.sm.reload.to(this.reloadT > 0 ? Math.sin(Math.min(1, this.reloadT / this.reloadTime) * Math.PI) : 0, HL.reload, dt);
+    this.motion.bones.chest.getWorldPosition(_v1);
+    const H = this.hands.update(dt, _v1, this.root.rotation.y), swap = this.sm.swap.x;
+    this.arms.quaternion.multiply(_aim.setFromEuler(_e.set(rl * 0.6 + w.slide * 0.3 + swap * 1.1 + H.dip - this.sm.kick.x, 0, rl * 0.5)));
+    this.arms.position.y -= swap * 0.18;
     // the support hand travels between the grip and the magazine rather than jumping
-    const poses = this.weapon.poses, k = this.sm.hand.to(rl > 0.3 && poses.lhMag ? 1 : 0, HL.hand, this.dt ?? 1 / 60);
+    const poses = this.weapon.poses, k = this.sm.hand.to(rl > 0.3 && poses.lhMag ? 1 : 0, HL.hand, dt);
     for (let i = 0; i < 7; i++) _hand[i] = poses.lhRest[i] + ((poses.lhMag ?? poses.lhRest)[i] - poses.lhRest[i]) * k;
-    gripGun(this.robot, this.gunFrame, poses, { left: _hand, leftTo: this.#plantHand() });
+    gripGun(this.robot, this.gunFrame, poses, { left: _hand, leftTo: this.#plantHand() ?? (H.k > 0 ? H : null) });
   }
+
+  /** The free hand does something others should see: a knife swing ('slashLeft', 'slashRight', 'stab'), a
+   *  grenade 'throw', or 'use' an item (its id) until stopAct(). */
+  act(name, item) { this.hands.act(name, item); }
+
+  stopAct() { this.hands.stop(); }
 
   /**
    * A vault starts: find what's being vaulted and where the left hand grabs it. Looking ahead along the travel,
@@ -366,21 +397,13 @@ export class Avatar {
     return P;
   }
 
-  /** One clip exactly as authored, t seconds in, nothing layered on (the animation gallery). */
-  showClip(name, t) {
-    this.root.position.copy(this.pos);
-    this.root.rotation.y = this.aimYaw;
-    this.body.rotation.set(0, 0, 0);
-    this.motion.blend([{ clip: name, t, w: 1 }]).apply();
-    this.#holdGun(NO_POSE_W);
-  }
-
   /** Topple away from the killing shot (fallDir), then sink and hide. */
   animateDeath(dt) {
     if (!this.root.visible) return;
     if (this.live) {
       // the fall starts from the lean it died in
       this.live = false;
+      this.hands.clear();
       this.deathFrom = { x: this.body.rotation.x, z: this.body.rotation.z };
     }
     this.deathT += dt;

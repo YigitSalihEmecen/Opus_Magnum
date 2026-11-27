@@ -20,7 +20,7 @@ import { Pickups } from '../items/pickups.js';
   Delete src/net/ and its MODES entry in main.js to remove multiplayer.
 */
 
-export const PROTOCOL = 3; // server/index.js PROTOCOL
+export const PROTOCOL = 4; // server/index.js PROTOCOL
 const SEND_HZ = 30;
 const INTERP = 80;
 const COAST = 120; // ms of extrapolation past the newest pose
@@ -65,7 +65,7 @@ export async function createOnline({ opts, getMap, buildWorld, ...ctx }) {
 class Remote extends Avatar {
   constructor(net, info) {
     super({ team: info.team === net.team ? 'ally' : 'enemy', name: info.name, char: info.char });
-    Object.assign(this, { world: net, id: info.id, buf: [], lastStep: 0, poseTarget: {}, off: null });
+    Object.assign(this, { world: net, id: info.id, buf: [], lastStep: 0, poseTarget: {}, off: null, rlWas: false });
     this.alive = info.alive;
     this.root.visible = false; // until the first snapshot places it
   }
@@ -143,7 +143,11 @@ class Remote extends Avatar {
       p.mantle = b.st === 'mantle' ? 1 : 0;
       p.vault = b.st === 'vault' ? 1 : 0;
       p.ads = b.ads ? 1 : 0;
-      this.reloadT = b.rl ? this.reloadTime * 0.5 : 0;
+      // a reload plays through from when it began (the body eases out if it's cut short)
+      if (b.rl && !this.rlWas) this.reloadT = this.reloadTime;
+      else if (!b.rl) this.reloadT = 0;
+      else this.reloadT = Math.max(0.05, this.reloadT - dt);
+      this.rlWas = !!b.rl;
       // footsteps on the gait, only while running on something
       const step = Math.floor(this.phase / Math.PI);
       if (step !== this.lastStep) {
@@ -156,8 +160,9 @@ class Remote extends Avatar {
 }
 
 class Online {
-  constructor({ scene, camera, audio, hud, mv, rig, arsenal, inv, vitals, ws, welcome, queue, arena, getMap, buildWorld, mapId }) {
-    Object.assign(this, { scene, camera, audio, hud, mv, rig, arsenal, inv, vitals, ws, getMap, buildWorld });
+  constructor({ scene, camera, audio, hud, mv, rig, arsenal, inv, melee, vitals, ws, welcome, queue, arena, getMap, buildWorld, mapId }) {
+    Object.assign(this, { scene, camera, audio, hud, mv, rig, arsenal, inv, melee, vitals, ws, getMap, buildWorld });
+    this.lastAct = null;
     vitals.serverOwned = true;
     vitals.sync = (op, v) => this.send({ t: 'vit', op, v });
     this.onMap = () => {};
@@ -312,6 +317,12 @@ class Online {
         break;
       }
       case 'fire': this.#remoteFire(m); break;
+      case 'act': {
+        const r = this.remotes.get(m.id);
+        if (m.a === 'stop') r?.stopAct(); else r?.act(m.a, m.i);
+        break;
+      }
+      case 'struck': { const r = this.remotes.get(m.id); if (r?.alive) r.flash = 0.08; break; }
       case 'hurt': {
         const v = this.vitals;
         const hit = m.dmg && m.hp + (m.ar ?? 0) < v.hp + v.armour;
@@ -510,6 +521,15 @@ class Online {
     if (document.pointerLockElement) document.exitPointerLock();
   }
 
+  /** What our free hand starts doing (a knife swing, a throw, using an item), and when a use ends, for the others. */
+  #sendAct() {
+    const act = (this.alive && (this.inv.action ?? this.melee?.action)) || null;
+    if (act === this.lastAct) return;
+    if (act) this.send({ t: 'act', a: act.kind === 'melee' ? act.name : act.kind === 'throw' ? 'throw' : 'use', i: act.id });
+    else if (this.lastAct.kind === 'heal' || this.lastAct.kind === 'charge') this.send({ t: 'act', a: 'stop' });
+    this.lastAct = act;
+  }
+
   update(dt, { camera, gun }) {
     this.camera = camera;
     this.ui.root.hidden = document.getElementById('hud')?.hidden ?? false;
@@ -529,6 +549,8 @@ class Online {
       this.deathT += dt;
       this.ui.death(this.killer, 'Out until the round ends');
     }
+
+    this.#sendAct();
 
     // a steady cadence: carry the remainder over instead of restarting the timer each send
     if ((this.sendT -= dt) <= 0) {

@@ -20,15 +20,18 @@ import { WebSocketServer } from 'ws';
                     hit { id, zone, dmg, w? }  (w: what did it — arsenal id, 'knife', 'grenade', 'fall')
                     take { id } · drop { w, p, ammo, reserve } · vit { op: heal|wear|charge, v } · nade { p, v, f }
                     door { id, open, dir } · vote { map } · ping { c }
+                    act { a, i? }  what the free hand does, for the others to see (a: ACTS; i: the item used)
   server → client   welcome { v, id, team, mapId, map, players, score, limit, time, round, items, vote? }
                     join { player } · leave { id } · s { id, al, q } · fire { id, ... } · hurt { hp, ar, am, by?, dmg? }
                     kill { k, v, head, w, score } · took { id, by } · back { id } · dropped { id, w, p, ammo, reserve }
                     door { id, open, dir } (doors: welcome.doors [[id, open, dir]], all shut each round)
                     nade { id, p, v, f } · round { n, weapon, score } · end { score, vote } · votes { tally }
                     restart { score, time, mapId } · pong { c } · error { msg }
+                    act { id, a, i? } · struck { id }  (someone else was hit: their body flinches)
 */
 
-export const PROTOCOL = 3;
+export const PROTOCOL = 4;
+const ACTS = new Set(['slashLeft', 'slashRight', 'stab', 'throw', 'use', 'stop']);
 
 const PORT = Number(process.env.PORT ?? 8787);
 // only the Funnel proxy (and this machine) should reach the server; nothing else on the LAN
@@ -107,6 +110,7 @@ function hit(p, msg) {
   v.lastHurt = t;
   v.sentHp = v.hp;
   send(v.ws, { t: 'hurt', ...vitals(v), by: p.id, dmg });
+  broadcast(room, { t: 'struck', id: v.id }, v);
   if (v.hp > 0) return;
   v.alive = false;
   if (!self) p.kills++;
@@ -286,6 +290,9 @@ wss.on('connection', (ws) => {
       case 'vit': vital(p, msg); break;
       case 'nade':
         if (p.alive && vec(msg.p) && vec(msg.v)) broadcast(p.room, { t: 'nade', id: p.id, p: msg.p, v: msg.v, f: Math.min(5, Math.max(0, +msg.f || 2.4)) }, p);
+        break;
+      case 'act':
+        if ((p.alive || msg.a === 'stop') && ACTS.has(msg.a)) broadcast(p.room, { t: 'act', id: p.id, a: msg.a, i: clean(msg.i, 12) || undefined }, p);
         break;
       case 'ping': send(ws, { t: 'pong', c: msg.c }); break;
     }

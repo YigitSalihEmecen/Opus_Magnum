@@ -19,7 +19,7 @@ function client(name, room = 'test') {
       setTimeout(poll, 10);
     })();
   });
-  return new Promise((r) => ws.on('open', () => { ws.send(JSON.stringify({ t: 'hello', v: 3, name, room, mapId: 'builtin-duel', maps: ['builtin-duel', 'builtin-lido', 'builtin-sluice'], weapons: 5 })); r({ ws, next, inbox, send: (m) => ws.send(JSON.stringify(m)) }); }));
+  return new Promise((r) => ws.on('open', () => { ws.send(JSON.stringify({ t: 'hello', v: 4, name, room, mapId: 'builtin-duel', maps: ['builtin-duel', 'builtin-lido', 'builtin-sluice'], weapons: 5 })); r({ ws, next, inbox, send: (m) => ws.send(JSON.stringify(m)) }); }));
 }
 
 const a = await client('A');
@@ -42,8 +42,18 @@ b.send({ t: 's', q: [1, 2, 'x'] }); // malformed: dropped
 await new Promise((r) => setTimeout(r, 100));
 assert.equal(a.inbox.filter((m) => m.t === 's').length, 0);
 
+// what a free hand does is relayed to the others (unknown actions are not)
+b.send({ t: 'act', a: 'slashLeft', i: 'knife' });
+b.send({ t: 'act', a: 'dance' });
+const act = await a.next('act');
+assert.deepEqual([act.id, act.a, act.i], [wb.id, 'slashLeft', 'knife']);
+await new Promise((r) => setTimeout(r, 100));
+assert.equal(a.inbox.filter((m) => m.t === 'act').length, 0);
+
 a.send({ t: 'hit', id: wb.id, zone: 'body', dmg: 100 });
 assert.equal((await b.next('hurt')).hp, 50);
+assert.equal((await a.next('struck')).id, wb.id); // the others see the victim flinch
+assert.equal(b.inbox.filter((m) => m.t === 'struck').length, 0);
 a.send({ t: 'hit', id: wb.id, zone: 'head', dmg: 100, w: 'panther' });
 const kill = await a.next('kill');
 assert.equal(kill.v, wb.id);
