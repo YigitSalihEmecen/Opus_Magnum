@@ -124,6 +124,7 @@ class Gallery {
       const a = new Avatar({ team: 'enemy', name: '', char: CHARACTERS[r.char].id });
       a.alive = true;
       a.root.visible = true;
+      a.octree = this.octree; // to find what it vaults
       a.run = { s: r.at * this.course.length, sp: 0, part: null, hold: 0 };
       a.label = new THREE.Sprite(tag('…'));
       a.label.scale.set(2.2, 0.44, 1);

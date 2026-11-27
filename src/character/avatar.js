@@ -36,9 +36,14 @@ const _hand = [0, 0, 0, 0, 0, 0, 0];
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const ss = THREE.MathUtils.smoothstep;
 const UP = new THREE.Vector3(0, 1, 0), RIGHT = new THREE.Vector3(1, 0, 0), FWD = new THREE.Vector3(0, 0, 1);
-// a vault: how long it takes (s), and where the left hand plants (character space from the feet: left, up,
-// ahead) and how the hand turns there (palm on the top, fingers forward)
-const VAULT = 0.62, PLANT = new THREE.Vector3(0.3, 0.02, 0.32), PLANT_ROT = new THREE.Euler(Math.PI / 2, 0, 0, 'YXZ');
+// a vault: how long it takes (s); the left hand grabs the top just past its near edge, a little to the left
+// (PLANT: left, past the edge), turned palm down with the fingers forward (PLANT_ROT); with no world to look
+// at, it goes to FALLBACK (character space from the feet: left, up, ahead)
+const VAULT = 0.62, PLANT = { left: 0.24, past: 0.1 }, FALLBACK = new THREE.Vector3(0.3, 0.02, 0.32);
+const PLANT_ROT = new THREE.Euler(Math.PI / 2, 0, 0, 'YXZ');
+// the hand reaches out as the vault starts, holds still from u = HOLD[0] until the body has passed over it
+// (HOLD[1]), then returns to the gun by HOLD[2] (u: vault progress 0..1)
+const HOLD = [0.3, 0.5, 0.64];
 // gaits: the speed (m/s) at which each loop plays alone; between them they cross-fade on one stride phase.
 // Anything quicker than a strafe is a sprint
 const GAITS = [['walk', 1.4], ['jog', 2.8], ['sprint', 4.2]];
@@ -51,7 +56,8 @@ const UPPER = ['spine', 'chest', 'neck', 'head', 'shoulder_L', 'shoulder_R'];
 const FLINCH = ['spine', 'chest', 'neck', 'head'];
 const LEGS = LOWER.slice(1);
 const _aim = new THREE.Quaternion(), _lean = new THREE.Quaternion(), _e = new THREE.Euler(), _v1 = new THREE.Vector3();
-const _pq = new THREE.Quaternion(), ONE = new THREE.Vector3(1, 1, 1);
+const _pq = new THREE.Quaternion(), ONE = new THREE.Vector3(1, 1, 1), DOWN = new THREE.Vector3(0, -1, 0);
+const _ray = new THREE.Ray(), _f = new THREE.Vector3(), _l = new THREE.Vector3();
 
 export class Avatar {
   /** team: 'ally' | 'enemy' (allies wear a marker); weapon: id of the gun it starts holding. */
@@ -85,7 +91,7 @@ export class Avatar {
     this.motion = new Motion(b, b.root);
     Object.assign(this, { cycle: 0, idleT: 0, lastVel: new THREE.Vector3(), heading: 0, turnRate: 0, live: false });
     this.clipT = { air: 0, slide: 0, climb: 9, land: 9, hit: 9, vault: 9 };
-    this.plant = { matrix: new THREE.Matrix4(), k: 0, curl: 0.35, fixed: false };
+    this.plant = { matrix: new THREE.Matrix4(), k: 0, curl: 0.55, fixed: false };
     r.root.updateWorldMatrix(true, true);
     this.footRest = b.foot_L.getWorldPosition(new THREE.Vector3()).y; // the foot bone's height standing
     this.sm = Object.fromEntries(['yaw', 'pitch', 'speed', 'legYaw', 'leanX', 'leanY', 'hand', ...POSE_KEYS].map((k) => [k, new Spring()]));
@@ -169,7 +175,7 @@ export class Avatar {
     // one-shots start while their weight is still zero, so they never jump in mid-clip
     if (this.airWas && !airTgt) T.land = 0; // touched down
     if (!this.mantleWas && tgt.mantle) T.climb = 0;
-    if (!this.vaultWas && tgt.vault) { T.vault = 0; this.plant.fixed = false; }
+    if (!this.vaultWas && tgt.vault) { T.vault = 0; this.plant.fixed = this.#grabPoint(); }
     this.airWas = airTgt > 0.5;
     this.mantleWas = !!tgt.mantle;
     this.vaultWas = !!tgt.vault;
@@ -248,14 +254,20 @@ export class Avatar {
     m.turn(['neck', 'head'], UP, -STANCE * 0.8);
     m.turn(['neck', 'head'], RIGHT, -pitch * 0.3 + w.slide * 0.3 + w.ads * 0.08);
     if (w.vault > 0.01) {
-      // over the top: legs swing out to the right, the torso leans forward and over the planted left hand,
-      // the head keeps looking ahead
+      // over the top: legs swing out to the right until nearly level (so the hips ride just above the top),
+      // the torso drops forward and over the planted left hand, that shoulder pressed down onto the straight
+      // arm; the head keeps looking ahead
       const k = w.vault * vTuck;
-      m.turn(LOWER, FWD, -1.05 * k);
+      m.turn(LOWER, FWD, -1.35 * k);
       m.turn(LOWER, UP, 0.35 * k);
-      m.turn(UPPER, RIGHT, 0.3 * k);
-      m.turn(UPPER, FWD, -0.22 * k);
-      m.turn(['neck', 'head'], FWD, 0.2 * k);
+      m.turn(UPPER, RIGHT, 0.45 * k);
+      m.turn(UPPER, FWD, -0.42 * k);
+      m.turn(['shoulder_L'], FWD, -0.25 * k);
+      // and the torso turns about the hand as the body goes past: the left shoulder reaches ahead for the grab,
+      // then trails back over it
+      m.turn(UPPER, UP, w.vault * (0.75 * ss(u, 0.3, 0.56) - 0.35 * ss(u, 0.08, 0.26) * (1 - ss(u, 0.26, 0.4))));
+      m.turn(['neck', 'head'], FWD, 0.38 * k);
+      m.turn(['neck', 'head'], RIGHT, -0.3 * k);
     }
     this.inert.apply(m.world, m.offset, dt);
     m.apply();
@@ -307,20 +319,49 @@ export class Avatar {
     // the support hand travels between the grip and the magazine rather than jumping
     const poses = this.weapon.poses, k = this.sm.hand.to(rl > 0.3 && poses.lhMag ? 1 : 0, HL.hand, this.dt ?? 1 / 60);
     for (let i = 0; i < 7; i++) _hand[i] = poses.lhRest[i] + ((poses.lhMag ?? poses.lhRest)[i] - poses.lhRest[i]) * k;
-    gripGun(this.robot, this.gunFrame, poses, { left: _hand, leftTo: this.#plantHand(w) });
+    gripGun(this.robot, this.gunFrame, poses, { left: _hand, leftTo: this.#plantHand() });
   }
 
-  /** Vaulting: the left hand reaches down ahead, plants on the top (fixed there while the body passes over it),
-   *  and comes back to the gun. */
-  #plantHand(w) {
+  /**
+   * A vault starts: find what's being vaulted and where the left hand grabs it. Looking ahead along the travel,
+   * the first top that's higher than a step is the obstacle; the hand goes just past its near edge. Its spot is
+   * fixed in the world from here on. Returns false with no world to look at (or nothing found).
+   */
+  #grabPoint() {
+    const octree = this.octree ?? this.world?.octree;
+    if (!octree) return false;
+    const sp = Math.hypot(this.vel.x, this.vel.z);
+    if (sp > 0.5) _f.set(this.vel.x / sp, 0, this.vel.z / sp);
+    else _f.set(Math.sin(this.aimYaw), 0, Math.cos(this.aimYaw));
+    _l.set(_f.z, 0, -_f.x); // left of the travel
+    const y0 = this.pos.y;
+    for (let d = 0.15; d <= 1.8; d += 0.05) {
+      _ray.origin.copy(this.pos).addScaledVector(_f, d).setY(y0 + 1.6);
+      _ray.direction.copy(DOWN);
+      const hit = octree.rayIntersect(_ray);
+      if (!hit || hit.distance > 1.6 - 0.3) continue; // nothing above step height here
+      if (hit.triangle.getNormal(_v1).y < 0.7) continue;
+      const top = hit.position.y;
+      _v1.copy(this.pos).addScaledVector(_f, d + PLANT.past).addScaledVector(_l, PLANT.left).setY(top);
+      _aim.setFromEuler(_e.set(0, Math.atan2(_f.x, _f.z), 0));
+      _pq.setFromEuler(PLANT_ROT).premultiply(_aim);
+      this.plant.matrix.compose(_v1, _pq, ONE);
+      return true;
+    }
+    return false;
+  }
+
+  /** Vaulting: the left hand reaches for its grab, holds there still while the body goes over, then returns to
+   *  the gun. With no grab found, it plants where it would be just ahead of the feet. */
+  #plantHand() {
     const P = this.plant, u = this.vaultU ?? 1;
-    P.k = (w.vault ?? 0) * ss(u, 0.06, 0.24) * (1 - ss(u, 0.5, 0.72));
+    P.k = ss(u, 0.02, HOLD[0]) * (1 - ss(u, HOLD[1], HOLD[2]));
     if (P.k <= 0.001) return null;
     if (!P.fixed) {
       this.root.updateMatrixWorld();
       _pq.setFromEuler(PLANT_ROT).premultiply(this.root.quaternion);
-      P.matrix.compose(this.root.localToWorld(_v1.copy(PLANT)), _pq, ONE);
-      P.fixed = u >= 0.26; // the hand lands on the top as the feet reach it, then stays put
+      P.matrix.compose(this.root.localToWorld(_v1.copy(FALLBACK)), _pq, ONE);
+      P.fixed = u >= 0.26;
     }
     return P;
   }
