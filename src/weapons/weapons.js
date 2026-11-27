@@ -105,7 +105,8 @@ export const WEAPONS = [
     // held tight and canted inward; sprints at high-ready (muzzle up) instead of the rifle's low carry
     vm: {
       hipPos: [0.11, -0.115, -0.315], hipRot: [1.6, 2.5, 7], inspectPos: [0.0, 0.01, -0.5], boltTravel: 0.026, chTravel: 0.06, kick: 0.7,
-      sprintPos: [0.05, 0.035, 0.04], sprintRot: [40, -14, -10], oneHand: true, // high-ready: up and out to the right
+      sprintPos: [0.05, 0.035, 0.04], sprintRot: [40, -14, -10], oneHand: true, twoHandHip: true,
+      // two hands at the hip; sprinting frees the support hand and lifts the gun to high-ready, out to the right
     },
     slots: ['muzzle', 'scope', 'mag', 'stock'],
     attachments: { muzzle: ['comp', 'flash', 'smgcan'], scope: ALL_OPTICS, mag: ['smg25', 'smg35', 'smg50'], stock: STOCKS },
