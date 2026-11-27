@@ -59,4 +59,5 @@
 .tdm-end .vote kbd { grid-row: span 2; display: grid; place-items: center; width: 24px; height: 24px; border: var(--border); font: 800 12px/1 var(--mono); background: var(--pampas, #f0eee6); }
 .tdm-end .vote b { font: italic 600 22px/1 var(--serif); }
 .tdm-end .vote span { font: 700 10px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--cloud); min-height: 10px; }
+.tdm-end .vote i { grid-column: 1 / -1; aspect-ratio: 16 / 9; margin: -12px -14px 4px; background: center / cover; border-bottom: var(--border); }
 .tdm-end .vote em { grid-column: 1 / -1; font: 800 14px/1 var(--mono); font-style: normal; letter-spacing: 0.2em; color: var(--ink); }

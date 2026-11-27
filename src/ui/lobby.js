@@ -7,8 +7,8 @@ import { buildPiece, makeContext } from '../maps/assets.js';
 import { WEAPONS } from '../weapons/weapons.js';
 
 /*
-  Title-screen lobby: every playable character idles with its signature gun in a scrapyard corner. Pick
-  one with the cards (or by clicking it); drag on the scene to orbit the camera around it, scroll to zoom.
+  Title-screen lobby: the picked character idles with its signature gun in a scrapyard corner, alone; picking
+  another (the cards) swaps it in with a pop. Drag on the scene to orbit the camera around it, scroll to zoom.
   Idles are plain AnimationClips on the shared skeleton, played by an AnimationMixer; the arms are solved
   onto the gun grips after the mixer runs.
 */
@@ -152,6 +152,8 @@ export class Lobby {
 
   select(id, snap = false) {
     const a = this.actors.find((x) => x.ch.id === id) ?? this.actors[0];
+    if (a !== this.selected && !snap) a.robot.root.scale.setScalar(0.6); // pops up in its place
+    for (const x of this.actors) x.robot.root.visible = x === a;
     this.selected = a;
     selectCharacter(a.ch.id);
     this.ui.querySelectorAll('.char').forEach((b) => b.classList.toggle('on', b.dataset.id === a.ch.id));
@@ -163,20 +165,16 @@ export class Lobby {
   #controls() {
     const c = this.canvas;
     let drag = null;
-    const down = (e) => { drag = { x: e.clientX, y: e.clientY, moved: 0 }; };
+    const down = (e) => { drag = { x: e.clientX, y: e.clientY }; };
     const move = (e) => {
       if (!drag) return;
       const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
       drag.x = e.clientX; drag.y = e.clientY;
-      drag.moved += Math.abs(dx) + Math.abs(dy);
       this.view.yaw = THREE.MathUtils.clamp(this.view.yaw - dx * 0.006, ...STAGE[this.selected.ch.id].orbit);
       this.view.pitch = THREE.MathUtils.clamp(this.view.pitch + dy * 0.004, -0.05, 0.6);
       this.idleT = 0;
     };
-    const up = (e) => {
-      if (drag && drag.moved < 5) this.#pickAt(e.clientX, e.clientY);
-      drag = null;
-    };
+    const up = () => { drag = null; };
     const wheel = (e) => { this.view.dist = THREE.MathUtils.clamp(this.view.dist + e.deltaY * 0.002, 1.6, 4.5); this.idleT = 0; e.preventDefault(); };
     c.addEventListener('pointerdown', down);
     addEventListener('pointermove', move);
@@ -190,20 +188,12 @@ export class Lobby {
     };
   }
 
-  #pickAt(x, y) {
-    const r = new THREE.Raycaster();
-    r.setFromCamera(new THREE.Vector2((x / innerWidth) * 2 - 1, -(y / innerHeight) * 2 + 1), this.camera);
-    const hit = r.intersectObjects(this.actors.flatMap((a) => a.robot.hitboxes), false)[0];
-    const a = hit && this.actors.find((x) => x.robot.hitboxes.includes(hit.object));
-    if (a) this.select(a.ch.id);
-  }
-
   update(dt) {
-    for (const a of this.actors) {
-      a.mixer.update(dt);
-      gripGun(a.robot, a.frame, a.def.poses);
-    }
-    const sel = this.selected.robot.root.position;
+    const a = this.selected;
+    a.mixer.update(dt);
+    gripGun(a.robot, a.frame, a.def.poses);
+    a.robot.root.scale.setScalar(damp(a.robot.root.scale.x, 1, 14, dt));
+    const sel = a.robot.root.position;
     this.ring.position.x = damp(this.ring.position.x, sel.x, 10, dt);
     this.ring.position.z = damp(this.ring.position.z, sel.z, 10, dt);
     this.focus.x = damp(this.focus.x, sel.x, 4, dt);
@@ -215,16 +205,24 @@ export class Lobby {
     if (this.idleT > 6) { this.view.pitch = damp(this.view.pitch, 0.1, 0.6, dt); this.view.dist = damp(this.view.dist, 3.1, 0.6, dt); }
     for (const k of ['yaw', 'pitch', 'dist']) this.cur[k] = damp(this.cur[k], this.view[k], 8, dt);
 
+    // a panel open on the left (the modes, maps, the room form): the robot moves into the free space between it and the
+    // character cards on the right; mid-swap (no panel yet) it holds where it was
+    const sheet = document.querySelector('#title:not([hidden]) > .sheet');
+    if (sheet && !sheet.classList.contains('out')) {
+      const box = sheet.querySelector('.main-pick') ? null : sheet.querySelector('.mode-pick') ?? sheet; // the home buttons leave it be
+      const left = box ? box.getBoundingClientRect().right : 0;
+      const right = innerWidth > 720 ? (this.ui.getBoundingClientRect().left || innerWidth) : innerWidth;
+      this.goal = left && right - left > 160 ? (left + right) / 2 : innerWidth * 0.56;
+    }
+    this.shift = damp(this.shift ?? this.goal ?? innerWidth * 0.56, this.goal ?? innerWidth * 0.56, 6, dt);
     const { yaw, pitch, dist } = this.cur;
     const cam = this.camera;
     const target = _t.copy(this.focus);
     target.y += (3.1 - dist) * 0.25; // zooming in moves the view up toward the head
     cam.position.set(target.x + Math.sin(yaw) * Math.cos(pitch) * dist, target.y + Math.sin(pitch) * dist + 0.1, target.z + Math.cos(yaw) * Math.cos(pitch) * dist);
-    // frame the robot right of centre (title top-left, menu along the bottom) on wide screens
-    const side = innerWidth > 900 ? 0.3 * (dist / 3.1) : 0;
-    _r.set(Math.cos(yaw), 0, -Math.sin(yaw));
-    cam.lookAt(target.x - _r.x * side, target.y - 0.12, target.z - _r.z * side);
-    if (cam.fov !== 40) { cam.fov = 40; cam.updateProjectionMatrix(); }
+    cam.lookAt(target.x, target.y - 0.12, target.z);
+    cam.fov = 40;
+    cam.setViewOffset(innerWidth, innerHeight, innerWidth / 2 - this.shift, 0, innerWidth, innerHeight); // robot at x = shift px
   }
 
   dispose() {
@@ -233,7 +231,8 @@ export class Lobby {
     for (const a of this.actors) a.mixer.stopAllAction();
     this.scene.remove(this.group);
     this.scene.fog = null;
+    this.camera.clearViewOffset();
   }
 }
 
-const _t = new THREE.Vector3(), _r = new THREE.Vector3();
+const _t = new THREE.Vector3();

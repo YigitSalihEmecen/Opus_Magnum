@@ -9,7 +9,9 @@ import { sluice } from './builtin/sluice.js';
 
 const KEY = 'om.maps';
 let builtins;
-const BUILTIN = () => (builtins ??= [settlement(), duel(), lido(), sluice()]);
+// each built-in map has a render in public/maps/<id>.webp (taken in-game; re-take after changing the map)
+const BUILTIN = () => (builtins ??= [settlement(), duel(), lido(), sluice()].map((m) => ({ ...m, preview: mapPreview(m.id) })));
+export const mapPreview = (name) => `${import.meta.env.BASE_URL}maps/${name}.webp`;
 
 /** Maps saved before v2 placed floor slabs by their underside; lift those records onto the new convention. */
 function upgrade(map) {
