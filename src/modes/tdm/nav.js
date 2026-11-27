@@ -26,7 +26,7 @@ const _cap = new Capsule();
 const _n = new THREE.Vector3(), _a = new THREE.Vector3(), _b = new THREE.Vector3();
 
 export class NavGrid {
-  constructor(octree, { minX, maxX, minZ, maxZ, cell = 1 }) {
+  constructor(octree, { minX, maxX, minZ, maxZ, cell = 1, seeds = [] }) {
     Object.assign(this, { minX, minZ, cell });
     // cell centres sit on whole metres, like the building grid: doorways land on a centre, walls on a line of cells
     this.w = Math.floor((maxX - minX) / cell) + 1;
@@ -60,7 +60,7 @@ export class NavGrid {
     this.#rasterWalls(octree, minX, maxX, minZ, maxZ);
     this.edge = new Uint8Array(n * 8); // per node and direction: 0 not checked yet, 1 open, 2 a wall in the way
     this.#link(octree);
-    this.#keepLargestRegion();
+    this.#keepLargestRegion(seeds);
   }
 
   x(i) { return this.minX + i * this.cell; }
@@ -358,7 +358,8 @@ export class NavGrid {
     return out;
   }
 
-  #keepLargestRegion() {
+  /** Keep the regions holding a seed (the spawns), else the largest: on a flooded map the unreachable banks outsize the piers. */
+  #keepLargestRegion(seeds = []) {
     const label = new Int32Array(this.ok.length).fill(-1);
     let best = -1, bestSize = 0, id = 0;
     const nb = [];
@@ -375,7 +376,9 @@ export class NavGrid {
       if (size > bestSize) { bestSize = size; best = id; }
       id++;
     }
-    for (let n = 0; n < this.ok.length; n++) if (label[n] !== best) this.ok[n] = 0;
+    const keep = new Set(seeds.map((p) => this.nearestNode(p.x, p.z, p.y)).filter((n) => n >= 0).map((n) => label[n]));
+    if (!keep.size) keep.add(best);
+    for (let n = 0; n < this.ok.length; n++) if (!keep.has(label[n])) this.ok[n] = 0;
   }
 }
 

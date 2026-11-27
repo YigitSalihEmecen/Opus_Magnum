@@ -9,7 +9,7 @@ import { Movement, SPEED } from './player/movement.js';
 import { CameraRig } from './player/cameraRig.js';
 import { PlayerBody } from './player/body.js';
 import { Viewmodel, addViewmodelLights } from './weapons/viewmodel.js';
-import { Gunplay } from './weapons/gunplay.js';
+import { Gunplay, AIM } from './weapons/gunplay.js';
 import { WEAPONS } from './weapons/weapons.js';
 import { silhouettes } from './ui/silhouettes.js';
 import { WorldFX } from './weapons/effects.js';
@@ -17,9 +17,10 @@ import { HUD } from './ui/hud.js';
 import { Menu } from './ui/menu.js';
 import { Gunsmith } from './ui/gunsmith.js';
 import { Title } from './ui/title.js';
+import { Loader } from './ui/loader.js';
 import { Lobby } from './ui/lobby.js';
 import { Scoreboard } from './ui/scoreboard.js';
-import { selectedCharacter } from './character/characters.js';
+import { characterById, selectedCharacter } from './character/characters.js';
 import { Vitals } from './player/vitals.js';
 import { Inventory } from './items/inventory.js';
 import { Pickups } from './items/pickups.js';
@@ -39,6 +40,7 @@ scene.background = new THREE.Color(0xf0eee6); // behind the title until a level 
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 500);
 const vmScene = new THREE.Scene();
 const emptyScene = new THREE.Scene();
+const loader = new Loader();
 const vmCamera = new THREE.PerspectiveCamera(54, innerWidth / innerHeight, 0.01, 10);
 
 /*
@@ -54,7 +56,7 @@ const vmCamera = new THREE.PerspectiveCamera(54, innerWidth / innerHeight, 0.01,
 const customWorld = async (mapId) => (await import('./maps/mapWorld.js')).buildMapWorld(scene, getMap(mapId));
 const MODES = [
   {
-    id: 'range', index: '01 / PRACTICE', title: 'Shooting Range', short: 'Warm up and tune', accent: '#8a9a7b', builtin: 'Test Range', preview: mapPreview('range'), blurb: 'Targets, vault blocks, mantle steps and a slide ramp. Tune your feel and your loadout.',
+    id: 'range', index: '01 / PRACTICE', title: 'Shooting Range', accent: '#8a9a7b', builtin: 'Test Range', preview: mapPreview('range'), blurb: 'Targets, vault blocks, mantle steps and a slide ramp. Tune your feel and your loadout.',
     load: async (mapId) => {
       if (mapId && getMap(mapId)) {
         const w = await customWorld(mapId);
@@ -72,7 +74,7 @@ const MODES = [
     },
   },
   {
-    id: 'tdm', index: '02 / MATCH', title: 'Team Deathmatch', short: '5 v 5 against bots', accent: '#d97757', builtin: 'Kiln', preview: mapPreview('kiln'), needsSpawns: hasSpawns,
+    id: 'tdm', index: '02 / MATCH', title: 'Team Deathmatch', accent: '#d97757', builtin: 'Kiln', preview: mapPreview('kiln'), needsSpawns: hasSpawns,
     blurb: 'You and four allies against five enemy bots. First team to 40 eliminations wins.',
     load: async (mapId) => {
       const arena = mapId && getMap(mapId) ? await customWorld(mapId) : undefined;
@@ -80,7 +82,7 @@ const MODES = [
     },
   },
   {
-    id: 'online', index: '03 / ONLINE', title: 'Multiplayer', short: '2v2 · bots fill empty slots', accent: '#6b6a4f',
+    id: 'online', index: '03 / ONLINE', title: 'Multiplayer', accent: '#6b6a4f',
     lobby: { server: /^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? 'ws://localhost:8787' : 'wss://bitter-canavar.tailb7f1ff.ts.net:8443', map: 'builtin-duel' },
     load: async (mapId, opts) => (await import('./net/online.js')).createOnline({
       scene, camera, audio, hud, mv, rig, arsenal, inv, melee, vitals, getMap,
@@ -89,11 +91,11 @@ const MODES = [
     }),
   },
   {
-    id: 'editor', index: '03 / CREATE', title: 'Map Editor', short: 'Build your own map', accent: '#9fb4c7', lock: false, blurb: 'Lay out walls, containers, cars and fences on a grid. Saved maps show up here to play.',
+    id: 'editor', index: '03 / CREATE', title: 'Map Editor', accent: '#9fb4c7', lock: false, blurb: 'Lay out walls, containers, cars and fences on a grid. Saved maps show up here to play.',
     load: async () => (await import('./modes/editor/editor.js')).createEditor({ renderer, scene, canvas, onExit: () => { location.href = location.pathname; } }),
   },
   {
-    id: 'gallery', index: '04 / LAB', title: 'Animation Demo', short: 'Bots showing every move', accent: '#87867f',
+    id: 'gallery', index: '04 / LAB', title: 'Animation Demo', accent: '#87867f',
     blurb: 'Every captured clip and every in-game movement state on both robots, side by side. [ and ] change the speed.',
     load: async () => (await import('./modes/gallery/gallery.js')).createGallery({ scene, hud, buildWorld: async (map) => (await import('./maps/mapWorld.js')).buildMapWorld(scene, map) }),
   },
@@ -132,10 +134,26 @@ const melee = new Melee({ audio, hud, fx, rig });
 let grenades = null;
 let prompt = null;
 
-let icons = null;
-let iconsStale = true; // re-drawn once the gunsmith closes and the attachment swaps have settled
+const icons = [];
+// guns whose loadout icon needs drawing: all of them for a new level, the one just edited when the gunsmith closes
+// (once its attachment swaps have settled). Each costs a render and a GPU read-back, so only what changed
+const staleIcons = new Set();
+const allIconsStale = () => arsenal.forEach((_, i) => staleIcons.add(i));
+allIconsStale();
+let drawingIcons = false;
+/** Draws the stale icons in the background; the loadout bar picks them up when they're ready. */
+function drawIcons() {
+  if (drawingIcons || !staleIcons.size) return;
+  const ids = [...staleIcons];
+  staleIcons.clear();
+  drawingIcons = true;
+  silhouettes(ids.map((i) => arsenal[i].vm.model)).then((urls) => {
+    urls.forEach((url, k) => { icons[ids[k]] = url; });
+    drawingIcons = false;
+    hud.setLoadout(loadoutSlots());
+  });
+}
 const loadoutSlots = () => {
-  if (iconsStale || !icons) { icons = silhouettes(arsenal.map((a) => a.vm.model)); iconsStale = false; }
   return inv.guns.map((j, k) => ({ key: k + 1, name: arsenal[j].gun.def.name, icon: icons[j], active: j === current }));
 };
 
@@ -164,10 +182,15 @@ const gunsmith = new Gunsmith(document.getElementById('smith'), {
 /** F: bring the gun up for the gunsmith (blocked mid-reload / mantle / switch). */
 function setInspect(on) {
   if (on && (vm.reloading || mv.state === 'mantle' || mv.state === 'vault' || pendingSwitch !== null || inv.busy || melee.busy)) return;
+  // closing the gunsmith may have changed this gun's attachments: redraw its loadout icon. Lowering the gun
+  // (a punch, an item) also lands here with the gunsmith shut; that redraws nothing
+  if (!on && vm.inspect) staleIcons.add(current);
+  // the gunsmith works with the system cursor: let the mouse out while it's open, capture it again on close
+  if (on && !vm.inspect) input.release();
+  else if (!on) input.capture();
   vm.setInspect(on);
   gunsmith.setOpen(on);
   hud.setInspecting(on);
-  if (!on) iconsStale = true;
 }
 
 // movement → audio / camera / viewmodel feedback
@@ -181,6 +204,13 @@ mv.onEvent = (name, d = {}) => {
       audio.play('step', { volume: 0.06, rate: 0.9 });
       vm.kickPos.kick(0, -0.25, 0);
       vm.kickRot.kick(-0.6, 0, 0);
+      break;
+    case 'wallJump':
+      audio.play('step', { volume: 0.1, rate: 1.15 });
+      audio.play('cloth', { volume: 0.35, rate: 1.1 });
+      rig.punch(-1.8, 0, 0);
+      vm.kickPos.kick(0, -0.3, 0);
+      vm.kickRot.kick(-0.7, 0, 0);
       break;
     case 'land': {
       const k = Math.min(1, d.impact / 14);
@@ -228,6 +258,8 @@ const menu = new Menu(document.getElementById('menu'), {
     rig.hFov = s.fov;
     audio.setVolume(s.volume);
     leanMode = s.leanMode;
+    mv.sprintMode = s.sprintMode;
+    AIM.mode = s.adsMode;
   },
   onTitle: () => { location.href = location.pathname; },
 });
@@ -240,28 +272,33 @@ async function startMode(id, mapId = null, opts) {
   lobby?.dispose();
   lobby = null;
   for (const a of arsenal) a.vm.setCharacter(selectedCharacter());
-  document.querySelector('#hud .brand .label').textContent = mapId ? `${mode.title} · ${getMap(mapId)?.name ?? ''}` : `${mode.title} · 0.3`;
+  await loader.open({ index: mode.index, name: (mapId && getMap(mapId)?.name) || mode.builtin || mode.title });
   try {
     level = await mode.load(mapId, opts);
   } catch (err) {
+    loader.fail();
     if (document.pointerLockElement) document.exitPointerLock();
     lobby = new Lobby(scene, camera, canvas);
     title.show(true);
     title.notice(err.message);
     return;
   }
-  if (level.frame) return; // the editor drives its own frame
+  if (level.frame) { loader.close(); return; } // the editor drives its own frame
   bindWorld();
   level.onMap = bindWorld; // online: the map vote swapped the world under us
   handheld.setCharacter(selectedCharacter());
   body.setCharacter(selectedCharacter());
+  const ch = characterById(selectedCharacter());
+  vitals.max = ch.hp;
+  mv.pace = ch.pace;
   vitals.reset();
   inv.reset(level.loadout);
   if (!inv.carries(current)) { vm.setActive(false); drawWeapon(inv.guns[0]); }
-  iconsStale = true;
+  allIconsStale();
   mv.respawn(level.spawn);
   rig.yaw = level.spawn.yaw;
   rig.pitch = 0;
+  loader.close();
 }
 
 /** Hook the player up to the level's world: collision, pickups, grenades, what bullets can hit. */
@@ -306,18 +343,23 @@ document.addEventListener('pointerlockchange', () => {
   if (document.pointerLockElement === canvas) {
     menu.show(false);
     hud.show(true);
-  } else showPaused();
+  } else if (!input.free) showPaused(); // let out for the gunsmith: not a pause
 });
 addEventListener('keydown', (e) => {
-  if ((e.code === 'Escape' || e.code === 'KeyP') && input.locked && !e.repeat) pause();
+  if (e.code !== 'Escape' && e.code !== 'KeyP' || !input.locked || e.repeat) return;
+  // with the cursor out for the gunsmith: close it and pause (Esc doesn't count as a gesture, so it can't re-capture)
+  if (input.free) { input.free = false; setInspect(false); showPaused(); } else pause();
 });
-input.onLockError = (err) => (level ? menu : title).notice(
+input.onLockError = (err) => {
+  if (level) showPaused(); // a lost re-capture (after the gunsmith) leaves the game on its pause menu, one click from resuming
+  (level ? menu : title).notice(
   err?.name === 'WrongDocumentError'
     ? `This view can't capture the mouse — open ${location.origin} in Chrome, Safari or Firefox.`
     : 'Mouse lock was blocked — wait a second and click again.',
-);
+  );
+};
 // clicking the game view while it isn't captured (dev mode, or lock lost) recaptures the mouse
-canvas.addEventListener('click', () => { if (level && !level.frame && !level.ended && !input.pointerLocked) { input.lock(); audio.init(); } });
+canvas.addEventListener('click', () => { if (level && !level.frame && !level.ended && !input.pointerLocked && !input.free) { input.lock(); audio.init(); } });
 
 const _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _doorDir = new THREE.Vector3();
 
@@ -372,6 +414,7 @@ let wasAlive = true;
 let wasLowered = false;
 function tick(dt) {
   now += dt;
+  if (loader.active) { input.endFrame(); return; } // the loading sheet covers the screen
   if (level?.frame) { level.frame(dt); input.endFrame(); return; }
   if (!level) { lobby?.update(dt); renderer.render(scene, camera, emptyScene, vmCamera, {}); return; } // title: no gun yet
   // modes without deaths of their own (the range): a fatal blast just puts you back at the start
@@ -396,12 +439,12 @@ function tick(dt) {
   const lowered = !alive || inv.busy || melee.busy;
   if (lowered !== wasLowered) {
     wasLowered = lowered;
-    // a knife swing snaps the gun out of the way; items and death lower it at the usual pace
+    // a punch snaps the gun out of the way; items and death lower it at the usual pace
     if (lowered) { vm.cancelClip(); vm.holster(true, melee.busy ? 0.09 : undefined); setInspect(false); } else { vm.holster(false, 0.18); gun.activate(); }
   }
   if (!inv.carries(current) && pendingSwitch === null && inv.guns.length) switchWeapon(inv.guns[0]);
 
-  if (iconsStale && icons && !vm.inspect && !vm.swapping) hud.setLoadout(loadoutSlots());
+  if (staleIcons.size && !vm.inspect && !vm.swapping) drawIcons();
 
   if (pendingSwitch !== null && vm.lowered) {
     vm.setActive(false);
@@ -412,8 +455,8 @@ function tick(dt) {
 
   if (live) {
     if (input.pressed('KeyH') || (vm.inspect && input.clicked(2))) setInspect(!vm.inspect);
-    // V: quick knife swing (the gun drops out of the way and comes back)
-    if (input.pressed('KeyV') && !vm.inspect && !inv.busy && pendingSwitch === null && mv.state !== 'mantle' && mv.state !== 'vault') melee.start({ camera, targets, octree: mv.octree });
+    // V: a quick punch (the gun drops out of the way and comes back)
+    if (input.pressed('KeyV') && !vm.inspect && !inv.busy && pendingSwitch === null && mv.state !== 'mantle' && mv.state !== 'vault') melee.start();
     if (!vm.inspect && !inv.busy && !melee.busy) {
       inv.guns.forEach((i, k) => { if (input.pressed(`Digit${k + 1}`)) switchWeapon(i); });
       const n = inv.guns.length, k = inv.guns.indexOf(current);
@@ -438,13 +481,15 @@ function tick(dt) {
       prompt = door.open ? 'Close door' : 'Open door';
       if (input.pressed('KeyF')) level.doors.toggle(door, mv.feet);
     }
+    // nothing to use here: say so when a jump would vault what's ahead (a ray or two when nothing is there)
+    if (!prompt && mv.vaultAhead(rig.yaw)) prompt = { key: 'Space', text: 'Vault' };
     // zoom-matched: a mouse inch moves the target the same distance on screen at any magnification
     if (!vm.inspect && !wheel.open) rig.look(input, 1 / rig.zoom);
     mv.update(dt, input, rig.yaw);
   }
   const axes = live ? input.axes() : { x: 0, y: 0 };
-  // Q / E lean (held, or latched in toggle mode), only on foot; breaking into a sprint drops it
-  const canLean = live && mv.state === 'ground' && !mv.sprinting && !vm.inspect;
+  // Q / E lean (held, or latched in toggle mode), only on foot; breaking into a sprint or reloading drops it
+  const canLean = live && mv.state === 'ground' && !mv.sprinting && !vm.inspect && !vm.reloading;
   if (!canLean) leanLatch = 0;
   else if (leanMode === 'toggle') for (const [k, s] of [['KeyQ', -1], ['KeyE', 1]]) { if (input.pressed(k)) leanLatch = leanLatch === s ? 0 : s; }
   const lean = !canLean ? 0 : leanMode === 'toggle' ? leanLatch : (input.down('KeyE') ? 1 : 0) - (input.down('KeyQ') ? 1 : 0);
@@ -454,14 +499,14 @@ function tick(dt) {
   camera.updateMatrixWorld();
   if (!live) { prompt = null; wheel.close(); }
   if (live) gun.update(dt, { input, mv, camera, targets, octree: mv.octree, now, blocked: vm.inspect || vm.inspectEase > 0.25 || vm.swapping || pendingSwitch !== null || inv.busy || melee.busy || wheel.open || vm.holsterT > 0 || !inv.carries(current) });
-  if (live) gunsmith.update(dt, input, rig.sensitivity);
+  if (live) gunsmith.update(dt, input);
 
   const ads = gun.adsEased;
   const vmFov = THREE.MathUtils.lerp(VM_FOV_HIP, vm.optic.vmFov, ads);
   if (Math.abs(vmCamera.fov - vmFov) > 1e-3) { vmCamera.fov = vmFov; vmCamera.updateProjectionMatrix(); }
-  const cursor = vm.inspect ? { x: gunsmith.cursor.x / innerWidth * 2 - 1, y: gunsmith.cursor.y / innerHeight * 2 - 1 } : null;
-  body.update(dt, { mv, yaw: rig.yaw, lean: rig.lean, alive, show: !!level && !level.frame });
-  vm.update(dt, { mv, view: camera, axes, mouseDX: vm.inspect ? 0 : input.mouseDX, mouseDY: vm.inspect ? 0 : input.mouseDY, ads, triggerHeld: gun.triggerHeld, cursor, lean: rig.lean });
+  const kickLean = rig.lean + mv.wallLean;
+  body.update(dt, { mv, yaw: rig.yaw, lean: kickLean, alive, show: !!level && !level.frame });
+  vm.update(dt, { mv, view: camera, axes, mouseDX: vm.inspect ? 0 : input.mouseDX, mouseDY: vm.inspect ? 0 : input.mouseDY, ads, triggerHeld: gun.triggerHeld, lean: kickLean, cursor: vm.inspect ? gunsmith.cursor : null });
 
   melee.update(dt, { camera, targets, octree: mv.octree, now });
   handheld.update(dt, inv.action ?? melee.action, now);

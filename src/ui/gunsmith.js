@@ -3,8 +3,6 @@ import { SLOT_LABEL, findAttachment, statChips, loadoutStats } from '../weapons/
 /** Where each callout card sits relative to its attachment point (px). */
 const OFFSETS = { muzzle: [-30, -150], scope: [0, -165], stock: [-40, -150], mag: [170, 70], grip: [-170, 80] };
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-/** Cursor pixels per mouse count at sensitivity 1 (scaled by the look sensitivity setting). */
-const CURSOR_SPEED = 2.6;
 
 const STAT_ROWS = [
   ['Recoil control', (s) => (1.15 - (s.vRecoil * 0.65 + s.hRecoil * 0.35)) / 0.5],
@@ -16,8 +14,8 @@ const STAT_ROWS = [
 ];
 
 /**
- * In-world attachment editor for the active weapon. Runs while the mouse stays pointer-locked:
- * mouse deltas drive a virtual cursor; Tab cycles sections, 1–N picks an attachment, wheel cycles.
+ * In-world attachment editor for the active weapon, worked with the system cursor (the mouse is let out while it's
+ * open); Tab cycles sections, 1–N picks an attachment, wheel cycles.
  * getGun() returns the active Gunplay (def, loadout, options(slot), setAttachment).
  */
 export class Gunsmith {
@@ -26,6 +24,8 @@ export class Gunsmith {
     this.open = false;
     this.active = 'scope';
     this.cursor = { x: innerWidth / 2, y: innerHeight / 2 };
+    // the system cursor (main.js lets the mouse out while the gunsmith is open): where it is, for hover and clicks
+    addEventListener('mousemove', (e) => { this.cursor.x = e.clientX; this.cursor.y = e.clientY; });
   }
 
   /** Build the overlay for the active weapon's slots. */
@@ -54,9 +54,9 @@ export class Gunsmith {
         <div class="tray-head"><span class="label tray-slot"></span><span class="label tray-count"></span></div>
         <div class="opts"></div>
       </section>
-      <div class="vcursor"></div>`;
+`;
     const $ = (s) => root.querySelector(s);
-    this.el = { cursor: $('.vcursor'), opts: $('.opts'), traySlot: $('.tray-slot'), trayCount: $('.tray-count'), bars: [...root.querySelectorAll('.sbar b')] };
+    this.el = { opts: $('.opts'), traySlot: $('.tray-slot'), trayCount: $('.tray-count'), bars: [...root.querySelectorAll('.sbar b')] };
     const pick = (attr) => Object.fromEntries(this.slots.map((s) => [s, root.querySelector(`[data-${attr}="${s}"]`)]));
     this.callouts = pick('slot');
     this.dots = pick('dot');
@@ -68,7 +68,6 @@ export class Gunsmith {
     if (on) {
       this.#render();
       void this.root.offsetWidth; // let the entrance transitions run from the closed state
-      this.cursor = { x: innerWidth / 2, y: innerHeight * 0.6 };
       this.refresh();
     }
     this.open = on;
@@ -116,15 +115,10 @@ export class Gunsmith {
     this.refresh();
   }
 
-  update(dt, input, sensitivity = 1) {
+  update(dt, input) {
     if (!this.open) return;
     const w = innerWidth, h = innerHeight;
 
-    // virtual cursor: straight from the mouse deltas, same sensitivity as looking around
-    const k = CURSOR_SPEED * sensitivity;
-    this.cursor.x = clamp(this.cursor.x + input.mouseDX * k, 4, w - 4);
-    this.cursor.y = clamp(this.cursor.y + input.mouseDY * k, 4, h - 4);
-    this.el.cursor.style.transform = `translate(${this.cursor.x}px, ${this.cursor.y}px)`;
 
     // callouts follow their parts on screen
     for (const s of this.slots) {
@@ -147,7 +141,6 @@ export class Gunsmith {
       hit?.classList.add('hover');
       this.hover = hit;
     }
-    this.el.cursor.classList.toggle('over', !!hit);
     if (input.clicked(0) && hit) {
       if (hit.dataset.slot) this.setActive(hit.dataset.slot);
       else this.#equip(hit.dataset.opt);

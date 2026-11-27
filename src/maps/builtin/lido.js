@@ -53,7 +53,7 @@ export function lido() {
     for (const x of [-8, -4, 0, 4, 8]) put('room', x, z, 0, 0, x === 0 ? team : P.ivory, { door: x === -4 || x === 4 ? front : x === 0 ? back : '' });
     for (const x of [-4, 0, 4]) put('room', x, z, 0, 3.5, P.ivory, { door: x === -4 ? 'W' : x === 4 ? 'E' : '' });
     // outside stairs up to the terraces, from the courtyard
-    for (const sx of [-1, 1]) put('stairs', sx * 11.2, z - s * 1, s < 0 ? 0 : 180, 0, P.oat);
+    for (const sx of [-1, 1]) put('stairs_half', sx * 11.2, z - s * 1, s < 0 ? 0 : 180, 0, P.oat);
     put('awning', -4, z - s * 2.15, s < 0 ? 180 : 0, 0, team);
     put('awning', 4, z - s * 2.15, s < 0 ? 180 : 0, 0, team);
 

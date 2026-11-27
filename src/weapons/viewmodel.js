@@ -249,6 +249,7 @@ export class Viewmodel {
   setActive(on) {
     this.sway.visible = on;
     this.leanWas = undefined; // a gun drawn while leaned starts from that lean, no catch-up swing
+    this.look = { x: 0, y: 0 }; // inspecting: where the gun turns toward, eased after the cursor (-1 … 1)
     this.rightArm.upper.visible = this.leftArm.upper.visible = on;
     if (!on) { for (const sh of this.shells) sh.visible = false; this.flashT = 0; this.flash.visible = false; this.muzzleLight.intensity = 0; }
   }
@@ -280,6 +281,8 @@ export class Viewmodel {
   get busy() { return this.player.playing && this.player.time < (this.player.clip.readyAt ?? this.player.clip.duration); }
   get cycling() { return this.player.playing && this.player.clip.name === 'bolt'; }
   get reloading() { return this.player.playing && this.player.clip.name.startsWith('reload'); }
+  /** The magazine is out of the gun (in the hand, or dropped) partway through a reload. */
+  get magOut() { const { mag, magSocket } = this.parts; return !!mag && (mag.parent !== magSocket || !mag.visible); }
   get swapping() { return Object.keys(this.swaps).length > 0; }
 
   playEquip() { this.player.play(this.clips.equip); }
@@ -368,7 +371,7 @@ export class Viewmodel {
   }
 
   update(dt, ctx) {
-    const { mv, view, axes, mouseDX, mouseDY, ads, triggerHeld, cursor, lean = 0 } = ctx;
+    const { mv, view, axes, mouseDX, mouseDY, ads, triggerHeld, lean = 0, cursor = null } = ctx;
     this.time += dt;
     this.ads = ads;
     this.player.update(dt);
@@ -462,11 +465,13 @@ export class Viewmodel {
     const ry = HIP_ROT.y * hipK + SPRINT_ROT.y * sprint + this.swayLag.y * free + sl * (Math.atan2(p.x, aimDist) - HIP_ROT.y * hipK);
     const rz = HIP_ROT.z * hipK + SPRINT_ROT.z * sprint + this.swayLag.y * 0.8 * free + Math.sin(ph) * 1.8 * D2R * bobAmp - w.strafe * 3 * D2R * move
       + sl * 28 * D2R - 25 * D2R * stow + 34 * D2R * vault - lean * 6 * D2R * move;
-    // while inspecting, the gun leans toward the cursor
-    const cx = cursor ? cursor.x : 0, cy = cursor ? cursor.y : 0;
+    // inspecting, the gun turns a little toward the cursor (screen px), eased so it drifts after it
+    const lk = this.look;
+    lk.x = damp(lk.x, cursor ? cursor.x / innerWidth * 2 - 1 : 0, 4, dt);
+    lk.y = damp(lk.y, cursor ? cursor.y / innerHeight * 2 - 1 : 0, 4, dt);
     this.sway.rotation.set(
-      THREE.MathUtils.lerp(rx, INSPECT_ROT.x + cy * 5 * D2R, ie) + kr.x,
-      THREE.MathUtils.lerp(ry, INSPECT_ROT.y + cx * 9 * D2R, ie) + kr.y,
+      THREE.MathUtils.lerp(rx, INSPECT_ROT.x + lk.y * 3 * D2R, ie) + kr.x,
+      THREE.MathUtils.lerp(ry, INSPECT_ROT.y + lk.x * 5 * D2R, ie) + kr.y,
       THREE.MathUtils.lerp(rz, INSPECT_ROT.z, ie) - arc * 12 * D2R + kr.z,
       'YXZ',
     );
@@ -522,6 +527,8 @@ export class Viewmodel {
     }
     // vaulting: the free hand leaves the gun, grabs the top and stays there (fixed in the world) while the body
     // passes over it, so it slides back and down out of view, then returns to the gun
+    // a reloading left hand keeps working the gun instead of reaching for the ledge
+    this.grabMul = damp(this.grabMul ?? 1, this.reloading ? 0 : 1, 12, dt);
     const grab = Math.max(this.#vaultGrab(mv, view), this.#ledgeGrab(mv, view));
     // one-handed guns park the support hand out of frame; hide it there so sprint tilts can't swing it into view
     const parked = this.def.vm.oneHand && this.twoHand < 0.02 && run < 0.05 && grab < 0.05;
@@ -597,7 +604,7 @@ export class Viewmodel {
     const V = mv.state === 'vault' && mv.vault;
     if (!V?.grab || !view) return 0;
     const u = mv.mantleProgress;
-    const k = THREE.MathUtils.smoothstep(u, 0, 0.18) * (1 - THREE.MathUtils.smoothstep(u, 0.62, 0.9));
+    const k = THREE.MathUtils.smoothstep(u, 0, 0.18) * (1 - THREE.MathUtils.smoothstep(u, 0.62, 0.9)) * this.grabMul;
     if (k <= 0) return 0;
     this.#handTo(this.leftHand, V.grab, V.dir, k, _grabHand, view);
     this.leftHand.userData.setCurl(THREE.MathUtils.lerp(this.lhRest[6], 0.5, k));
@@ -606,7 +613,7 @@ export class Viewmodel {
 
   /** Climbing a ledge: the left hand, or both, on its edge (fixed in the world while the body rises), then back. */
   #ledgeGrab(mv, view) {
-    const G = mv.ledgeGrab, k = this.ledgeW;
+    const G = mv.ledgeGrab, k = this.ledgeW * this.grabMul;
     if (!G || !view || k < 0.002) return 0;
     this.#handTo(this.leftHand, G.L, G.dir, k, _grabHand, view, true);
     this.leftHand.userData.setCurl(THREE.MathUtils.lerp(this.lhRest[6], 0.75, k));

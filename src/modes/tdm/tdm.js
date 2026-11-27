@@ -3,7 +3,6 @@ import { Arena } from './arena.js';
 import { NavGrid } from './nav.js';
 import { Bot, raySegment } from './bot.js';
 import { Tactics } from './tactics.js';
-import { MAX_HP } from '../../player/vitals.js';
 import { WorldFX } from '../../weapons/effects.js';
 import { WEAPONS } from '../../weapons/weapons.js';
 import { Pickups } from '../../items/pickups.js';
@@ -21,7 +20,6 @@ import { MatchHud } from '../../ui/matchHud.js';
 
 const SCORE_LIMIT = 40;
 const MATCH_TIME = 600;
-const PLAYER_HP = MAX_HP;
 const RESPAWN_BOT = 5;
 const RESPAWN_PLAYER = 4;
 const SPAWN_SHIELD = 1.5;
@@ -56,7 +54,8 @@ class TDM {
     this.arena = arena ?? new Arena(scene);
     this.mapName = this.arena.name ?? 'Kiln';
     this.octree = this.arena.octree;
-    this.nav = this.arena.nav ??= new NavGrid(this.octree, this.arena.bounds);
+    const seeds = Object.values(this.arena.spawns ?? {}).flat().map((sp) => sp?.position).filter(Boolean);
+    this.nav = this.arena.nav ??= new NavGrid(this.octree, { ...this.arena.bounds, seeds });
     this.#prepareArena();
     this.fx = new WorldFX(scene); // bot tracers/impacts get their own pools
     this.now = 0;
@@ -214,6 +213,7 @@ class TDM {
     return {
       team: 'ally', name: 'You', alive: true, shield: 0, deathT: 0, killer: null,
       get hp() { return tdm.vitals.hp; },
+      get maxHp() { return tdm.vitals.max; },
       get pos() { return mv.feet; },
       get vel() { return mv.vel; },
       get facing() { return tdm.rig.yaw + Math.PI; }, // the camera looks down -z
@@ -235,7 +235,7 @@ class TDM {
       takeDamage(dmg, zone, attacker, dir, weapon) {
         if (!this.alive || this.shield > 0 || tdm.ended) return false;
         tdm.vitals.damage(dmg);
-        tdm.ui.hurt(tdm.vitals.hp / PLAYER_HP, attacker === this ? null : tdm.#bearing(attacker.pos));
+        tdm.ui.hurt(tdm.vitals.hp / tdm.vitals.max, attacker === this ? null : tdm.#bearing(attacker.pos));
         tdm.audio.play('land', { volume: 0.25, rate: 1.5 });
         tdm.rig.punch(-0.6 - Math.random() * 0.4, (Math.random() - 0.5) * 0.8, (Math.random() - 0.5) * 1.2);
         if (tdm.vitals.dead) {
@@ -320,7 +320,7 @@ class TDM {
     const p = this.player;
     if (p.alive) {
       p.shield = Math.max(0, p.shield - dt);
-      this.ui.hurt(this.vitals.hp / PLAYER_HP, null); // vignette follows health (regen and heals happen in Vitals)
+      this.ui.hurt(this.vitals.hp / this.vitals.max, null); // vignette follows health (regen and heals happen in Vitals)
       if (this.mv.feet.y < (this.arena.killY ?? -20)) this.#respawnPlayer();
     } else if (!this.ended) {
       p.deathT += dt;

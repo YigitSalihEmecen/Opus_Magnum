@@ -9,7 +9,7 @@ import { Explosions } from './explosion.js';
     damage(pos) → onBlast(pos, hits) where hits = [{ target, dmg, point, dir }] for every damageable in reach
 */
 
-export const BLAST = { radius: 6.5, full: 1.4, damage: 135, self: 0.6 };
+export const BLAST = { radius: 8.45, full: 1.82, damage: 135, self: 0.6 };
 const FUSE = 2.4, R = 0.05, GRAVITY = 21, REST = 0.38, THROW_SPEED = 17;
 const _n = new THREE.Vector3(), _d = new THREE.Vector3(), _p = new THREE.Vector3(), _c = new THREE.Vector3();
 const _ray = new THREE.Ray(), _sph = new THREE.Sphere(), _box = new THREE.Box3();

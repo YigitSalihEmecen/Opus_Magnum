@@ -71,24 +71,24 @@ await wait(100);
 assert.equal(a.inbox.filter((m) => m.t === 's').length, 0);
 
 // what a free hand does is relayed to the others (unknown actions are not)
-b.send({ t: 'act', a: 'slashLeft', i: 'knife' });
+b.send({ t: 'act', a: 'cross' });
 b.send({ t: 'act', a: 'dance' });
 const act = await a.next('act');
-assert.deepEqual([act.id, act.a, act.i], [wb.id, 'slashLeft', 'knife']);
+assert.deepEqual([act.id, act.a, act.i], [wb.id, 'cross', undefined]);
 await wait(100);
 assert.equal(a.inbox.filter((m) => m.t === 'act').length, 0);
 
 // a bot's hit on a player comes from the host; the player hears who did it
 a.send({ t: 'hit', as: botA.id, id: wb.id, zone: 'body', dmg: 30 });
 let h = await b.next('hurt');
-assert.deepEqual([h.hp, h.by], [120, botA.id]);
+assert.deepEqual([h.hp, h.by], [95, botA.id]);
 b.send({ t: 'hit', as: botB.id, id: wa.id, zone: 'body', dmg: 30 }); // not the host: ignored
 await wait(100);
 assert.equal(a.inbox.filter((m) => m.t === 'hurt').length, 0);
 // hurting a bot: its health is told to the host
 b.send({ t: 'hit', id: botA.id, zone: 'body', dmg: 50 });
 const bh = await a.next('bhurt');
-assert.deepEqual([bh.id, bh.hp, bh.by], [botA.id, 100, wb.id]);
+assert.deepEqual([bh.id, bh.hp, bh.by], [botA.id, 50, wb.id]);
 
 // a round needs the whole team down, bots too
 a.send({ t: 'hit', id: wb.id, zone: 'head', dmg: 200, w: 'panther' });
@@ -108,7 +108,7 @@ assert.equal(round.score[wa.team], 1);
 await wait(1600); // spawn shield
 b.inbox.length = 0;
 a.send({ t: 'hit', id: wb.id, zone: 'body', dmg: 40 });
-assert.equal((await b.next('hurt')).hp, 110); // fresh round: full health again
+assert.equal((await b.next('hurt')).hp, 85); // fresh round: full health again (Rivet: 125)
 
 // armour soaks damage first; heals only restore what an item can
 b.send({ t: 'vit', op: 'wear', v: 50 });
@@ -116,10 +116,10 @@ h = await b.next('hurt');
 assert.deepEqual([h.ar, h.am], [50, 50]);
 a.send({ t: 'hit', id: wb.id, zone: 'body', dmg: 60 });
 h = await b.next('hurt');
-assert.deepEqual([h.ar, h.hp], [0, 100]);
+assert.deepEqual([h.ar, h.hp], [0, 75]);
 b.send({ t: 'vit', op: 'heal', v: 999 }); // not an item: ignored
 b.send({ t: 'vit', op: 'heal', v: 40 });
-assert.equal((await b.next('hurt')).hp, 140);
+assert.equal((await b.next('hurt')).hp, 115);
 
 // pickups: the first claim wins, once
 a.send({ t: 'take', id: 'm3' });

@@ -3,12 +3,13 @@ import { buildKite, buildKiteArm, kiteMaterials, KITE_SCHEMES } from './kite.js'
 
 /*
   Playable characters. Each shares the skeleton layout and hand frame, so animation clips, gun grips and
-  IK work on all of them; they differ in build, silhouette and (later) abilities.
+  IK work on all of them; they differ in build, silhouette and stats: hp (max health; server/index.js CHAR_HP
+  mirrors it) and pace (movement speed multiplier).
 */
 
 export const CHARACTERS = [
-  { id: 'rivet', name: 'Rivet', role: 'Bruiser', blurb: 'Scrapyard heavy. Salvaged plating, hydraulic joints, one big eye.', weapon: 'panther', build: (team) => buildRobot({ scheme: SCHEMES[team] }), arm: (side) => buildArm(robotMaterials(SCHEMES.player), side) },
-  { id: 'kite', name: 'Kite', role: 'Scout', blurb: 'Light and quick. Long limbs, exposed spine, swept fins.', weapon: 'snake', build: (team) => buildKite({ scheme: KITE_SCHEMES[team] }), arm: (side) => buildKiteArm(kiteMaterials(KITE_SCHEMES.player), side) },
+  { id: 'rivet', name: 'Rivet', role: 'Bruiser', blurb: 'Scrapyard heavy. Salvaged plating, hydraulic joints, one big eye.', weapon: 'panther', hp: 125, pace: 1, build: (team) => buildRobot({ scheme: SCHEMES[team] }), arm: (side) => buildArm(robotMaterials(SCHEMES.player), side) },
+  { id: 'kite', name: 'Kite', role: 'Scout', blurb: 'Light and quick. Long limbs, exposed spine, swept fins.', weapon: 'snake', hp: 100, pace: 1.1, build: (team) => buildKite({ scheme: KITE_SCHEMES[team] }), arm: (side) => buildKiteArm(kiteMaterials(KITE_SCHEMES.player), side) },
 ];
 
 export const characterById = (id) => CHARACTERS.find((c) => c.id === id) ?? CHARACTERS[0];
@@ -30,9 +31,9 @@ export function buildCharacter(id, team = 'player') {
   return r;
 }
 
-const KEY = 'om.character';
+const KEY = 'om.character', DEFAULT = 'kite';
 export function selectedCharacter() {
-  try { return characterById(localStorage.getItem(KEY)).id; } catch { return CHARACTERS[0].id; }
+  try { return characterById(localStorage.getItem(KEY) ?? DEFAULT).id; } catch { return DEFAULT; }
 }
 export function selectCharacter(id) {
   try { localStorage.setItem(KEY, id); } catch { /* private mode */ }

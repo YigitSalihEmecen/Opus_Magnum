@@ -581,7 +581,7 @@ export function gripGun(robot, frame, poses, { left = poses.lhRest, trigger = po
     _hm.multiplyMatrices(frame.matrixWorld, _hp.matrix);
     let curl = pose[6];
     // leftTo / rightTo { matrix (world), k 0..1, curl?, rot? }: a hand leaves the gun for somewhere else (a vault's
-    // plant, a ledge, a knife swing); rot false keeps the grip's turn and moves only the hand's place
+    // plant, a ledge, a punch); rot false keeps the grip's turn and moves only the hand's place
     const to = side === 'L' ? leftTo : rightTo;
     if (to?.k > 0) {
       _hm.decompose(_ga, _gq, _gs);

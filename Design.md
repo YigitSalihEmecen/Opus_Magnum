@@ -1,4 +1,4 @@
-# Opus Magnum: Design Direction
+# SUPERKILL: Design Direction
 
 A fast, movement-first arena shooter. Gunplay should feel tactile and weighty, movement fluid and
 expressive. Everything on screen should read instantly.

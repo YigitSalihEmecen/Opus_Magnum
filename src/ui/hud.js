@@ -8,7 +8,6 @@ export class HUD {
   constructor(root) {
     this.root = root;
     root.innerHTML = `
-      <div class="brand card"><span class="title">Opus Magnum</span><span class="label">Test range · 0.1</span></div>
       <div class="fps card">— FPS</div>
       <div class="xhair"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><i class="o"></i><i class="d"></i></div>
       <div class="hitmarker"><b></b><i></i><i></i><i></i><i></i></div>

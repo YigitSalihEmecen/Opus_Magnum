@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Avatar, raySegment } from '../../character/avatar.js';
 
 export { raySegment };
-import { MAX_HP } from '../../player/vitals.js';
+import { characterById } from '../../character/characters.js';
 import { ZONE } from '../../weapons/weapons.js';
 import { findAttachment } from '../../weapons/attachments.js';
 
@@ -79,6 +79,9 @@ export class Bot extends Avatar {
     const g = weapon ? botGun(weapon) : BOT_GUNS[gun];
     super({ team, name, char, weapon: g.model, reloadTime: g.reload });
     Object.assign(this, { world, skill });
+    const ch = characterById(char);
+    this.maxHp = ch.hp;
+    this.pace = ch.pace;
     this.gun = g;
     this.aggr = rr(0.3, 0.9); // personality: pushes, flanks and peeks more, hides less
     this.poseTarget = { crouch: 0, slide: 0, ads: 0, mantle: 0, air: 0 };
@@ -96,7 +99,7 @@ export class Bot extends Avatar {
     this.reloadT = 0;
   }
 
-  /** weapon: what did it (an arsenal id, 'knife', 'grenade'), for the kill feed. */
+  /** weapon: what did it (an arsenal id, 'fist', 'grenade'), for the kill feed. */
   takeDamage(dmg, zone, attacker, dir, weapon) {
     if (!this.alive) return false;
     this.hp -= dmg;
@@ -135,7 +138,7 @@ export class Bot extends Avatar {
     this.vel.set(0, 0, 0);
     this.yaw = this.aimYaw = at.yaw;
     this.aimPitch = 0;
-    this.hp = MAX_HP;
+    this.hp = this.maxHp;
     this.alive = true;
     this.lastHurt = -99;
     this.pain = 0;
@@ -219,7 +222,7 @@ export class Bot extends Avatar {
   update(dt) {
     const now = this.world.now;
     if (!this.alive) { this.animateDeath(dt); return; }
-    if (!this.world.netHit && now - this.lastHurt > REGEN_DELAY) this.hp = Math.min(MAX_HP, this.hp + REGEN_RATE * dt);
+    if (!this.world.netHit && now - this.lastHurt > REGEN_DELAY) this.hp = Math.min(this.maxHp, this.hp + REGEN_RATE * dt);
     this.pain *= Math.exp(-dt / 1.5);
 
     this.thinkT -= dt;
@@ -320,7 +323,7 @@ export class Bot extends Avatar {
   // ── goals ──
 
   #decide(now) {
-    const hpK = this.hp / MAX_HP;
+    const hpK = this.hp / this.maxHp;
     const t = this.target?.alive ? this.target : null;
     const age = now - this.lastSeenT;
     const threat = t && age < 6;
@@ -400,7 +403,7 @@ export class Bot extends Avatar {
     if ((!this.spot || stale) && this.findT <= 0) {
       const threats = this.#threats();
       // push: the bold, the long fight and a hurt target draw the next spot closer
-      const push = THREE.MathUtils.clamp(this.aggr * 0.6 + (t.hp < MAX_HP * 0.5 ? 0.35 : 0) + Math.min(0.4, this.goalT / 40), 0, 1);
+      const push = THREE.MathUtils.clamp(this.aggr * 0.6 + (t.hp < t.maxHp * 0.5 ? 0.35 : 0) + Math.min(0.4, this.goalT / 40), 0, 1);
       const [near, far] = this.gun.range;
       const r = this.world.tactics.find(this, 'fight', threats, { radius: 14, near, far: THREE.MathUtils.lerp(far, near + 4, push), avoid: stale ? this.spot.p : null });
       if (r) {
@@ -707,6 +710,7 @@ export class Bot extends Avatar {
         if (d2 < 1.6 && d2 > 1e-4) { const d = Math.sqrt(d2); _want.x += (dx / d) * (1.3 - d) * 2.5; _want.z += (dz / d) * (1.3 - d) * 2.5; }
       }
       if (this.crouchWant && _want.lengthSq() > SPEED.crouch ** 2) _want.setLength(SPEED.crouch);
+      _want.multiplyScalar(this.pace);
       // accelerate toward it, capped: weight in starts, stops and turns
       const ax = _want.x - this.vel.x, az = _want.z - this.vel.z, al = Math.hypot(ax, az), cap = ACCEL * dt;
       const k = al > cap ? cap / al : 1;

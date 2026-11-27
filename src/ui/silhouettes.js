@@ -1,20 +1,41 @@
 import * as THREE from 'three';
 import { PALETTE as P } from '../core/toon.js';
 
+let r = null, scene, cam, rt = null, queue = Promise.resolve();
+const box = new THREE.Box3(), part = new THREE.Box3(), size = new THREE.Vector3(), c = new THREE.Vector3();
+
 /**
- * Flat ink side-view silhouettes of gun models (attachments included) as PNG data URLs, barrel to the right.
- * Uses a throwaway renderer so the game's own context and render targets are untouched.
+ * Flat ink side-view silhouettes of gun models (attachments included), barrel to the right: resolves to PNG data
+ * URLs. Drawn on a small renderer of its own (made once and kept: a new WebGL context beside the game's stalls a
+ * frame for 100 ms+), into an offscreen target at twice the size, read back asynchronously (a plain read-back
+ * waits for the GPU and freezes the game) and scaled down on a 2D canvas, which smooths the edges.
+ * Calls run one after another.
  */
 export function silhouettes(models, w = 360, h = 120) {
-  let r;
-  try { r = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true }); } catch { return models.map(() => ''); }
-  r.setSize(w, h, false);
-  const scene = new THREE.Scene();
-  scene.overrideMaterial = new THREE.MeshBasicMaterial({ color: P.ink });
-  const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 10);
-  const box = new THREE.Box3(), part = new THREE.Box3(), size = new THREE.Vector3(), c = new THREE.Vector3();
+  const job = queue.then(() => draw(models, w, h));
+  queue = job.catch(() => {});
+  return job;
+}
 
-  const out = models.map((model) => {
+async function draw(models, w, h) {
+  if (!r) {
+    try { r = new THREE.WebGLRenderer({ alpha: true }); } catch { return models.map(() => ''); }
+    scene = new THREE.Scene();
+    scene.overrideMaterial = new THREE.MeshBasicMaterial({ color: P.ink });
+    cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 10);
+  }
+  const W = w * 2, H = h * 2;
+  if (!rt || rt.width !== W || rt.height !== H) {
+    rt?.dispose();
+    rt = new THREE.WebGLRenderTarget(W, H);
+    rt.texture.colorSpace = THREE.SRGBColorSpace;
+  }
+  const big = Object.assign(document.createElement('canvas'), { width: W, height: H });
+  const out = Object.assign(document.createElement('canvas'), { width: w, height: h });
+  const bctx = big.getContext('2d'), octx = out.getContext('2d');
+  const px = new Uint8Array(W * H * 4), img = new ImageData(W, H);
+  const urls = [];
+  for (const model of models) {
     const obj = model.clone(true);
     obj.position.set(0, 0, 0);
     obj.quaternion.identity();
@@ -36,11 +57,18 @@ export function silhouettes(models, w = 360, h = 120) {
     cam.position.set(c.x + 2, c.y, c.z);
     cam.lookAt(c);
     cam.updateProjectionMatrix();
+    r.setRenderTarget(rt);
+    r.setClearColor(0x000000, 0);
+    r.clear();
     r.render(scene, cam);
+    r.setRenderTarget(null);
     scene.remove(obj);
-    return r.domElement.toDataURL();
-  });
-  r.dispose();
-  r.forceContextLoss();
-  return out;
+    await r.readRenderTargetPixelsAsync(rt, 0, 0, W, H, px);
+    for (let y = 0; y < H; y++) img.data.set(px.subarray((H - 1 - y) * W * 4, (H - y) * W * 4), y * W * 4); // GL rows run bottom-up
+    bctx.putImageData(img, 0, 0);
+    octx.clearRect(0, 0, w, h);
+    octx.drawImage(big, 0, 0, w, h);
+    urls.push(out.toDataURL());
+  }
+  return urls;
 }

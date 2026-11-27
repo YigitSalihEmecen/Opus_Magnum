@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { PALETTE as P, toon } from '../core/toon.js';
 import { FX_LAYER } from '../core/renderer.js';
 
-const MAX_HEALTH = 150;
+const MAX_HEALTH = 100;
 const REGEN_DELAY = 3;
 const RESPAWN_TIME = 2.4;
 

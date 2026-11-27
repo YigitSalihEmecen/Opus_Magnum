@@ -12,6 +12,7 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 
 export class MatchHud {
   constructor({ ally = 'Allies', enemy = 'Enemy', limit }) {
+    weaponIcon(); // start drawing the kill feed's icons now, so they're ready by the first kill
     const root = (this.root = document.createElement('div'));
     root.className = 'tdm';
     root.innerHTML = `
@@ -51,7 +52,7 @@ export class MatchHud {
     this.el.clock.textContent = fmtTime(time);
   }
 
-  /** weapon: arsenal id, 'knife', 'grenade' or 'fall'; its silhouette sits between the names. */
+  /** weapon: arsenal id, 'fist', 'grenade' or 'fall'; its silhouette sits between the names. */
   feed(killer, victim, head, weapon) {
     const row = document.createElement('div');
     row.className = 'card';

@@ -1,4 +1,4 @@
-# Opus Magnum
+# SUPERKILL
 
 Movement-first FPS in Three.js: slide, auto-mantle and vault, five hand-animated weapons
 (carbine, SMG, pump shotgun, pistol, bolt sniper) with an in-world gunsmith, items (heals, armour,
@@ -15,10 +15,10 @@ node server/index.js   # match server for online play (ws://localhost:8787); nod
 ## Controls
 WASD move · Mouse look · Space jump / vault · Shift sprint (toggle) · C or Ctrl crouch/slide ·
 LMB fire · RMB aim · R reload · 1–5 or wheel switch weapon · B fire mode · F gunsmith · Tab scoreboard ·
-E pick up / swap · T drop weapon · G throw grenade · V knife · Q heal · X charge armour · Esc or P pause/settings
+E pick up / swap · T drop weapon · G throw grenade · V punch · Q heal · X charge armour · Esc or P pause/settings
 
 ## Items
-Health is 150; armour adds 25 / 50 / 75 on top by tier (light, guard, heavy) and soaks damage first.
+Health is 100; armour adds 25 / 50 / 75 on top by tier (light, guard, heavy) and soaks damage first.
 Health regenerates slowly after 8 s out of combat, so heals matter.
 
 | Item | Use |
@@ -60,7 +60,7 @@ src/
                           torso to the aim, leans), flash, marker, death fall (bots and online players drive one)
     motion.js             captured motion mapped onto our rigs and blended (bone turns from rest pose)
     smooth.js             springs + inertializer: no input or pose change ever snaps on a body
-    actions.js            the free hand's moves others see: knife swings, grenade throw, using a heal
+    actions.js            the free hand's moves others see: punches, grenade throw, using a heal
     motion.data.js        generated: Quaternius Universal Animation Library clips (CC0), trimmed and packed
   weapons/
     weapons.js            ★ weapon definitions: stats, recoil, hand poses, slots (start here)
@@ -69,7 +69,7 @@ src/
     animations.js         ★ reload/equip/pump clips, built from each weapon's hand poses
     anim.js               Hermite-spline keyframe tracks + clip player
     viewmodel.js          pose layering (hip/ADS/sprint/sway/recoil), hands, inspect, attachment swaps
-    melee.js              V knife: three swings (Catmull-Rom posed), sweeping hit test at the strike
+    melee.js              V punch: cross and hook (Catmull-Rom posed), hit-stop, fan hit test at the strike
     effects.js            tracers, decals, sparks, dust
     models/               parts.js (shared gun kit) + one file per gun
   items/
@@ -79,8 +79,8 @@ src/
     grenades.js           throw physics (bounces, ray-cast vs the octree), fuse, blast reach + falloff
     explosion.js          pooled cel-style blast: one lumpy, noise-shaped fireball with mottled banded fire
                           that cools to smoke; dust ring, embers, scorch
-    handheld.js           first-person item in hand: heal / charge / throw poses, the knife swing
-    models/               kit.js (shared materials) + one file per item, knife.js
+    handheld.js           first-person item in hand: heal / charge / throw poses, the punching fist
+    models/               kit.js (shared materials) + one file per item
   maps/                   maps, shared by every mode that plays one
     assets.js             ★ placeable pieces + prefab buildings, waterfront (dock, sea wall, stilt), pool,
                           item/gun pickups; connectors and adaptive road/sidewalk/dock tiles, rounded bends

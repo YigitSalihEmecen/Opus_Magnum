@@ -56,7 +56,7 @@ export class TestRange {
     mesh.rotation.y = rotY;
     mesh.castShadow = mesh.receiveShadow = true;
     (collide ? this.colliders : this.group).add(mesh);
-    if (label) this.label(mesh, label, d / 2 + 0.01, Math.min(w * 0.8, 2.4));
+    if (label) this.label(mesh, label, d / 2 + 0.01, Math.min(w * 0.8, 2.4, h * 1.6)); // the plate stays inside the face (it collides)
     return mesh;
   }
 

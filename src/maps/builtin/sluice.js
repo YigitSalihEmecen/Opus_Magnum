@@ -82,7 +82,7 @@ export function sluice() {
 
     // north high road: catwalks from the hut roof's front corner to the gantry, on stilts
     for (const x of [10, 14, 18]) put('walkway', s * x, -10, 0, 3.5, P.slate);
-    for (const x of [12, 16]) stilt(s * x, -10, 2.9);
+    for (const x of [12, 16]) stilt(s * x, -10, 3.2); // under the deck slab, between the girders
 
     // middle: a container barge riding in the channel
     put('container', s * 8, -2, 0, WATER - 0.3, team);

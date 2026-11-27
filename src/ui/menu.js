@@ -1,17 +1,18 @@
+import './menu.css';
+
 const CONTROLS = [
   ['WASD', 'Move'], ['Mouse', 'Look'], ['Space', 'Jump · vault'], ['Shift', 'Sprint'], ['C / Ctrl', 'Crouch · slide'],
   ['Q / E', 'Lean'], ['LMB', 'Fire'], ['RMB', 'Aim'], ['R', 'Reload'], ['B', 'Fire mode'], ['1 – 5', 'Weapons'],
-  ['Z', 'Item wheel'], ['G', 'Grenade'], ['V', 'Knife'], ['F', 'Interact'], ['T', 'Drop weapon'], ['H', 'Gunsmith'],
+  ['Z', 'Item wheel'], ['G', 'Grenade'], ['V', 'Punch'], ['F', 'Interact'], ['T', 'Drop weapon'], ['H', 'Gunsmith'],
   ['Tab', 'Scores'], ['Esc / P', 'Pause'],
 ];
 
-const DEFAULTS = { sensitivity: 1.0, fov: 104, volume: 0.8, graphics: 'high', leanMode: 'toggle' };
-const CHOICES = { graphics: ['low', 'medium', 'high'], leanMode: ['toggle', 'hold'] };
+const DEFAULTS = { sensitivity: 1.0, fov: 104, volume: 0.8, graphics: 'high', sprintMode: 'hold', adsMode: 'hold', leanMode: 'toggle' };
+const CHOICES = { graphics: ['low', 'medium', 'high'], sprintMode: ['hold', 'toggle'], adsMode: ['hold', 'toggle'], leanMode: ['hold', 'toggle'] };
 const TABS = [
   ['graphics', 'Graphics', () => `${seg('graphics', 'Quality')}${slider('fov', 'Field of view', 80, 120, 1)}`],
-  ['gameplay', 'Gameplay', () => `${seg('leanMode', 'Lean')}${slider('volume', 'Volume', 0, 1, 0.05)}`],
-  ['controls', 'Controls', () => `${slider('sensitivity', 'Sensitivity', 0.2, 3, 0.05)}
-    <div class="grid">${CONTROLS.map(([k, v]) => `<div class="key"><kbd>${k}</kbd><span>${v}</span></div>`).join('')}</div>`],
+  ['gameplay', 'Gameplay', () => `${slider('volume', 'Volume', 0, 1, 0.05)}`],
+  ['controls', 'Controls', () => `${slider('sensitivity', 'Sensitivity', 0.2, 3, 0.05)}${seg('sprintMode', 'Sprint')}${seg('adsMode', 'Aim')}${seg('leanMode', 'Lean')}`],
 ];
 
 function load() {
@@ -28,6 +29,7 @@ export class Menu {
     this.settings = load();
     for (const k in CHOICES) if (!CHOICES[k].includes(this.settings[k])) this.settings[k] = DEFAULTS[k];
     root.innerHTML = `
+      <div class="pause-wrap">
       <section class="sheet card pause" role="dialog" aria-label="Paused">
         <h1>Paused</h1>
         <div class="tabs" role="tablist">${TABS.map(([id, name], i) => `<button type="button" role="tab" data-tab="${id}" aria-selected="${!i}">${name}</button>`).join('')}</div>
@@ -37,7 +39,12 @@ export class Menu {
           ${onTitle ? '<button class="btn ghost to-title" type="button">Main menu</button>' : ''}
           <span class="note"></span>
         </div>
-      </section>`;
+      </section>
+      <aside class="keys-panel card" aria-label="Key bindings">
+        <span class="label">Keys</span>
+        <div class="keys">${CONTROLS.map(([k, v]) => `<div class="key"><kbd>${k}</kbd><span>${v}</span></div>`).join('')}</div>
+      </aside>
+      </div>`;
     this.button = root.querySelector('.go');
     this.button.disabled = true;
     this.button.addEventListener('click', () => onDeploy());
@@ -46,6 +53,7 @@ export class Menu {
     root.querySelectorAll('[role=tab]').forEach((t) => t.addEventListener('click', () => {
       root.querySelectorAll('[role=tab]').forEach((x) => x.setAttribute('aria-selected', String(x === t)));
       root.querySelectorAll('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== t.dataset.tab; });
+      root.querySelector('.pause-wrap').classList.toggle('keys-open', t.dataset.tab === 'controls'); // the key list slides out beside it
     }));
     root.querySelectorAll('input[type=range]').forEach((input) => {
       const out = root.querySelector(`output[for=${input.id}]`);

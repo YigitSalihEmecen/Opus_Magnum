@@ -24,7 +24,7 @@ import { WebSocketServer } from 'ws';
   client → server   hello { v, name, room, char, mapId, map?, maps, weapons } · fire { o, d, w, sup, as? } · hit { id, zone, dmg, as? }
                     sb { b: [[botId, q], …] }  (host only: its bots' poses; as: the bot a host's fire / hit is for)
                     s { q: [px, py, pz, vx, vy, vz, yaw, pitch, weapon, state, flags, lean (-1 left … 1 right), clientMs] }
-                    hit { id, zone, dmg, w? }  (w: what did it — arsenal id, 'knife', 'grenade', 'fall')
+                    hit { id, zone, dmg, w? }  (w: what did it — arsenal id, 'fist', 'grenade', 'fall')
                     take { id } · drop { w, p, ammo, reserve } · vit { op: heal|wear|charge, v } · nade { p, v, f }
                     door { id, open, dir } · vote { map } · ping { c }
                     act { a, i? }  what the free hand does, for the others to see (a: ACTS; i: the item used)
@@ -39,7 +39,7 @@ import { WebSocketServer } from 'ws';
 */
 
 export const PROTOCOL = 5;
-const ACTS = new Set(['slashLeft', 'slashRight', 'stab', 'throw', 'use', 'stop']);
+const ACTS = new Set(['cross', 'hook', 'throw', 'use', 'stop']);
 
 const PORT = Number(process.env.PORT ?? 8787);
 // only the Funnel proxy (and this machine) should reach the server; nothing else on the LAN
@@ -49,7 +49,9 @@ const ORIGINS = (process.env.ALLOW_ORIGINS ?? 'https://yigitsalihemecen.github.i
 const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 const MAX_CONNECTIONS = 40, MAX_ROOMS = 20, MAX_MSGS_PER_SEC = 120, HELLO_TIMEOUT = 5000;
 const TICK = 30;
-const MAX_HP = 150, REGEN_DELAY = 8, REGEN_RATE = 10; // mirrors src/player/vitals.js
+const REGEN_DELAY = 8, REGEN_RATE = 10; // mirrors src/player/vitals.js
+const CHAR_HP = { rivet: 125, kite: 100 }; // mirrors src/character/characters.js hp
+const maxHp = (char) => CHAR_HP[char] ?? CHAR_HP.rivet; // the client falls back to Rivet too
 // mirrors src/items/items.js: what a heal can restore and which vests exist
 const HEALS = [40, 150], ARMOUR_CAPS = [25, 50, 75], MAX_DROPS = 24;
 const SHIELD = 1.5, ROUND_PAUSE = 2.2;
@@ -72,13 +74,13 @@ function broadcast(room, msg, except) {
 
 const pub = (p) => ({ id: p.id, name: p.name, char: p.char, team: p.team, alive: p.alive, kills: p.kills, deaths: p.deaths, bot: p.bot || undefined });
 const people = (room, team) => [...room.players.values()].filter((p) => !p.bot && (!team || p.team === team));
-const fresh = (room) => ({ alive: room.pauseT <= 0 && !room.ended, kills: 0, deaths: 0, hp: MAX_HP, armour: 0, armourMax: 0, lastHurt: -99, shieldUntil: now() + SHIELD, sentHp: MAX_HP });
+const fresh = (room, char) => ({ char, alive: room.pauseT <= 0 && !room.ended, kills: 0, deaths: 0, hp: maxHp(char), armour: 0, armourMax: 0, lastHurt: -99, shieldUntil: now() + SHIELD, sentHp: maxHp(char) });
 
 /** A bot into an empty slot on `team`; one filling in mid-round sits it out (the round's dead wait too). */
 function addBot(room, team, { live = false, except } = {}) {
   const used = new Set([...room.players.values()].map((p) => p.name));
   const name = BOT_NAMES.find((n) => !used.has(n)) ?? `Bot ${nextId}`;
-  const b = { ws: null, bot: true, room, id: nextId++, name, char: room.players.size % 2 ? 'kite' : 'rivet', team, ...fresh(room) };
+  const b = { ws: null, bot: true, room, id: nextId++, name, team, ...fresh(room, room.players.size % 2 ? 'kite' : 'rivet') };
   if (!live) b.alive = false;
   room.players.set(b.id, b);
   broadcast(room, { t: 'join', player: pub(b) }, except);
@@ -105,7 +107,7 @@ function join(ws, msg) {
   const team = people(room, 'a').length <= people(room, 'b').length ? 'a' : 'b';
   const bot = [...room.players.values()].find((q) => q.bot && q.team === team);
   if (bot) { room.players.delete(bot.id); broadcast(room, { t: 'leave', id: bot.id }); }
-  const p = { ws, room, id: nextId++, name: clean(msg.name, 16) || 'Player', char: clean(msg.char, 12).toLowerCase() || 'rivet', team, ...fresh(room) };
+  const p = { ws, room, id: nextId++, name: clean(msg.name, 16) || 'Player', team, ...fresh(room, clean(msg.char, 12).toLowerCase() || 'rivet') };
   room.players.set(p.id, p);
   if (!room.host || !room.players.has(room.host)) room.host = p.id;
   fill(room, { live: room.players.size === 1, except: p }); // a new room starts with its bots in play; the welcome lists them
@@ -200,7 +202,7 @@ function drop(p, msg) {
 function vital(p, msg) {
   if (!p.alive) return;
   const v = Number(msg.v);
-  if (msg.op === 'heal' && HEALS.includes(v)) p.hp = Math.min(MAX_HP, p.hp + v);
+  if (msg.op === 'heal' && HEALS.includes(v)) p.hp = Math.min(maxHp(p.char), p.hp + v);
   else if (msg.op === 'wear' && ARMOUR_CAPS.includes(v)) { p.armourMax = v; p.armour = v; }
   else if (msg.op === 'charge') p.armour = p.armourMax;
   else return;
@@ -219,7 +221,7 @@ function pickWeapon(room) {
 function nextRound(room) {
   room.pauseT = 0;
   room.round = { n: (room.round?.n ?? 0) + 1, weapon: pickWeapon(room) };
-  for (const p of room.players.values()) Object.assign(p, { alive: true, hp: MAX_HP, armour: 0, armourMax: 0, lastHurt: -99, shieldUntil: now() + SHIELD });
+  for (const p of room.players.values()) Object.assign(p, { alive: true, hp: maxHp(p.char), armour: 0, armourMax: 0, lastHurt: -99, shieldUntil: now() + SHIELD });
   room.taken.clear(); // every map item back in place, dropped guns gone, doors shut
   room.doors.clear();
   room.drops.clear();
@@ -276,10 +278,11 @@ function tick(dt) {
     else if (room.pauseT > 0 && (room.pauseT -= dt) <= 0) nextRound(room);
     for (const [id, at] of room.taken) if (t - at > ITEM_RESPAWN) { room.taken.delete(id); broadcast(room, { t: 'back', id }); }
     for (const p of room.players.values()) {
-      if (!p.alive || p.hp >= MAX_HP || t - p.lastHurt <= REGEN_DELAY) continue;
-      p.hp = Math.min(MAX_HP, p.hp + REGEN_RATE * dt);
+      const max = maxHp(p.char);
+      if (!p.alive || p.hp >= max || t - p.lastHurt <= REGEN_DELAY) continue;
+      p.hp = Math.min(max, p.hp + REGEN_RATE * dt);
       // a few updates a second is plenty for a health bar
-      if (p.hp === MAX_HP || p.hp - p.sentHp >= 3) {
+      if (p.hp === max || p.hp - p.sentHp >= 3) {
         p.sentHp = p.hp;
         if (p.bot) send(room.players.get(room.host)?.ws, { t: 'bhurt', id: p.id, hp: p.hp });
         else send(p.ws, { t: 'hurt', ...vitals(p) });

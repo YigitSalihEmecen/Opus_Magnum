@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { ITEMS } from './items.js';
-import { buildKnife } from './models/knife.js';
 import { THROW } from './inventory.js';
 import { sample } from '../weapons/melee.js';
 import { poseArm } from '../character/robot.js';
@@ -9,7 +8,7 @@ import { characterById } from '../character/characters.js';
 /*
   First-person presentation of the item in use, in the viewmodel scene while the gun is lowered: the right
   hand brings it up, works it (a wobble while healing, a pulsing core while charging), or winds up and
-  throws a grenade, or swings the knife (weapons/melee.js hands over the pose). Driven by an action
+  throws a grenade, or throws a punch (weapons/melee.js hands over the fist's pose). Driven by an action
   { id, kind, t, time } from the inventory or the melee.
   The hand grips the item like a pistol grip (same hand frame and pose as the Lynx), so every character's
   arm fits it.
@@ -35,20 +34,12 @@ const THROW_KEYS = [
   [THROW.release + 0.12, [0.02, -0.16, -0.62, 42, -8, 12]],
   [THROW.time, [-0.02, -0.34, -0.5, 55, -10, 14]],
 ];
-HOLD.knife = { at: [0, -0.1, 0.112, -62, 0, 0], scale: 1.15 }; // blade tipped forward out of the fist
-/** Held things that aren't inventory items. The knife is rolled about its handle so the flat faces you. */
-const BUILD = {
-  knife: () => {
-    const g = new THREE.Group(), k = buildKnife();
-    k.rotation.y = -1.15;
-    g.add(k);
-    return g;
-  },
-};
 const ANCHOR = new THREE.Vector3(0.26, -0.42, 0.18);
 // a raised hand (the throw's wind-up and release) lifts the shoulder anchor, so the elbow comes up and out to the
 // side instead of the forearm pointing back into the lens
 const ANCHOR_HIGH = new THREE.Vector3(0.36, -0.1, 0.12), _anchor = new THREE.Vector3();
+// a punch reaches out from a shoulder low and far out to the right: the arm comes in from the side, the middle stays clear
+const ANCHOR_PUNCH = new THREE.Vector3(0.62, -0.44, 0.05);
 const MAX_BEND = 42 * D2R;
 const _wr = new THREE.Vector3(), _hq = new THREE.Quaternion(), _dir = new THREE.Vector3(), _back = new THREE.Vector3();
 const _q = new THREE.Quaternion(), _bq = new THREE.Quaternion(), _el = new THREE.Vector3(), _sh = new THREE.Vector3(), _pl = new THREE.Vector3();
@@ -91,7 +82,7 @@ export class Handheld {
 
   #model(id) {
     if (!this.models[id]) {
-      const m = (BUILD[id] ?? ITEMS[id].build)();
+      const m = ITEMS[id].build();
       const h = HOLD[id];
       setPose(m, h.at);
       m.scale.setScalar(h.scale);
@@ -111,13 +102,12 @@ export class Handheld {
     if (!on) return;
 
     for (const [id, m] of Object.entries(this.models)) m.visible = id === a.id;
-    const model = this.#model(a.id);
-    const h = HOLD[a.id];
-    let pose = h.frame;
+    const melee = a.kind === 'melee'; // bare-handed: a fist, nothing in it
+    const model = melee ? null : this.#model(a.id);
+    let pose = melee ? a.pose : HOLD[a.id].frame;
     let shake = 0;
-    if (a.kind === 'melee') {
-      pose = a.pose;
-      this.hand.userData.setCurl(1.35);
+    if (melee) {
+      this.hand.userData.setCurl(1.5, 1);
     } else if (a.kind === 'throw') {
       pose = sample(THROW_KEYS, a.t);
       model.visible = a.t < THROW.release;
@@ -139,14 +129,14 @@ export class Handheld {
     }
 
     this.scene.updateMatrixWorld();
-    this.#layArm();
+    this.#layArm(melee);
   }
 
   /** Same arm laying as the gun viewmodel: forearm toward the shoulder anchor, wrist bend capped. */
-  #layArm() {
+  #layArm(punch = false) {
     const wrist = this.hand.getWorldPosition(_wr);
     const handQ = this.hand.getWorldQuaternion(_hq);
-    const anchor = _anchor.copy(ANCHOR).lerp(ANCHOR_HIGH, THREE.MathUtils.smoothstep(wrist.y, -0.06, 0.1));
+    const anchor = punch ? _anchor.copy(ANCHOR_PUNCH) : _anchor.copy(ANCHOR).lerp(ANCHOR_HIGH, THREE.MathUtils.smoothstep(wrist.y, -0.06, 0.1));
     const dir = _dir.subVectors(anchor, wrist).normalize();
     const back = _back.set(0, 0, 1).applyQuaternion(handQ);
     const bend = dir.angleTo(back);

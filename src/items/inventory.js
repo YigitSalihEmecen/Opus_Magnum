@@ -1,5 +1,4 @@
 import { ITEMS } from './items.js';
-import { MAX_HP } from '../player/vitals.js';
 
 /*
   What the player carries: guns (arsenal indices, up to maxGuns), consumables, spare ammo, and the action in
@@ -120,7 +119,7 @@ export class Inventory {
     if (this.action) return;
     const it = ITEMS[id];
     if (!this.counts[id]) this.hud.toast(`No ${it.name.toLowerCase()}`);
-    else if (it.kind === 'heal' && this.vitals.hp >= MAX_HP) this.hud.toast('Health full');
+    else if (it.kind === 'heal' && this.vitals.hp >= this.vitals.max) this.hud.toast('Health full');
     else if (it.kind === 'charge' && !this.vitals.armourMax) this.hud.toast('No armour');
     else if (it.kind === 'charge' && !this.vitals.armourMissing) this.hud.toast('Armour full');
     else this.#start(id);

@@ -85,6 +85,20 @@ const CRATE = 1.2, CONTAINER = { L: 6.06, H: 2 * CRATE, D: 2.44 };
 export { DOOR };
 // walls standing on a slab reach down over its edge; slabs reach out to a wall's outer face
 const FLUSH = WALL_T / 2 - 0.006; // a slab's reach past a wall's centre line: just inside its outer face (no coplanar faces)
+/** Joining rules (maps/KIT.md): a trim or hidden strip stops INSET short of any face it would otherwise share. */
+const INSET = 0.004;
+const FRAME = 0.09, SILL = { proud: 0.05, reach: 0.1 }; // opening frame bar; a window sill's rise and side overhang
+
+/**
+ * A wall hole { x0, x1, y0, y1 } as its fillers see it: `clear` is the gap inside the frame (a window's from the
+ * sill's top), `outer` what the frame and sill take up on the wall face. Shutters hang beside `outer`, doors fill `clear`.
+ */
+export function opening(o) {
+  const sill = o.y0 > 0;
+  const clear = { x0: o.x0 + FRAME, x1: o.x1 - FRAME, y0: sill ? o.y0 + SILL.proud : o.y0, y1: o.y1 - FRAME };
+  const reach = sill ? SILL.reach : 0;
+  return { ...o, clear, outer: { x0: o.x0 - reach, x1: o.x1 + reach }, door: !sill && [1, 2].some((k) => Math.abs(o.x1 - o.x0 - k * DOOR.w) < 0.02) };
+}
 
 /**
  * Wall along X, exactly `len` long. holes: [{ x0, x1, y0, y1 }] (non-overlapping in x), each framed.
@@ -100,23 +114,30 @@ function wall(color, ctx, { len = 4, h = WALL_H, t = WALL_T, holes = [], drop = 
     if (!hole) piece(a, b, 0, h);
     else { piece(a, b, 0, hole.y0); piece(a, b, hole.y1, h); }
   }
-  const frame = mat(P.slate), F = 0.09, fd = t + 0.08, SILL = 0.05;
-  for (const o of holes) {
-    // a window's sill sits proud of the wall below (top SILL above the opening's base), and the frame stands on it
-    const base = o.y0 > 0 ? o.y0 + SILL : o.y0, hh = o.y1 - base;
+  const frame = mat(P.slate), F = FRAME, fd = t + 0.08;
+  const openings = holes.map(opening);
+  for (const [i, o] of holes.entries()) {
+    // a window's sill sits proud of the wall below, and the frame stands on it
+    const base = openings[i].clear.y0, hh = o.y1 - base;
     trim(rbox(g, F, hh, fd, o.x0 + F / 2, (base + o.y1) / 2, 0, frame, 0.02));
     trim(rbox(g, F, hh, fd, o.x1 - F / 2, (base + o.y1) / 2, 0, frame, 0.02));
     trim(rbox(g, o.x1 - o.x0 - 2 * F, F, fd, (o.x0 + o.x1) / 2, o.y1 - F / 2, 0, frame, 0.02));
-    if (o.y0 > 0) trim(sbox(g, o.x1 - o.x0 + 0.2, 0.09, t + 0.2, (o.x0 + o.x1) / 2, o.y0 + SILL - 0.045, 0, mat(P.ink)));
+    if (o.y0 > 0) trim(sbox(g, o.x1 - o.x0 + 2 * SILL.reach, 0.09, t + 0.2, (o.x0 + o.x1) / 2, base - 0.045, 0, mat(P.ink)));
   }
+  // every opening reports its exact size; whatever fills or dresses it (doors, shutters) is cut from this
+  g.userData.openings = openings;
   // door-sized openings at the wall's foot: the clear gap inside the frame, where play hangs a door (maps/doors.js)
-  const doorways = holes.filter((o) => o.y0 === 0 && [1, 2].some((k) => Math.abs(o.x1 - o.x0 - k * DOOR.w) < 0.02));
-  if (doorways.length) g.userData.doorways = doorways.map((o) => ({ x0: o.x0 + F, x1: o.x1 - F, h: o.y1 - F }));
-  if (ctx?.ground) piece(-L, L, -FOUND, 0);
-  // standing on a floor slab: cover the slab's edge so the facade runs on from the storey below
-  else if (drop || ctx?.slabUnderWall?.()) piece(-L, L, -(drop || SLAB), 0);
+  const doorways = openings.filter((o) => o.door);
+  if (doorways.length) g.userData.doorways = doorways.map((o) => ({ x0: o.clear.x0, x1: o.clear.x1, h: o.clear.y1 }));
+  // under the wall: a foundation into terrain, or a strip covering the edge of the slab it stands on. Under a
+  // floor-level opening its top drops INSET below the walking surface, so it never shares the floor's plane.
+  const under = ctx?.ground ? FOUND : drop || (ctx?.slabUnderWall?.() ? SLAB : 0);
+  if (under) for (let i = 0; i < xs.length - 1; i++) {
+    const a = xs[i], b = xs[i + 1], foot = holes.some((o) => o.y0 === 0 && o.x0 <= a + 1e-6 && o.x1 >= b - 1e-6);
+    piece(a, b, -under, foot ? -INSET : 0);
+  }
   // cap and kick stop a few mm short of the wall's ends, jambs and underside, so no face lies on a wall face
-  const E = 0.004;
+  const E = INSET;
   trim(sbox(g, len - 2 * E, 0.12, t + 0.08, 0, h + 0.06 - E, 0, mat(P.ink))); // just below a ceiling slab's underside
   if (h > 1) {
     // kick strip along the foot of the wall, broken at doorways (no sill to trip on)
@@ -185,6 +206,29 @@ function ramp(color) {
   return g;
 }
 
+/*
+  Railings. One builder for every rail in the kit: a top rail and a mid rail between two ends, posts between,
+  floor height running linearly from y0 to y1 (flat on walkways, the nosing line on stairs). The rails run
+  exactly from `from` to `to`; the caller decides what each end meets (maps/KIT.md):
+    · newel: a capped end post stands there and the rails end inside it
+    · a pier, a wall: the end lies just inside its face, so the rails die into it
+    · the next railing: the end is the joint; the rails meet end to end (map batching fuses them) and one
+      of the two pieces puts a post on the joint
+*/
+const RAIL_H = 1.0, NEWEL = 0.1;
+function railing(g, { from, to, y0 = 0, y1 = 0, z = 0, posts = [], newels = [], material = mat(P.slate) }) {
+  const L = to - from, yAt = (x) => y0 + ((x - from) / L) * (y1 - y0), a = Math.atan2(y1 - y0, L), len = Math.hypot(L, y1 - y0);
+  for (const [h, t] of [[RAIL_H - 0.04, 0.08], [RAIL_H / 2, 0.05]]) {
+    const r = sbox(g, len, t, t, (from + to) / 2, (y0 + y1) / 2 + h, z, material);
+    r.rotation.z = a;
+  }
+  for (const x of posts) sbox(g, 0.07, RAIL_H - INSET, 0.07, x, yAt(x) + (RAIL_H + INSET) / 2, z, material);
+  for (const x of newels) {
+    sbox(g, NEWEL, RAIL_H + 0.04, NEWEL, x, yAt(x) + (RAIL_H + 0.04) / 2, z, material);
+    trim(sbox(g, NEWEL + 0.05, 0.05, NEWEL + 0.05, x, yAt(x) + RAIL_H + 0.065, z, mat(P.ink)));
+  }
+}
+
 /** Stepped flight with a hidden ramp to walk on (movement has no step-up). */
 function stairs(color, ctx, { rise = 3.5, run = 6, w = 2, rail = true } = {}) {
   const g = new THREE.Group();
@@ -202,18 +246,18 @@ function stairs(color, ctx, { rise = 3.5, run = 6, w = 2, rail = true } = {}) {
   // landing edge) is what you walk on, and its sides and back block you like the steps look like they do
   const z0 = run / 2 + 0.3, z1 = -run / 2; // prism() maps the profile's first axis to -Z
   collider(g, prism([[-z0, -0.05], [-z1, rise], [-z1, -0.05]], w, 'x', 0), 0, 0, 0);
-  const len = Math.hypot(run, rise), a = Math.atan2(rise, run);
   if (rail) {
-    const railMat = mat(P.slate);
-    for (const s of [-1, 1]) {
-      const r = sbox(g, 0.06, 0.08, len, s * (w / 2 - 0.04), rise / 2 + 0.95, 0, railMat);
-      r.rotation.x = a;
-      for (let i = 0; i <= 3; i++) {
-        const z = run / 2 - (run * i) / 3 - (i === 0 ? 0.15 : i === 3 ? -0.15 : 0);
-        const y0 = THREE.MathUtils.clamp(((run / 2 - z) / run) * rise, 0, rise);
-        sbox(g, 0.06, 0.95, 0.06, s * (w / 2 - 0.04), y0 + 0.47, z, railMat);
-      }
-    }
+    // a flight as wide as its cell runs between the walls on the cell lines: its rails stand clear of their faces
+    const rx = w >= GRID ? w / 2 - WALL_T / 2 - 0.06 : w / 2 - 0.04;
+    // along the flight from its foot (x = -run/2) to its head, on the nosing line; capped newels at both ends
+    const r = new THREE.Group();
+    r.rotation.y = Math.PI / 2; // railing x → world -Z (up the flight), railing z → world X
+    g.add(r);
+    const from = -run / 2 + 0.12, to = run / 2 - 0.12, yAt = (x) => (rise * (x + run / 2)) / run;
+    const n = Math.max(2, Math.ceil((to - from) / 1.6));
+    const posts = Array.from({ length: n - 1 }, (_, i) => from + ((to - from) * (i + 1)) / n);
+    const walled = ctx?.wallBeside?.() ?? {}; // a side running along a wall needs no rail: the wall is the guard
+    for (const sd of [-1, 1]) if (!walled[sd]) railing(r, { from, to, y0: yAt(from), y1: yAt(to), z: sd * rx, posts, newels: [from, to] });
   }
   return g;
 }
@@ -414,13 +458,19 @@ function container(color) {
 function crate(color) {
   const g = new THREE.Group();
   const s = CRATE, wood = mat(color), band = mat(P.bookcloth);
-  rbox(g, s - 0.06, s - 0.06, s - 0.06, 0, s / 2, 0, wood, 0.05);
+  const body = s / 2 - 0.03, P_ = 0.14, B = 0.17; // body half-size, corner post and band widths
+  rbox(g, 2 * body, 2 * body, 2 * body, 0, s / 2, 0, wood, 0.05);
   for (const y of [0.09, s - 0.09]) rbox(g, s, 0.16, s, 0, y, 0, band, 0.04);
-  for (const x of [-1, 1]) for (const z of [-1, 1]) rbox(g, 0.14, s - 0.3, 0.14, x * (s / 2 - 0.07), s / 2, z * (s / 2 - 0.07), band, 0.04);
-  for (const z of [-1, 1]) {
-    const b = rbox(g, 1.1, 0.12, 0.05, 0, s / 2, z * (s / 2 + 0.005), band, 0.02);
-    b.rotation.z = z * Math.PI / 4;
+  for (const x of [-1, 1]) for (const z of [-1, 1]) rbox(g, P_, s - 0.3, P_, x * (s / 2 - P_ / 2), s / 2, z * (s / 2 - P_ / 2), band, 0.04);
+  // one diagonal brace per face, lying on the panel corner to corner between the posts and bands; its ends run
+  // into the frame and its face stays INSET under the frame's, so it reads as let into the frame, not stuck on
+  const pw = s - 2 * P_, ph = s - 2 * B, t = body + 0.004, depth = s / 2 - INSET - t;
+  const len = Math.hypot(pw, ph) + 0.12, a = Math.atan2(ph, pw), braces = [];
+  for (let i = 0; i < 4; i++) {
+    const brace = new THREE.BoxGeometry(len, 0.12, depth).rotateZ(i % 2 ? -a : a).translate(0, s / 2, t + depth / 2);
+    braces.push(brace.rotateY((i * Math.PI) / 2));
   }
+  add(g, mergeGeometries(braces), band);
   return g;
 }
 
@@ -483,17 +533,15 @@ function fuelPump(color) {
 function sandbags(color) {
   const g = new THREE.Group();
   const bag = new RoundedBoxGeometry(0.62, 0.2, 0.38, 3, 0.09);
-  const geos = [], ties = [];
+  const geos = [];
   for (let row = 0; row < 4; row++) {
     const n = row === 3 ? 2 : 3, off = row % 2 ? 0.32 : 0;
     for (let i = 0; i < n; i++) {
       const x = -0.64 + i * 0.64 + off + (row === 3 ? 0.32 : 0), y = 0.1 + row * 0.19, k = Math.sin(row * 7.3 + i * 3.1);
       geos.push(bag.clone().rotateY(k * 0.08).rotateZ(k * 0.04).translate(x, y, (row % 2 ? -0.03 : 0.03) + k * 0.02));
-      ties.push(new THREE.BoxGeometry(0.06, 0.12, 0.2).translate(x + 0.3, y, 0));
     }
   }
   add(g, mergeGeometries(geos), mat(color));
-  add(g, mergeGeometries(ties), mat(P.kraft)).userData.noCollide = true;
   return g;
 }
 
@@ -523,13 +571,16 @@ function canopy(color) {
   return g;
 }
 
-/** Market stall, 2.4 × 1.4: counter with produce crates, striped roof on four posts. Faces -Z. */
+/**
+ * Market stall, 2.6 × 1.4: counter with produce crates under a striped roof that slopes to the front. Faces -Z.
+ * The roof is a plane; its two beams ride its underside and every post is cut to end inside its beam, so posts
+ * neither poke through the roof nor stop short of it.
+ */
 function stall(color) {
   const g = new THREE.Group();
   const wood = mat(P.kraft), post = mat(P.slate);
   rbox(g, 2.4, 0.9, 0.7, 0, 0.45, -0.3, wood, 0.04);
-  sbox(g, 2.5, 0.06, 0.8, 0, 0.93, -0.3, mat(P.bookcloth));
-  for (const x of [-1.15, 1.15]) for (const z of [-0.65, 0.65]) add(g, cyl(0.04, 2.3, 8), post, x, 1.15, z);
+  sbox(g, 2.44, 0.06, 0.8, 0, 0.93, -0.3, mat(P.bookcloth));
   const fruit = [P.clay, 0xc6a03a, P.sage, 0xd9a05b];
   for (let i = 0; i < 3; i++) {
     const x = -0.75 + i * 0.75;
@@ -537,13 +588,20 @@ function stall(color) {
     const m = mat(fruit[(i + (color % 3)) % fruit.length]);
     for (let k = 0; k < 6; k++) add(g, ico(0.075, 0), m, x - 0.18 + (k % 3) * 0.18, 1.18, -0.46 + Math.floor(k / 3) * 0.18).userData.noCollide = true;
   }
-  const a = 0.22;
-  for (let i = 0; i < 5; i++) {
-    const strip = sbox(g, 0.52, 0.04, 1.7, -1.04 + i * 0.52, 2.38, -0.05, i % 2 ? mat(P.ivory) : mat(color));
-    strip.rotation.x = -a;
-    strip.userData.noCollide = true;
+  // roof plane: underside at y = MID + z·K (front low, back high)
+  const PX = 1.24, PZ = 0.6, MID = 2.33, K = 0.2, B = 0.08, a = Math.atan(K), c = Math.cos(a);
+  const roof = new THREE.Group();
+  roof.position.set(0, MID, 0);
+  roof.rotation.x = -a;
+  g.add(roof);
+  for (let i = 0; i < 5; i++) sbox(roof, 0.52, 0.04, 1.8, -1.04 + i * 0.52, 0.02, 0, i % 2 ? mat(P.ivory) : mat(color)).userData.noCollide = true;
+  sbox(roof, 2.6, 0.2, 0.03, 0, -0.1, -0.9 + 0.015, mat(color)).userData.noCollide = true; // valance
+  for (const z of [-PZ, PZ]) sbox(roof, 2.6, B, B, 0, -B / 2 - INSET, z / c, post); // beams under the roof
+  for (const x of [-PX, PX]) for (const z of [-PZ, PZ]) {
+    const h = MID + z * K - B / 2; // ends mid-beam
+    sbox(g, 0.07, h, 0.07, x, h / 2, z, post);
   }
-  rbox(g, 0.5, 0.5, 0.5, 0.8, 0.25, 0.4, wood, 0.04); // spare crate behind
+  rbox(g, 0.5, 0.5, 0.5, 0.7, 0.25, 0.32, wood, 0.04); // spare crate behind
   return g;
 }
 
@@ -910,6 +968,40 @@ function podium(color, ctx) {
   return g;
 }
 
+// ─────────────────────────── platforms ───────────────────────────
+// Raised decks: origin on the ground, walking surface H up, footprint on the 4 m grid. Each is a body block, a
+// top plate and an ink band, so neighbouring decks of one height fuse into one solid in play (map batching)
+// and anything placed on top lands on the plate. Flights and ramps rise to a deck height over a whole number of
+// metres, so placed against a deck edge on the 1 m snap their top lands flush on it.
+
+const PLATE = 0.12;
+function deck(H, w, d) {
+  return (color, ctx) => {
+    const g = new THREE.Group();
+    const base = ctx?.ground ? -FOUND : 0;
+    gbox(g, w, H - PLATE - base, d, 0, (H - PLATE + base) / 2, 0, color);
+    gbox(g, w, PLATE, d, 0, H - PLATE / 2, 0, P.manilla);
+    trim(sbox(g, w + 0.04, 0.08, d + 0.04, 0, H - PLATE - 0.04 - INSET, 0, mat(P.ink))).userData.noCollide = true;
+    if (H > 0.6) trim(sbox(g, w + 0.03, 0.16, d + 0.03, 0, 0.08 + INSET, 0, mat(P.slate))).userData.noCollide = true;
+    return g;
+  };
+}
+
+/** Wide ramp from the ground (+Z) up to a deck edge at -Z: run × w, top edge exactly H. */
+function deckRamp(H, run, w) {
+  return (color) => {
+    const g = new THREE.Group();
+    const a = Math.atan2(H, run), len = Math.hypot(H, run);
+    // wedge body (solid, walkable top), then a thin plate along the slope for the deck colour
+    add(g, prism([[-run / 2, 0], [run / 2, 0], [run / 2, H]], w, 'x', 0), mat(color));
+    const top = sbox(g, w, 0.04, len, 0, H / 2 + 0.02 * Math.cos(a) + INSET, 0, mat(P.manilla));
+    top.rotation.x = a;
+    top.userData.noCollide = true;
+    for (const s of [-1, 1]) { const k = trim(sbox(g, 0.06, 0.08, len, s * (w / 2 + 0.03 - INSET), H / 2, 0, mat(P.ink))); k.rotation.x = a; k.userData.noCollide = true; }
+    return g;
+  };
+}
+
 // ─────────────────────────── doors ───────────────────────────
 
 const DOOR_FRAME = 0.09; // a wall opening's jambs and head (wall() frames every hole with this)
@@ -1112,18 +1204,52 @@ function warehouse(color, ctx) {
   return g;
 }
 
-/** 4 m bridge deck with rails, for linking upper floors and roofs. */
-function walkway(color) {
+/**
+ * 4 × 4 m bridge bay, a full grid cell wide: its deck is a floor slab (top at its height), so it meets roof
+ * slabs and the next bay edge to edge (map batching fuses the run). Rails run inside the deck's long edges and
+ * read what each end of the bay meets (railing()): the next bay in line → the rail runs on; a roof whose
+ * parapet ends at that corner → a pier closes the corner and the rail dies into it; a wall → into the wall;
+ * anything else → a capped newel.
+ */
+function walkway(color, ctx) {
   const g = new THREE.Group();
-  gbox(g, 4, 0.3, 2.4, 0, -0.15, 0, color);
+  const rail = mat(P.slate), rz = 2 - 0.05, r = ctx?.rec ?? { x: 0, y: 0, z: 0, rot: 0 };
+  gbox(g, GRID, SLAB, GRID, 0, -SLAB / 2, 0, color);
   for (const s of [-1, 1]) {
-    sbox(g, 4, 0.08, 0.08, 0, 1.0, s * 1.16, mat(P.slate));
-    for (const x of [-1.9, 0, 1.9]) sbox(g, 0.07, 0.94, 0.07, x, 0.53, s * 1.16, mat(P.slate));
+    trim(sbox(g, GRID - 2 * INSET, 0.08, 0.06, 0, -0.04 - INSET, s * (2 + 0.03 - INSET), mat(P.ink))); // edge band, just under the deck top
+    sbox(g, GRID - 2 * INSET, 0.36, 0.16, 0, -SLAB - 0.18, s * 1.6, rail); // girders
   }
-  for (const s of [-1, 1]) sbox(g, 3.96, 0.36, 0.16, 0, -0.42, s * 1.08, mat(P.slate)); // girders, tucked inside the deck's edge
-  for (const x of [-1.5, 0, 1.5]) sbox(g, 0.12, 0.12, 2.1, x, -0.36, 0, mat(P.slate)); // cross ties
-  sbox(g, 4, 0.06, 0.08, 0, 0.03, -1.16, mat(P.ink));
-  sbox(g, 4, 0.06, 0.08, 0, 0.03, 1.16, mat(P.ink));
+  for (const x of [-1, 1]) sbox(g, 0.12, 0.12, 3.04, x, -SLAB - 0.06 - INSET, 0, rail); // cross ties
+
+  const room = (lx, lz, dy = 0) => ctx?.nearLocal?.('room', lx, lz, dy);
+  const letter = (lx, lz) => ctx?.sideOf?.(lx, lz) ?? '';
+  const parapet = (rm, side) => rm && !(rm.open ?? '').includes(side);
+  for (const s of [-1, 1]) {
+    const ends = [-1, 1].map((e) => {
+      const next = ctx?.nearLocal?.('walkway', e * 4, 0);
+      if (next && Math.abs(Math.sin((((next.rot ?? 0) - (r.rot ?? 0)) * Math.PI) / 180)) < 0.01) {
+        // joint with the next bay: the bay nearer the origin end of the world axes owns its post
+        const own = next.x + next.z > r.x + r.z;
+        return { x: e * 2, post: own ? e * 2 : null };
+      }
+      if (room(e * 4, 0)) return { x: e * (2 - WALL_T / 2 + 0.02) }; // a wall at this end (a door onto the bay)
+      const land = room(e * 4, 0, -STOREY);
+      if (land) {
+        // a parapet ends at this corner: the landing's own, along the rail's line, or the next roof's, across it
+        const along = !room(e * 4, s * 4, -STOREY) && parapet(land, letter(0, s));
+        const side = room(e * 4, s * 4, -STOREY);
+        const across = side && !room(e * 4, s * 4) && !room(0, s * 4, -STOREY) && parapet(side, letter(-e, 0));
+        if (along || across) {
+          place(g, jointPost('wall', RAIL_H, WALL_T, (along ? land : side).color ?? color, false, true), e * 2, 0, s * 2);
+          return { x: e * (2 - (WALL_T + 0.16) / 2 + 0.02) };
+        }
+      }
+      return { x: e * (2 - INSET - NEWEL / 2), newel: true };
+    });
+    const [lo, hi] = ends;
+    const posts = [-1, 1, lo.post, hi.post].filter((x) => x !== null && x !== undefined);
+    railing(g, { from: lo.x, to: hi.x, z: s * rz, posts, newels: ends.filter((e) => e.newel).map((e) => e.x), material: rail });
+  }
   return g;
 }
 
@@ -1140,6 +1266,28 @@ const hash = (x, y, z, salt) => { const v = Math.sin(x * 12.9898 + y * 78.233 + 
 const SIDES = [['N', 0, -1], ['S', 0, 1], ['W', -1, 0], ['E', 1, 0]];
 
 const SHUTTERS = [P.sage, P.sky, P.clay, P.olive, P.kraft];
+const SHUTTER_T = 0.045, SHUTTER_GAP = 0.006;
+const leaves = new Map();
+/** Louvred shutter leaf w × h × SHUTTER_T, centred: stiles, rails and angled slats in one geometry (cached per size). */
+function shutterLeaf(w, h) {
+  const k = `${w.toFixed(3)}|${h.toFixed(3)}`;
+  if (leaves.has(k)) return leaves.get(k);
+  const S = 0.06, R = 0.08, parts = [];
+  for (const s of [-1, 1]) parts.push(new THREE.BoxGeometry(S, h, SHUTTER_T).translate(s * (w - S) / 2, 0, 0));
+  for (const s of [-1, 1]) parts.push(new THREE.BoxGeometry(w - 2 * S, R, SHUTTER_T).translate(0, s * (h - R) / 2, 0));
+  parts.push(new THREE.BoxGeometry(w - 2 * S, 0.06, SHUTTER_T).translate(0, 0, 0)); // mid rail
+  const pitch = 0.075, inner = h / 2 - R;
+  for (const half of [-1, 1]) {
+    const n = Math.floor((inner - 0.03) / pitch);
+    for (let i = 0; i < n; i++) {
+      const y = half * (0.03 + pitch * (i + 0.5));
+      parts.push(new THREE.BoxGeometry(w - 2 * S + 0.01, 0.012, SHUTTER_T * 0.9).rotateX(0.7).translate(0, y, 0));
+    }
+  }
+  const geo = mergeGeometries(parts);
+  leaves.set(k, geo);
+  return geo;
+}
 /**
  * Small facade life on an outside wall (wall-local: along X, outward = +Z or -Z per side): shutters by
  * windows, a canopy over doors, a striped awning over shopfronts, balconies, AC boxes and downpipes on
@@ -1150,10 +1298,13 @@ function facade(w, color, kind, { side, level, balcony, roll }) {
   const deco = (m) => { m.userData.noCollide = true; return m; };
   const tint = SHUTTERS.find((c, i) => c !== color && roll(60 + i) < 0.5) ?? P.slate;
   const sign = level > 0 && kind !== 'door' && roll(9) < 0.16; // room() hangs a blade sign here: keep clear
-  if (kind === 'window' && !sign && roll(50) < 0.55) {
-    for (const s of [-1, 1]) {
-      deco(rbox(w, 0.55, 1.36, 0.06, s * 1.0, 1.65, face + o * 0.04, mat(tint), 0.02));
-      for (let i = 0; i < 4; i++) deco(sbox(w, 0.46, 0.03, 0.03, s * 1.0, 1.15 + i * 0.32, face + o * 0.08, mat(P.ink)));
+  const hole = w.userData.openings?.[0];
+  if (kind === 'window' && hole && !sign && roll(50) < 0.55) {
+    // hinged on the frame's outer edge, standing on the sill up to the head; closed, the pair covers the framed hole
+    const lw = (hole.x1 - hole.x0) / 2 - SHUTTER_GAP, y0 = hole.clear.y0 + INSET, lh = hole.y1 - y0;
+    const leaf = shutterLeaf(lw, lh);
+    for (const x of [hole.x0 - SHUTTER_GAP - lw / 2, hole.x1 + SHUTTER_GAP + lw / 2]) {
+      deco(add(w, leaf, mat(tint), x, y0 + lh / 2, face + o * (INSET + SHUTTER_T / 2)));
     }
   }
   if (kind === 'door' && !balcony) {
@@ -1163,12 +1314,19 @@ function facade(w, color, kind, { side, level, balcony, roll }) {
     for (const s of [-1, 1]) { const b = deco(sbox(w, 0.05, 0.05, 0.86, s * 0.85, 2.36, face + o * 0.4, mat(P.ink))); b.rotation.x = -o * 0.42; }
   }
   if (kind === 'shop') {
-    const a = 0.36;
-    for (let i = 0; i < 7; i++) {
-      const strip = deco(sbox(w, 0.5, 0.05, 1.3, -1.5 + i * 0.5, 2.62, face + o * 0.6, i % 2 ? mat(P.ivory) : mat(tint)));
-      strip.rotation.x = -o * a;
+    // hinged on the wall above the openings, sloping down and out; the valance hangs off the outer edge
+    const YT = 2.95, R = 1.2, D = 0.4, T = 0.05, a = Math.atan2(D, R), len = Math.hypot(R, D), W = 3.5, n = 7;
+    for (let i = 0; i < n; i++) {
+      const strip = deco(sbox(w, W / n, T, len, -W / 2 + (i + 0.5) * (W / n), YT - D / 2 + T / 2 / Math.cos(a), face + o * R / 2, i % 2 ? mat(P.ivory) : mat(tint)));
+      strip.rotation.x = o * a; // outer end low
     }
-    deco(sbox(w, 3.5, 0.24, 0.03, 0, 2.3, face + o * 1.22, mat(tint)));
+    deco(sbox(w, W, 0.24, 0.03, 0, YT - D - 0.12 + INSET, face + o * (R + 0.015), mat(tint))); // valance
+    deco(trim(sbox(w, W + 0.06, 0.08, 0.06, 0, YT + 0.02, face + o * 0.03, mat(P.ink)))); // header bar on the wall
+    for (const s of [-1, 1]) { // brackets from the wall up to the outer edge's underside
+      const lo = YT - 0.5, hi = YT - D - 0.04, bl = Math.hypot(R, hi - lo);
+      const b = deco(sbox(w, 0.05, 0.05, bl, s * (W / 2 - 0.08), (lo + hi) / 2, face + o * R / 2, mat(P.ink)));
+      b.rotation.x = -o * Math.atan2(hi - lo, R); // outer end high
+    }
   }
   if (balcony) {
     sbox(w, 2.4, 0.14, 1.05, 0, -0.05, face + o * 0.52, mat(P.cloud));
@@ -1222,6 +1380,13 @@ function room(color, ctx) {
     }
     const terrace = has(dx * 4, dz * 4, -STOREY); // the room beside us is a storey lower: its roof is our doorstep
     const roll = H(side.charCodeAt(0));
+    // a flight running along this wall: blank, nothing hung on it (no window, sign or AC box behind the steps)
+    const cx = (r.x ?? 0) + dx * 2, cz = (r.z ?? 0) + dz * 2, ex = dz ? 2 : 0, ez = dx ? 2 : 0;
+    const stair = !!ctx?.stairAlong?.([cx - ex, cz - ez], [cx + ex, cz + ez], r.y ?? 0, (r.y ?? 0) + STOREY);
+    if (stair && !forced(side)) {
+      place(g, wall(color, level === 0 ? ctx : null, { drop: onSlab ? SLAB : 0 }), dx * 2, 0, dz * 2, dx ? Math.PI / 2 : 0);
+      continue;
+    }
     let kind;
     if (forced(side)) kind = 'door';
     // mostly blank walls: openings are rare enough to mean something
@@ -1245,7 +1410,12 @@ function room(color, ctx) {
       const face = rbox(g, ...panel, px, 1.6, pz, glow(c), 0.02);
       face.userData.noCollide = true;
       face.castShadow = false;
-      rbox(g, dx ? 0.5 : 0.06, 0.06, dz ? 0.5 : 0.06, dx * (2 + off / 2), 2.4, dz * (2 + off / 2), mat(P.slate), 0.01).userData.noCollide = true;
+      // hung from an arm along its top: a plate on the wall face, the arm out to the sign's far edge, resting on it
+      const top = 1.6 + 0.9, wallFace = 2 + WALL_T / 2, reach = 2 + off + 0.39 + 0.04, mid = (wallFace + reach) / 2;
+      const at = (out, along2) => [dx * out + (dz ? along2 : 0), dz * out + (dx ? along2 : 0)];
+      const [ax, az] = at(mid, along), [wx, wz] = at(wallFace + 0.02, along);
+      sbox(g, dx ? reach - wallFace : 0.06, 0.06, dz ? reach - wallFace : 0.06, ax, top + 0.03, az, mat(P.slate)).userData.noCollide = true;
+      sbox(g, dx ? 0.04 : 0.18, 0.24, dz ? 0.04 : 0.18, wx, top + 0.03, wz, mat(P.ink)).userData.noCollide = true; // wall plate
     }
   }
 
@@ -1271,6 +1441,12 @@ function room(color, ctx) {
     for (const [sx, sz, a, b] of [[-1, -1, 'W', 'N'], [1, -1, 'E', 'N'], [-1, 1, 'W', 'S'], [1, 1, 'E', 'S']]) {
       const open = (side, dx, dz) => !has(dx, dz) && !(r.open ?? '').includes(side);
       if (open(a, sx * 4, 0) && open(b, 0, sz * 4)) place(g, jointPost('wall', 0.75, WALL_T, color, false, true), sx * 2, top, sz * 2);
+      // inside corner of an L-shaped roof: the two neighbours' parapets meet here at right angles, each ending on
+      // the corner line. This room (the cell across from the gap) owns the corner and covers it with a post.
+      const nx = ctx?.near('room', sx * 4, 0), nz = ctx?.near('room', 0, sz * 4);
+      if (nx && nz && !has(sx * 4, sz * 4) && !has(sx * 4, 0, STOREY) && !has(0, sz * 4, STOREY) && !(nx.open ?? '').includes(b) && !(nz.open ?? '').includes(a)) {
+        place(g, jointPost('wall', 0.75, WALL_T, nx.color ?? color, false, true), sx * 2, top, sz * 2);
+      }
     }
     // rooftop clutter
     const pickRoof = r.clear ? 1 : H(77);
@@ -1312,29 +1488,39 @@ function room(color, ctx) {
 const WALL_COLORS = [P.ivory, P.oat, P.manilla, P.kraft, P.sage, P.sky, P.clay, P.bookcloth, P.slate];
 const PAINT = [P.clay, P.sky, P.sage, P.kraft, P.ivory, P.slate, P.olive];
 const LEAF = [P.sage, P.olive, 0x9aa86f, P.kraft];
+const DECK_COLORS = [P.oat, P.ivory, P.kraft, P.sage, P.sky, P.slate];
+const STAIR_COLORS = [P.ivory, P.oat, P.kraft, P.cloud, P.slate];
 const W = (len = 4, h = WALL_H) => ({ kind: 'wall', len, h, t: WALL_T });
+/** A wall piece; its holes are kept on the asset so neighbours (stairs) can see its openings. */
+const wl = (o = {}) => ({ holes: o.holes ?? [], build: (c, x) => wall(c, x, o) });
+/** A flight piece; its size is kept on the asset (stairSides) and it adapts its rails to walls beside it. */
+const flight = (o) => { const st = { rise: STOREY, run: 6, w: 2, rail: true, ...o }; return { stair: st, adapt: true, build: (c, x) => stairs(c, x, st) }; };
 
-export const CATEGORIES = ['Buildings', 'Walls', 'Parts', 'Roads', 'Waterfront', 'Props', 'Nature', 'Vehicles', 'Barriers', 'Gameplay', 'Items', 'Terrain'];
+export const CATEGORIES = ['Buildings', 'Walls', 'Parts', 'Platforms', 'Roads', 'Waterfront', 'Props', 'Nature', 'Vehicles', 'Barriers', 'Gameplay', 'Items', 'Terrain'];
 
 export const ASSETS = [
-  { id: 'wall', cat: 'Walls', name: 'Wall', note: '4 m', colors: WALL_COLORS, link: W(), build: (c, x) => wall(c, x) },
-  { id: 'wall_window', cat: 'Walls', name: 'Window wall', note: '4 m', colors: WALL_COLORS, link: W(), build: (c, x) => wall(c, x, { holes: [{ x0: -0.7, x1: 0.7, y0: 1.0, y1: 2.3 }] }) },
-  { id: 'wall_wide', cat: 'Walls', name: 'Wide window', note: '4 m', colors: WALL_COLORS, link: W(), build: (c, x) => wall(c, x, { holes: [{ x0: -1.4, x1: 1.4, y0: 1.0, y1: 2.3 }] }) },
-  { id: 'wall_door', cat: 'Walls', name: 'Door wall', note: '4 m', colors: WALL_COLORS, link: W(), build: (c, x) => wall(c, x, { holes: [{ x0: -0.65, x1: 0.65, y0: 0, y1: 2.3 }] }) },
-  { id: 'wall_shop', cat: 'Walls', name: 'Shopfront', note: '4 m', colors: WALL_COLORS, link: W(), build: (c, x) => wall(c, x, { holes: [{ x0: -1.7, x1: -0.5, y0: 0, y1: 2.4 }, { x0: -0.3, x1: 1.7, y0: 0.55, y1: 2.4 }] }) },
-  { id: 'wall_gate', cat: 'Walls', name: 'Gateway', note: '4 m', colors: WALL_COLORS, link: W(), build: (c, x) => wall(c, x, { holes: [{ x0: -1.25, x1: 1.25, y0: 0, y1: 2.6 }] }) },
-  { id: 'wall_short', cat: 'Walls', name: 'Short wall', note: '2 m', colors: WALL_COLORS, link: W(2), build: (c, x) => wall(c, x, { len: 2 }) },
-  { id: 'wall_short_door', cat: 'Walls', name: 'Short door wall', note: '2 m', colors: WALL_COLORS, link: W(2), build: (c, x) => wall(c, x, { len: 2, holes: HOLES.door }) },
-  { id: 'wall_short_window', cat: 'Walls', name: 'Short window', note: '2 m', colors: WALL_COLORS, link: W(2), build: (c, x) => wall(c, x, { len: 2, holes: [{ x0: -0.5, x1: 0.5, y0: 1.0, y1: 2.3 }] }) },
-  { id: 'wall_half', cat: 'Walls', name: 'Half wall', note: 'cover · 4 m', colors: WALL_COLORS, link: W(4, 1.15), build: (c, x) => wall(c, x, { h: 1.15 }) },
-  { id: 'parapet', cat: 'Walls', name: 'Parapet', note: 'roof edge', colors: WALL_COLORS, link: W(4, 0.75), build: (c, x) => wall(c, x, { h: 0.75 }) },
+  { id: 'wall', cat: 'Walls', name: 'Wall', note: '4 m', colors: WALL_COLORS, link: W(), ...wl() },
+  { id: 'wall_window', cat: 'Walls', name: 'Window wall', note: '4 m', colors: WALL_COLORS, link: W(), ...wl({ holes: [{ x0: -0.7, x1: 0.7, y0: 1.0, y1: 2.3 }] }) },
+  { id: 'wall_wide', cat: 'Walls', name: 'Wide window', note: '4 m', colors: WALL_COLORS, link: W(), ...wl({ holes: [{ x0: -1.4, x1: 1.4, y0: 1.0, y1: 2.3 }] }) },
+  { id: 'wall_door', cat: 'Walls', name: 'Door wall', note: '4 m', colors: WALL_COLORS, link: W(), ...wl({ holes: [{ x0: -0.65, x1: 0.65, y0: 0, y1: 2.3 }] }) },
+  { id: 'wall_shop', cat: 'Walls', name: 'Shopfront', note: '4 m', colors: WALL_COLORS, link: W(), ...wl({ holes: [{ x0: -1.7, x1: -0.5, y0: 0, y1: 2.4 }, { x0: -0.3, x1: 1.7, y0: 0.55, y1: 2.4 }] }) },
+  { id: 'wall_gate', cat: 'Walls', name: 'Gateway', note: '4 m', colors: WALL_COLORS, link: W(), ...wl({ holes: [{ x0: -1.25, x1: 1.25, y0: 0, y1: 2.6 }] }) },
+  { id: 'wall_short', cat: 'Walls', name: 'Short wall', note: '2 m', colors: WALL_COLORS, link: W(2), ...wl({ len: 2 }) },
+  { id: 'wall_short_door', cat: 'Walls', name: 'Short door wall', note: '2 m', colors: WALL_COLORS, link: W(2), ...wl({ len: 2, holes: HOLES.door }) },
+  { id: 'wall_short_window', cat: 'Walls', name: 'Short window', note: '2 m', colors: WALL_COLORS, link: W(2), ...wl({ len: 2, holes: [{ x0: -0.5, x1: 0.5, y0: 1.0, y1: 2.3 }] }) },
+  { id: 'wall_half', cat: 'Walls', name: 'Half wall', note: 'cover · 4 m', colors: WALL_COLORS, link: W(4, 1.15), ...wl({ h: 1.15 }) },
+  { id: 'parapet', cat: 'Walls', name: 'Parapet', note: 'roof edge', colors: WALL_COLORS, link: W(4, 0.75), ...wl({ h: 0.75 }) },
   { id: 'pillar', cat: 'Walls', name: 'Pillar', note: 'column', colors: WALL_COLORS, build: pillar },
 
   { id: 'floor', cat: 'Parts', name: 'Floor slab', note: '4 × 4 · top at its height', colors: [P.ivory, P.oat, P.manilla, P.slate, P.sage], build: (c, x) => floor(c, x) },
   { id: 'floor_strip', cat: 'Parts', name: 'Floor strip', note: '2 × 4', colors: [P.ivory, P.oat, P.manilla, P.slate, P.sage], build: (c, x) => floor(c, x, { w: 4, d: 2 }) },
-  { id: 'stairs', cat: 'Parts', name: 'Staircase', note: 'one storey', colors: [P.ivory, P.oat, P.kraft, P.cloud, P.slate], build: (c, x) => stairs(c, x) },
-  { id: 'stairs_open', cat: 'Parts', name: 'Open stairs', note: 'one storey · no rails', colors: [P.oat, P.ivory, P.kraft, P.cloud, P.slate], build: (c, x) => stairs(c, x, { rail: false }) },
-  { id: 'steps', cat: 'Parts', name: 'Steps', note: 'rises 1.75 m', colors: [P.ivory, P.oat, P.kraft, P.slate], build: (c, x) => stairs(c, x, { rise: 1.75, run: 3, rail: false }) },
+  // flights: full width fills a 4 m cell like a walkway or deck; half width (2 m) sits at either side of a cell
+  // or in its middle on the 1 m snap, and two halves side by side make a full one
+  { id: 'stairs', cat: 'Parts', name: 'Staircase', note: 'one storey · 4 wide', colors: STAIR_COLORS, ...flight({ w: GRID }) },
+  { id: 'stairs_open', cat: 'Parts', name: 'Open stairs', note: 'one storey · 4 wide · no rails', colors: STAIR_COLORS, ...flight({ w: GRID, rail: false }) },
+  { id: 'stairs_half', cat: 'Parts', name: 'Half staircase', note: 'one storey · 2 wide', colors: STAIR_COLORS, ...flight({ w: GRID / 2 }) },
+  { id: 'stairs_half_open', cat: 'Parts', name: 'Half open stairs', note: 'one storey · 2 wide · no rails', colors: STAIR_COLORS, ...flight({ w: GRID / 2, rail: false }) },
+  { id: 'steps', cat: 'Parts', name: 'Steps', note: 'rises 1.75 m · 2 wide', colors: STAIR_COLORS, ...flight({ rise: 1.75, run: 3, rail: false }) },
   { id: 'ramp', cat: 'Parts', name: 'Ramp', note: 'rises half a storey', colors: [P.manilla, P.sky, P.ivory, P.sage], build: ramp },
   { id: 'roof', cat: 'Parts', name: 'Roof slope', note: 'pair for 8 m', colors: [P.clay, P.slate, P.sage, P.kraft, P.sky], build: roofSlope },
   { id: 'gable', cat: 'Parts', name: 'Gable', note: '8 m end', colors: WALL_COLORS, build: gable },
@@ -1353,7 +1539,18 @@ export const ASSETS = [
   { id: 'shoprow', cat: 'Buildings', name: 'Shop row', note: '12 × 8', colors: [P.ivory, P.manilla, P.sky, P.sage, P.kraft], snap: 2, build: shopRow },
   { id: 'house', cat: 'Buildings', name: 'House', note: '8 × 8 · gabled', colors: [P.ivory, P.manilla, P.sage, P.sky, P.kraft], snap: 2, build: house },
   { id: 'warehouse', cat: 'Buildings', name: 'Warehouse', note: '16 × 12', colors: [P.oat, P.sage, P.sky, P.kraft, P.ivory], snap: 2, build: warehouse },
-  { id: 'walkway', cat: 'Parts', name: 'Walkway', note: 'bridge · 4 m', colors: [P.oat, P.ivory, P.slate], build: walkway },
+  { id: 'walkway', cat: 'Parts', name: 'Walkway', note: 'bridge · 4 m · rails adapt', colors: [P.oat, P.ivory, P.slate], adapt: true, build: walkway },
+
+  { id: 'deck_low', cat: 'Platforms', name: 'Low deck', note: '4 × 4 · 0.5 m · step up', colors: DECK_COLORS, tile: 4, build: deck(0.5, 4, 4) },
+  { id: 'deck_half', cat: 'Platforms', name: 'Deck', note: '4 × 4 · half storey', colors: DECK_COLORS, tile: 4, build: deck(HALF_STOREY, 4, 4) },
+  { id: 'deck_full', cat: 'Platforms', name: 'High deck', note: '4 × 4 · one storey', colors: DECK_COLORS, tile: 4, build: deck(STOREY, 4, 4) },
+  { id: 'deck_big', cat: 'Platforms', name: 'Big deck', note: '8 × 8 · half storey', colors: DECK_COLORS, snap: 4, snapOff: 2, build: deck(HALF_STOREY, 8, 8) },
+  { id: 'deck_small', cat: 'Platforms', name: 'Riser', note: '2 × 2 · 1 m', colors: DECK_COLORS, build: deck(1, 2, 2) },
+  { id: 'flight_low', cat: 'Platforms', name: 'Low steps', note: 'to a low deck · 4 wide', colors: STAIR_COLORS, ...flight({ rise: 0.5, run: 2, w: GRID, rail: false }) },
+  { id: 'flight_half', cat: 'Platforms', name: 'Deck steps', note: 'to a deck · 4 wide', colors: STAIR_COLORS, ...flight({ rise: HALF_STOREY, run: 4, w: GRID, rail: false }) },
+  { id: 'flight_half_narrow', cat: 'Platforms', name: 'Half deck steps', note: 'to a deck · 2 wide', colors: STAIR_COLORS, ...flight({ rise: HALF_STOREY, run: 4, w: GRID / 2, rail: false }) },
+  { id: 'flight_full', cat: 'Platforms', name: 'Deck stairs', note: 'to a high deck · 4 wide', colors: STAIR_COLORS, ...flight({ w: GRID }) },
+  { id: 'deck_ramp', cat: 'Platforms', name: 'Deck ramp', note: 'to a deck · 4 × 8', colors: DECK_COLORS, build: deckRamp(HALF_STOREY, 8, 4) },
 
   { id: 'road_curve', cat: 'Roads', name: 'Bend', note: 'radius 10 m', colors: [0x5b5a55], fixed: true, snap: 4, ports: curvePorts(10), build: roadCurve(10) },
   { id: 'road_curve_wide', cat: 'Roads', name: 'Wide bend', note: 'radius 18 m', colors: [0x5b5a55], fixed: true, snap: 4, ports: curvePorts(18), build: roadCurve(18) },
@@ -1366,7 +1563,7 @@ export const ASSETS = [
   { id: 'dumpster', cat: 'Props', name: 'Dumpster', note: '2.2 m', colors: [P.sage, P.sky, P.clay, P.slate], build: dumpster },
   { id: 'sandbags', cat: 'Props', name: 'Sandbags', note: 'cover · 2 m', colors: [P.kraft, P.oat, P.sage], build: sandbags },
   { id: 'planter', cat: 'Props', name: 'Planter', note: '2 × 1 · cover', colors: [P.oat, P.ivory, P.cloud, P.kraft], build: planter },
-  { id: 'stall', cat: 'Props', name: 'Market stall', note: '2.4 m', colors: [P.clay, P.sky, P.sage, P.kraft], build: stall },
+  { id: 'stall', cat: 'Props', name: 'Market stall', note: '2.6 m', colors: [P.clay, P.sky, P.sage, P.kraft], build: stall },
   { id: 'pole', cat: 'Props', name: 'Utility pole', note: '7.5 m', colors: [P.kraft, P.bookcloth, P.cloud], build: pole },
   { id: 'bench', cat: 'Props', name: 'Bench', note: '1.8 m', colors: [P.kraft, P.sage, P.sky], build: bench },
   { id: 'lamp', cat: 'Props', name: 'Street lamp', note: '5 m', colors: [P.slate, P.ink, P.sage], build: lamp },
@@ -1397,6 +1594,54 @@ export const ASSETS = [
 
 export const assetById = (id) => ASSETS.find((a) => a.id === id);
 
+// ─────────────────────────── stairs against walls ───────────────────────────
+// A flight's two long sides are segments on the ground plan; so is every wall run (wall pieces, room walls).
+// A wall lying along a flight's side (same line within half a wall's thickness, sharing at least 0.3 m, and
+// overlapping in height) means: the flight drops its rail on that side, a room wall there turns blank, and a
+// wall piece with an opening there can't be placed (the editor refuses it; see wallConflict()).
+
+const toWorld = (rec, lx, lz) => {
+  const t = ((rec.rot ?? 0) * Math.PI) / 180, c = Math.cos(t), sn = Math.sin(t);
+  return [rec.x + lx * c + lz * sn, rec.z - lx * sn + lz * c];
+};
+/** The flight's sides s = -1, 1: { s, a: [x, z], b: [x, z], y0, y1 }. */
+function stairSides(rec, st) {
+  const y = rec.y ?? 0;
+  return [-1, 1].map((s) => ({ s, a: toWorld(rec, (s * st.w) / 2, -st.run / 2), b: toWorld(rec, (s * st.w) / 2, st.run / 2), y0: y, y1: y + st.rise }));
+}
+/** Every wall run in the map: { a, b, y0, y1, holes (wall-local x from the centre) | null for room walls, rec }. */
+function wallRuns(records, roomAt) {
+  const out = [];
+  for (const r of records) {
+    const as = assetById(r.type), y = r.y ?? 0;
+    if (as?.link?.kind === 'wall') {
+      const L = as.link.len / 2;
+      out.push({ a: toWorld(r, -L, 0), b: toWorld(r, L, 0), y0: y, y1: y + as.link.h, holes: as.holes ?? [], rec: r });
+    } else if (r.type === 'room') {
+      for (const [side, dx, dz] of SIDES) {
+        const nb = roomAt(r.x + dx * 4, y, r.z + dz * 4);
+        if (nb && (nb.color === r.color || !(side === 'E' || side === 'S'))) continue;
+        const cx = r.x + dx * 2, cz = r.z + dz * 2, ex = dz ? 2 : 0, ez = dx ? 2 : 0;
+        out.push({ a: [cx - ex, cz - ez], b: [cx + ex, cz + ez], y0: y, y1: y + STOREY, holes: null, rec: r });
+      }
+    }
+  }
+  return out;
+}
+/** Where `seg` lies along `wall`: the shared stretch in wall-local x (from the wall's centre), or null. */
+function alongWall(wall, seg) {
+  const [ax, az] = wall.a, [bx, bz] = wall.b, L = Math.hypot(bx - ax, bz - az), ux = (bx - ax) / L, uz = (bz - az) / L;
+  const sx = seg.b[0] - seg.a[0], sz = seg.b[1] - seg.a[1], sl = Math.hypot(sx, sz);
+  if (Math.abs(ux * sz - uz * sx) / sl > 0.02) return null; // not parallel
+  const off = (p) => Math.abs((p[0] - ax) * uz - (p[1] - az) * ux);
+  if (off(seg.a) > WALL_T / 2 + 0.07 || off(seg.b) > WALL_T / 2 + 0.07) return null; // not on the wall's line
+  if (Math.min(wall.y1, seg.y1) - Math.max(wall.y0, seg.y0) < 0.1) return null; // different heights
+  const t = (p) => (p[0] - ax) * ux + (p[1] - az) * uz - L / 2;
+  const u0 = Math.max(-L / 2, Math.min(t(seg.a), t(seg.b))), u1 = Math.min(L / 2, Math.max(t(seg.a), t(seg.b)));
+  return u1 - u0 > 0.3 ? [u0, u1] : null;
+}
+const opensOn = (wall, [u0, u1]) => !!wall.holes?.some((h) => h.x1 > u0 + 0.01 && h.x0 < u1 - 0.01);
+
 /**
  * Neighbour lookup for adaptive tiles: near(family, dx, dz) is true when a tile of that family sits at
  * this tile's position + (dx, dz) at the same height.
@@ -1406,23 +1651,62 @@ export function makeContext(records, groundAt) {
   const k = (fam, x, y, z) => `${fam}|${Math.round(x * 2)}|${Math.round(y * 5)}|${Math.round(z * 2)}`;
   for (const r of records) {
     const a = assetById(r.type);
-    if (a?.tile) tiles.set(k(r.type, r.x, r.y ?? 0, r.z), r);
-    if (r.type === 'floor') tiles.set(k('floor', r.x, r.y ?? 0, r.z), r);
+    tiles.set(k(r.type, r.x, r.y ?? 0, r.z), r);
+    // 4 × 4 walking slabs whose top is their y: a floor's open side stops at any of them instead of reaching over
+    if (r.type === 'floor' || r.type === 'walkway' || r.type === 'dock') tiles.set(k('slab', r.x, r.y ?? 0, r.z), r);
     // bends expose their two end cells as road so straights snap onto them
     if (a?.ports) {
       const t = ((r.rot ?? 0) * Math.PI) / 180, c = Math.cos(t), sn = Math.sin(t);
       for (const [px, pz] of a.ports) tiles.set(k('road', r.x + px * c + pz * sn, r.y ?? 0, r.z - px * sn + pz * c), true);
     }
   }
+  const roomAt = (x, y, z) => tiles.get(k('room', x, y, z));
+  let runs, sides;
+  const allRuns = () => (runs ??= wallRuns(records, roomAt));
+  const allSides = () => (sides ??= records.flatMap((r) => { const st = assetById(r.type)?.stair; return st ? stairSides(r, st) : []; }));
   return (rec) => ({
     rec,
+    /** Flights only: for each side s = -1, 1, whether a wall runs along it. */
+    wallBeside() {
+      const st = assetById(rec.type)?.stair;
+      if (!st) return {};
+      const out = {};
+      for (const side of stairSides(rec, st)) out[side.s] = allRuns().some((w) => w.rec !== rec && alongWall(w, side));
+      return out;
+    },
+    /** Is a flight running along the wall segment a → b (world x, z) between heights y0 and y1? */
+    stairAlong(a, b, y0, y1) { return allSides().some((side) => alongWall({ a, b, y0, y1 }, side)); },
+    /**
+     * Editor rule: a flight can't run along an opening in a wall piece (room walls go blank by themselves).
+     * True when this record is a flight beside such an opening, or a wall piece whose opening has a flight beside it.
+     */
+    wallConflict() {
+      const a = assetById(rec.type);
+      if (a?.stair) return stairSides(rec, a.stair).some((side) => allRuns().some((w) => { const u = w.holes && alongWall(w, side); return u && opensOn(w, u); }));
+      if (a?.link?.kind === 'wall' && a.holes?.length) {
+        const w = allRuns().find((x) => x.rec === rec);
+        return !!w && allSides().some((side) => { const u = alongWall(w, side); return u && opensOn(w, u); });
+      }
+      return false;
+    },
     ground: groundAt ? Math.abs((rec.y ?? 0) - groundAt(rec.x, rec.z)) < 0.35 : (rec.y ?? 0) < 0.05,
     /** The neighbouring record (or true for a bend's end cell), else undefined. */
     near: (fam, dx, dz, dy = 0) => tiles.get(k(fam, rec.x + dx, (rec.y ?? 0) + dy, rec.z + dz)),
+    /** near() with the offset in the piece's own axes (rotated with it). */
+    nearLocal(fam, lx, lz, dy = 0) {
+      const t = ((rec.rot ?? 0) * Math.PI) / 180, c = Math.round(Math.cos(t)), sn = Math.round(Math.sin(t));
+      return tiles.get(k(fam, rec.x + lx * c + lz * sn, (rec.y ?? 0) + dy, rec.z - lx * sn + lz * c));
+    },
+    /** The compass side ('N' -z, 'S' +z, 'W' -x, 'E' +x) a local direction points to. */
+    sideOf(lx, lz) {
+      const t = ((rec.rot ?? 0) * Math.PI) / 180, c = Math.round(Math.cos(t)), sn = Math.round(Math.sin(t));
+      const dx = lx * c + lz * sn, dz = -lx * sn + lz * c;
+      return dz < 0 ? 'N' : dz > 0 ? 'S' : dx < 0 ? 'W' : 'E';
+    },
     /** Floor only: which local sides (±x, ±z) have no floor beside them at the same level. */
     openSides() {
       const t = ((rec.rot ?? 0) * Math.PI) / 180, c = Math.round(Math.cos(t)), sn = Math.round(Math.sin(t));
-      const free = (lx, lz) => !tiles.get(k('floor', rec.x + lx * c + lz * sn, rec.y ?? 0, rec.z - lx * sn + lz * c));
+      const free = (lx, lz) => !tiles.get(k('slab', rec.x + lx * c + lz * sn, rec.y ?? 0, rec.z - lx * sn + lz * c));
       return { px: free(4, 0), nx: free(-4, 0), pz: free(0, 4), nz: free(0, -4) };
     },
     /** Wall-family pieces only: is there a floor slab on either side whose top this wall stands on? */

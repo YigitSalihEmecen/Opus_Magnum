@@ -3,7 +3,6 @@ import { Avatar, raySegment } from '../character/avatar.js';
 import { Bot } from '../modes/tdm/bot.js';
 import { NavGrid } from '../modes/tdm/nav.js';
 import { Tactics } from '../modes/tdm/tactics.js';
-import { MAX_HP } from '../player/vitals.js';
 import { MatchHud } from '../ui/matchHud.js';
 import { WorldFX } from '../weapons/effects.js';
 import { WEAPONS } from '../weapons/weapons.js';
@@ -326,6 +325,7 @@ class Online {
       get pos() { return mv.feet; },
       get vel() { return mv.vel; },
       get hp() { return net.vitals.hp; },
+      get maxHp() { return net.vitals.max; },
       get facing() { return net.rig.yaw + Math.PI; },
       eye(out = new THREE.Vector3()) { return out.copy(net.camera.position); },
       aimPoint(head, out = new THREE.Vector3()) { return out.copy(mv.feet).setY(mv.feet.y + (head ? mv.height - 0.17 : mv.height * 0.62)); },
@@ -511,7 +511,7 @@ class Online {
         if (m.dmg) v.quiet = 0;
         v.set({ hp: m.hp, armour: m.ar, armourMax: m.am });
         const by = this.remotes.get(m.by) ?? this.brains.get(m.by);
-        this.ui.hurt(v.hp / MAX_HP, hit && by ? this.#bearing(by.pos) : null);
+        this.ui.hurt(v.hp / this.vitals.max, hit && by ? this.#bearing(by.pos) : null);
         if (hit) {
           this.audio.play('land', { volume: 0.25, rate: 1.5 });
           this.rig.punch(-0.6 - Math.random() * 0.4, (Math.random() - 0.5) * 0.8, (Math.random() - 0.5) * 1.2);
@@ -709,11 +709,11 @@ class Online {
     if (document.pointerLockElement) document.exitPointerLock();
   }
 
-  /** What our free hand starts doing (a knife swing, a throw, using an item), and when a use ends, for the others. */
+  /** What our free hand starts doing (a punch, a throw, using an item), and when a use ends, for the others. */
   #sendAct() {
     const act = (this.alive && (this.inv.action ?? this.melee?.action)) || null;
     if (act === this.lastAct) return;
-    if (act) this.send({ t: 'act', a: act.kind === 'melee' ? act.name : act.kind === 'throw' ? 'throw' : 'use', i: act.id });
+    if (act) this.send({ t: 'act', a: act.kind === 'melee' ? act.name : act.kind === 'throw' ? 'throw' : 'use', i: act.kind === 'melee' ? undefined : act.id });
     else if (this.lastAct.kind === 'heal' || this.lastAct.kind === 'charge') this.send({ t: 'act', a: 'stop' });
     this.lastAct = act;
   }

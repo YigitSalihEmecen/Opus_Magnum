@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { ITEMS, ARMOUR_TIERS } from '../items/items.js';
-import { MAX_HP } from '../player/vitals.js';
 import { itemIcons } from './itemIcons.js';
 import './vitals.css';
 
@@ -20,7 +19,7 @@ export class VitalsHud {
     root.innerHTML = `
       <div class="items">${CHIPS.map(([id, key]) => `<div class="chip" data-id="${id}"><span class="key">${key}</span><span class="ic"></span><b>0</b></div>`).join('')}</div>
       <div class="vitals card">
-        <div class="row"><span class="label">Health</span><span class="num">150</span></div>
+        <div class="row"><span class="label">Health</span><span class="num">100</span></div>
         <div class="bar hp"><b></b><i></i></div>
         <div class="armour">
           <div class="row"><span class="label tier">No armour</span><span class="anum"></span></div>
@@ -34,7 +33,7 @@ export class VitalsHud {
     this.el = {
       num: $('.num'), hp: $('.bar.hp b'), ghost: $('.bar.hp i'), armour: $('.armour'), tier: $('.tier'), anum: $('.anum'), ar: $('.bar.ar'), arFill: $('.bar.ar b'),
       chips: Object.fromEntries([...root.querySelectorAll('.chip')].map((c) => [c.dataset.id, c])),
-      prompt: $('.prompt'), promptText: $('.prompt span'), use: $('.use'), ring: $('.use .ring'), useLabel: $('.use .label'),
+      prompt: $('.prompt'), promptKey: $('.prompt kbd'), promptText: $('.prompt span'), use: $('.use'), ring: $('.use .ring'), useLabel: $('.use .label'),
     };
     this.ghost = 1;
     this.last = {};
@@ -46,7 +45,7 @@ export class VitalsHud {
   #set(key, value, fn) { if (this.last[key] !== value) { this.last[key] = value; fn(value); } }
 
   update(dt, { vitals, inv, prompt }) {
-    const hp = Math.max(0, vitals.hp) / MAX_HP;
+    const hp = Math.max(0, vitals.hp) / vitals.max;
     this.ghost = Math.max(hp, this.ghost - dt * 0.5);
     this.el.hp.style.width = `${hp * 100}%`;
     this.el.ghost.style.width = `${this.ghost * 100}%`;
@@ -71,7 +70,12 @@ export class VitalsHud {
       });
     }
 
-    this.#set('prompt', prompt ?? '', (t) => { this.el.prompt.hidden = !t; this.el.promptText.textContent = t; });
+    // a prompt is its text (used with F) or { key, text }
+    const p = typeof prompt === 'string' ? { key: 'F', text: prompt } : prompt;
+    this.#set('prompt', p ? `${p.key}|${p.text}` : '', () => {
+      this.el.prompt.hidden = !p;
+      if (p) { this.el.promptKey.textContent = p.key; this.el.promptText.textContent = p.text; }
+    });
 
     const a = inv.action;
     const use = a && a.kind !== 'throw';

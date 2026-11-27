@@ -231,6 +231,40 @@ export class AudioBank {
     if (head) burst(0.002, 0.009, 'highpass', 5200, 5200, 0.8, 0.7); // dry tick
   }
 
+  /** A fist landing: a slap on top, a low meaty thud and a sub drop under it. wall: harder, drier, no flesh. */
+  punch({ wall = false } = {}) {
+    if (!this.ready) return;
+    const ctx = this.ctx, t = ctx.currentTime, bus = this.#hitBus(), v = 0.9 + Math.random() * 0.2;
+    const burst = (at, dur, type, f0, f1, q, amp) => {
+      const src = ctx.createBufferSource();
+      src.buffer = this.noise;
+      const f = ctx.createBiquadFilter();
+      f.type = type;
+      f.Q.value = q;
+      f.frequency.setValueAtTime(f0, t + at);
+      f.frequency.exponentialRampToValueAtTime(f1, t + at + dur);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t + at);
+      g.gain.exponentialRampToValueAtTime(amp, t + at + 0.002);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + at + dur);
+      src.connect(f).connect(g).connect(bus);
+      src.start(t + at, Math.random() * 1.5);
+      src.stop(t + at + dur + 0.02);
+    };
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.setValueAtTime((wall ? 140 : 105) * v, t);
+    o.frequency.exponentialRampToValueAtTime(40, t + 0.16);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(wall ? 0.6 : 0.95, t + 0.003);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+    o.connect(g).connect(bus);
+    o.start(t);
+    o.stop(t + 0.2);
+    burst(0, 0.03, 'bandpass', (wall ? 2400 : 1500) * v, 700, 1.1, wall ? 0.9 : 1.1); // the slap
+    burst(0.004, wall ? 0.06 : 0.12, 'lowpass', 1100, 140, 0.9, wall ? 0.7 : 1.2); // the meat of it
+    if (!wall) burst(0.02, 0.09, 'lowpass', 500, 120, 0.7, 0.5); // body give
+  }
+
   /**
    * Explosion, from noise and one sub: a dry crack, a low-passed body that sweeps down as it decays, a sub
    * drop for weight, and a rumbling tail. `near` (0..1) adds the close-up crack and more sub.

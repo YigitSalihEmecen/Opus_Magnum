@@ -1,0 +1,43 @@
+/* Loading screen (ui/loader.js). Transform/opacity animations only: they run on the compositor while the page blocks. */
+.ld {
+  position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center;
+  background: var(--pampas); pointer-events: auto;
+  transition: transform 0.52s cubic-bezier(0.7, 0, 0.25, 1);
+}
+.ld[hidden] { display: none; }
+.ld.out { transform: translateY(-101%); pointer-events: none; }
+/* the sheet's clay and ink bottom edge, seen as it slides up */
+.ld::after { content: ''; position: absolute; left: 0; right: 0; bottom: -14px; height: 14px; background: var(--clay); box-shadow: 0 6px 0 var(--ink); }
+
+.ld-brand { position: absolute; top: 28px; left: 32px; color: var(--ink); letter-spacing: 0.24em; }
+
+.ld-main { width: min(360px, calc(100vw - 64px)); display: flex; flex-direction: column; align-items: center; text-align: center; animation: ld-in 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.1) both; }
+.ld.out .ld-main { opacity: 0; transition: opacity 0.2s; }
+
+/* four blocks drop into a 2 × 2 stack in turn, hold, and lift away; a 2 s loop */
+.ld-blocks { display: grid; grid-template-columns: repeat(2, 30px); gap: 6px; margin-bottom: 30px; }
+.ld-blocks i { width: 30px; height: 30px; border: var(--border); box-shadow: 3px 3px 0 var(--ink); animation: ld-drop 2s cubic-bezier(0.3, 0.7, 0.25, 1) infinite both; }
+.ld-blocks i:nth-child(1) { background: var(--clay); animation-delay: 0s; }
+.ld-blocks i:nth-child(2) { background: var(--sage); animation-delay: 0.12s; }
+.ld-blocks i:nth-child(4) { background: var(--ivory); animation-delay: 0.24s; }
+.ld-blocks i:nth-child(3) { background: var(--oat); animation-delay: 0.36s; }
+.ld.done .ld-blocks i { animation-play-state: paused; }
+
+.ld-index { color: var(--cloud); }
+.ld-name { font: italic 600 clamp(36px, 6vw, 54px)/1 var(--serif); letter-spacing: -0.02em; margin: 10px 0 22px; }
+
+.ld-bar { position: relative; width: 100%; height: 12px; border: var(--border); background: var(--ivory); overflow: hidden; }
+.ld-run { position: absolute; top: 0; bottom: 0; left: -23px; right: 0; background: repeating-linear-gradient(-45deg, var(--clay) 0 8px, transparent 8px 16px); animation: ld-run 0.55s linear infinite; }
+.ld-fill { position: absolute; inset: 0; background: var(--ink); transform: scaleX(0); transform-origin: left; transition: transform 0.26s cubic-bezier(0.3, 0.7, 0.3, 1); }
+.ld.done .ld-fill { transform: scaleX(1); }
+.ld-step { margin-top: 12px; color: var(--ink); }
+
+@keyframes ld-in { from { opacity: 0; transform: translateY(14px); } }
+@keyframes ld-run { to { transform: translateX(22.63px); } }
+@keyframes ld-drop {
+  0% { transform: translateY(-46px); opacity: 0; }
+  14% { transform: translateY(3px); opacity: 1; }
+  20% { transform: translateY(0); }
+  70% { transform: translateY(0); opacity: 1; }
+  84%, 100% { transform: translateY(-46px); opacity: 0; }
+}

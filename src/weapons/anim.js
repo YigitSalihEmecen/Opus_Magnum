@@ -37,26 +37,39 @@ function copyInto(out, src) {
   return out;
 }
 
-/** clip = { duration, tracks: { name: Track }, events: [[time, name, data?]], interruptAt? } */
+const FADE = 0.16;
+
+/**
+ * clip = { duration, tracks: { name: Track }, events: [[time, name, data?]], readyAt? }
+ * Starting or stopping a clip mid-way crossfades from the pose it was in, so interruptions never snap.
+ */
 export class ClipPlayer {
   constructor(onEvent) {
     this.onEvent = onEvent;
     this.clip = null;
     this.time = 0;
     this.rate = 1;
+    this.from = null;
+    this.fade = 0;
+  }
+
+  #hold(fade) {
+    if (this.clip) { this.from = { clip: this.clip, time: this.time }; this.fade = fade; }
   }
 
   play(clip) {
+    this.#hold(FADE);
     this.clip = clip;
     this.time = 0;
     this.nextEvent = 0;
   }
 
-  stop() { this.clip = null; }
+  stop(fade = FADE) { this.#hold(fade); this.clip = null; }
 
   get playing() { return !!this.clip; }
 
   update(dt) {
+    if (this.fade > 0) this.fade = Math.max(0, this.fade - dt);
     const c = this.clip;
     if (!c) return;
     this.time += dt * this.rate;
@@ -70,6 +83,12 @@ export class ClipPlayer {
   /** Sample a named track, or return fallback when no clip / track is active. */
   get(name, fallback) {
     const tr = this.clip?.tracks[name];
-    return tr ? tr.sample(this.time) : fallback;
+    const v = tr ? tr.sample(this.time) : fallback;
+    const old = this.fade > 0 && this.from.clip.tracks[name];
+    if (!old) return v;
+    const a = old.sample(this.from.time);
+    const s = this.fade / FADE, w = s * s * (3 - 2 * s);
+    for (let i = 0; i < a.length; i++) a[i] += ((v?.[i] ?? 0) - a[i]) * (1 - w);
+    return a;
   }
 }

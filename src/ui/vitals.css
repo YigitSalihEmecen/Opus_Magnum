@@ -30,7 +30,7 @@
 .items .chip b { font: 800 16px/1 var(--mono); min-width: 1ch; }
 .items .chip.empty { opacity: 0.4; box-shadow: none; }
 
-.prompt { position: absolute; left: 50%; top: calc(50% + 64px); transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 7px 12px 7px 8px; font: 700 12px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; box-shadow: 3px 3px 0 var(--ink); }
+.prompt { position: absolute; left: 50%; top: calc(50% + 110px); transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 7px 12px 7px 8px; font: 700 12px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; box-shadow: 3px 3px 0 var(--ink); }
 .prompt[hidden], .use[hidden] { display: none; }
 .prompt kbd { padding: 4px 6px 3px; font: 800 11px/1 var(--mono); background: var(--ink); color: var(--ivory); }
 

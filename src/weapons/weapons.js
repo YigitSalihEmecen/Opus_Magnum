@@ -212,7 +212,7 @@ export const WEAPONS = [
     sound: 'shotgunFire',
     stats: {
       rpm: 60, // the bolt cycle is the real limit
-      damage: 155, // one body shot drops a full-health (150) target
+      damage: 155, // one body shot drops a full-health (100) target
       headMultiplier: 1.5,
       range: 600,
       falloff: { start: 60, end: 200, min: 0.92 }, // sniper: barely drops

@@ -11,6 +11,7 @@ export class Input {
     this.wheel = 0;
     this.locked = false;
     this.pointerLocked = false;
+    this.free = false; // the system cursor is out (release()) while the game keeps reading keys and clicks
     this.devMode = false;
     this.skipMoves = 0;
 
@@ -41,9 +42,9 @@ export class Input {
     addEventListener('blur', () => { this.keys.clear(); this.buttons.clear(); });
     document.addEventListener('pointerlockchange', () => {
       this.pointerLocked = document.pointerLockElement === element;
-      this.locked = this.pointerLocked || this.devMode;
+      this.locked = this.pointerLocked || this.devMode || this.free;
       this.skipMoves = 2;
-      if (!this.pointerLocked) { this.keys.clear(); this.buttons.clear(); this.unlockedAt = performance.now(); }
+      if (!this.pointerLocked && !this.free) { this.keys.clear(); this.buttons.clear(); this.unlockedAt = performance.now(); }
     });
     document.addEventListener('pointerlockerror', () => {
       if (this.legacyAttempt) { this.legacyAttempt = false; this.onLockError?.(); }
@@ -69,6 +70,20 @@ export class Input {
       if (p?.catch) p.catch(plain);
       else this.legacyAttempt = true;
     } catch { plain(); }
+  }
+
+  /** Let the system cursor out (a menu over the game, like the gunsmith); keys and clicks still count. */
+  release() {
+    this.free = true;
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
+
+  /** Capture the mouse again after release(). Needs a fresh key press or click (the browser's rule for locking). */
+  capture() {
+    if (!this.free) return;
+    this.free = false;
+    this.locked = this.pointerLocked || this.devMode;
+    if (!this.pointerLocked && !this.devMode) this.lock();
   }
 
   /** Chrome refuses to re-lock for ~1 s after the user pressed Esc. */

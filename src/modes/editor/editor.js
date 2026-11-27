@@ -18,6 +18,7 @@ import './editor.css';
   Level interface for main.js: { frame(dt) } — the editor owns the frame (no player, no HUD).
 */
 
+const BLOCKED = 'Stairs can’t run along a wall with a window or door';
 const HEX = (c) => `#${c.toString(16).padStart(6, '0')}`;
 const _ndc = new THREE.Vector2();
 const _ray = new THREE.Raycaster();
@@ -142,7 +143,7 @@ class Editor {
   #refresh() {
     this._ctx = null;
     // adaptive tiles, plus floors and walls (slab edges and wall feet adapt to each other)
-    for (const r of this.map.pieces) { const as = assetById(r.type); if (as?.tile || r.type === 'floor' || as?.link?.kind === 'wall') this.#rebuild(r); }
+    for (const r of this.map.pieces) { const as = assetById(r.type); if (as?.tile || as?.adapt || r.type === 'floor' || as?.link?.kind === 'wall') this.#rebuild(r); }
     this.joints.clear();
     const j = buildJoints(this.map.pieces, this.groundAt);
     if (j.children.length) this.joints.add(...j.children);
@@ -230,7 +231,7 @@ class Editor {
     this.tool = { asset, rot: this.tool?.rot ?? 0, color: asset.colors[0] };
     this.ghost?.removeFromParent();
     this.ghost = buildPiece({ type: asset.id, x: 0, y: 0, z: 0, rot: this.tool.rot, color: this.tool.color });
-    const gm = new THREE.MeshBasicMaterial({ color: P.clay, transparent: true, opacity: 0.42, depthWrite: false });
+    const gm = (this.ghostMat = new THREE.MeshBasicMaterial({ color: P.clay, transparent: true, opacity: 0.42, depthWrite: false }));
     this.ghost.traverse((o) => { if (o.isMesh) { o.material = gm; o.castShadow = false; if (o.userData.collider) o.visible = false; } });
     this.ghost.visible = false;
     this.scene.add(this.ghost);
@@ -275,7 +276,10 @@ class Editor {
 
   rotate(deg) {
     if (this.tool) { this.tool.rot = (((this.tool.rot + deg) % 360) + 360) % 360; this.ghost.rotation.y = this.tool.asset.tile ? 0 : (this.tool.rot * Math.PI) / 180; }
-    else if (this.selected) this.edit({ rot: this.selected.rot + deg });
+    else if (this.selected) {
+      if (this.#blocked({ ...this.selected, rot: this.selected.rot + deg }, this.selected)) { this.ui.flash(BLOCKED); return; }
+      this.edit({ rot: this.selected.rot + deg });
+    }
   }
 
   remove() {
@@ -317,6 +321,8 @@ class Editor {
   }
 
   #snapFor(asset) { return asset?.tile ?? (asset?.snap && this.snap ? Math.max(asset.snap, this.snap) : this.snap); }
+  /** Grid offset for pieces whose edges, not centre, must land on the 4 m lines (an 8 × 8 deck centres on 2 + 4k). */
+  #offFor(asset) { return this.snap && asset?.snapOff ? asset.snapOff : 0; }
   #snapV(v, step = this.snap) { return step ? Math.round(v / step) * step : Math.round(v * 100) / 100; }
   #clampXZ(v) { return THREE.MathUtils.clamp(v, -this.half, this.half); }
   #groundHit() { return _ray.intersectObject(this.ground, false)[0]?.point ?? null; }
@@ -328,9 +334,18 @@ class Editor {
     const point = top?.point ?? this.#groundHit();
     if (!point) return null;
     const step = this.#snapFor(asset);
-    const x = this.#clampXZ(this.#snapV(point.x, step)), z = this.#clampXZ(this.#snapV(point.z, step));
+    const off = this.#offFor(asset);
+    const x = this.#clampXZ(this.#snapV(point.x - off, step) + off), z = this.#clampXZ(this.#snapV(point.z - off, step) + off);
     const y = top ? top.point.y : this.groundAt(x, z);
     return { x, y: Math.round(y * 20) / 20, z };
+  }
+
+  /** Would `rec` (replacing `old`, when moving one) run a flight along a window or door in a wall piece? */
+  #blocked(rec, old) {
+    const a = assetById(rec.type);
+    if (!a?.stair && !a?.holes?.length) return false;
+    const pieces = this.map.pieces.filter((p) => p !== old);
+    return makeContext([...pieces, rec], this.groundAt)(rec).wallConflict();
   }
 
   #pick() {
@@ -369,9 +384,11 @@ class Editor {
         const p = _ray.ray.intersectPlane(_plane.set(_plane.normal, -rec.y), _v);
         if (p) {
           const step = this.#snapFor(assetById(rec.type));
-          const x = this.#clampXZ(this.#snapV(p.x + this.drag.dx, step)), z = this.#clampXZ(this.#snapV(p.z + this.drag.dz, step));
+          const off = this.#offFor(assetById(rec.type));
+          const x = this.#clampXZ(this.#snapV(p.x + this.drag.dx - off, step) + off), z = this.#clampXZ(this.#snapV(p.z + this.drag.dz - off, step) + off);
           if (x !== rec.x || z !== rec.z) {
             const y = this.drag.onGround ? Math.round(this.groundAt(x, z) * 20) / 20 : rec.y;
+            if (this.#blocked({ ...rec, x, y, z }, rec)) return;
             this.edit({ x, y, z }, false);
             this.drag.moved = true;
           }
@@ -389,7 +406,10 @@ class Editor {
       if (this.ghost) {
         const at = this.#placement(this.tool.asset);
         this.ghost.visible = !!at;
-        if (at) this.ghost.position.set(at.x, at.y, at.z);
+        if (at) {
+          this.ghost.position.set(at.x, at.y, at.z);
+          this.ghostMat.color.set(this.#blocked({ type: this.tool.asset.id, ...at, rot: this.tool.rot }) ? P.ink : P.clay);
+        }
         this.ui.cursor(at);
       } else {
         const p = this.#groundHit();
@@ -411,6 +431,7 @@ class Editor {
         const at = this.#placement(this.tool.asset);
         if (!at) return;
         const rec = { type: this.tool.asset.id, x: at.x, y: at.y, z: at.z, rot: this.tool.rot, color: this.tool.color };
+        if (this.#blocked(rec)) { this.ui.flash(BLOCKED); return; }
         this.map.pieces.push(rec);
         this._ctx = null;
         this.#add(rec);

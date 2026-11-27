@@ -1,11 +1,10 @@
 import * as THREE from 'three';
-import { buildKnife } from '../items/models/knife.js';
 import { ITEMS } from '../items/items.js';
 import { THROW } from '../items/inventory.js';
 import { Spring } from './smooth.js';
 
 /*
-  What a body's free (left) hand does besides holding the gun, so other players see it: knife swings, a grenade
+  What a body's free (left) hand does besides holding the gun, so other players see it: punches, a grenade
   throw, using a heal or a charger. Each is a path for the hand (keys: time → place from the chest, in the
   body's facing: left, up, ahead) that the hand eases onto from the gun and back off, holding the item, while
   the gun dips out of the way.
@@ -15,10 +14,10 @@ import { Spring } from './smooth.js';
 */
 
 export const ACTS = {
-  // the knife: one arc across the front (from the right, or from the left), or a thrust
-  slashLeft: { time: 0.44, item: 'knife', dip: 0.3, fade: 0.05, keys: [[0.06, [-0.3, 0.22, 0.3]], [0.13, [0.02, 0.06, 0.62]], [0.22, [0.4, -0.1, 0.42]]] },
-  slashRight: { time: 0.44, item: 'knife', dip: 0.3, fade: 0.05, keys: [[0.06, [0.42, 0.24, 0.26]], [0.13, [0.1, 0.06, 0.62]], [0.22, [-0.28, -0.08, 0.46]]] },
-  stab: { time: 0.46, item: 'knife', dip: 0.3, fade: 0.05, keys: [[0.08, [0.2, 0.0, 0.18]], [0.15, [0.06, 0.05, 0.74]], [0.24, [0.06, 0.03, 0.7]]] },
+  // punches, timed like weapons/melee.js: a straight one chambered by the chin and driven out, and a hook swung
+  // round from wide
+  cross: { time: 0.5, dip: 0.35, fade: 0.05, keys: [[0.08, [0.2, 0.14, 0.12]], [0.14, [0.03, 0.14, 0.66]], [0.2, [0.04, 0.13, 0.62]], [0.27, [0.12, 0.06, 0.4]]] },
+  hook: { time: 0.52, dip: 0.35, fade: 0.05, keys: [[0.09, [0.44, 0.16, 0.2]], [0.15, [0.0, 0.18, 0.56]], [0.21, [-0.06, 0.17, 0.52]], [0.28, [0.14, 0.06, 0.38]]] },
   // a grenade, overhand on the free (left) side: held low while the pin comes out, swung back and up beside the
   // head, over and forward to let go high in front, then down and across in the follow-through
   throw: { time: THROW.time, item: 'grenade', release: THROW.release, dip: 0.45, fade: 0.1, keys: [[0.12, [0.18, -0.12, 0.3]], [THROW.pin, [0.2, -0.06, 0.3]], [THROW.release - 0.12, [0.34, 0.48, -0.3]], [THROW.release, [0.24, 0.6, 0.38]], [THROW.release + 0.12, [0.08, 0.18, 0.62]], [0.8, [0.0, -0.14, 0.45]]] },
@@ -75,7 +74,7 @@ export class HandActs {
     if (c) {
       c.t += dt;
       const { def, t } = c;
-      // onto the path and off it again over def.fade (s): a knife is quick, a heal unhurried
+      // onto the path and off it again over def.fade (s): a punch is quick, a heal unhurried
       const F = def.fade;
       let k = ss(t, 0, F);
       if (def.time !== Infinity) k *= 1 - ss(t, def.time - F, def.time);
@@ -105,13 +104,11 @@ export class HandActs {
     if (!id) return;
     let m = this.models.get(id);
     if (!m) {
-      const g = id === 'knife' ? buildKnife() : ITEMS[id]?.build();
+      const g = ITEMS[id]?.build();
       if (!g) return;
       m = new THREE.Group();
       m.add(g);
-      // in the fist: the knife blade-forward, everything else held in the palm
-      if (id === 'knife') g.rotation.set(Math.PI / 2, 0, 0);
-      else g.position.set(0, -0.03, 0.05);
+      g.position.set(0, -0.03, 0.05); // held in the palm
       this.hand.add(m);
       this.models.set(id, m);
     }

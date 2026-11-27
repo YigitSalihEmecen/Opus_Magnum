@@ -141,6 +141,8 @@ function radial(stops) {
 const fxMat = (map, opts = {}) => new THREE.MeshBasicMaterial({ map, transparent: true, depthWrite: false, fog: false, toneMapped: false, ...opts });
 const easeOut = (t) => 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3);
 
+const SIZE = 1.3;
+
 export class Explosions {
   constructor(scene) {
     this.group = new THREE.Group();
@@ -153,6 +155,7 @@ export class Explosions {
 
     this.pool = Array.from({ length: POOL }, () => {
       const root = new THREE.Group();
+      root.scale.setScalar(SIZE);
       this.group.add(root);
       const cloud = new THREE.Group(); // the fireball, turned so +Y leaves the surface
       root.add(cloud);
@@ -210,7 +213,7 @@ export class Explosions {
     e.scorch.position.copy(pos).addScaledVector(normal, 0.01);
     e.scorch.quaternion.setFromUnitVectors(_z, normal);
     e.scorch.rotateZ(Math.random() * Math.PI * 2);
-    e.scorch.scale.setScalar(2.6 + Math.random() * 0.6);
+    e.scorch.scale.setScalar((2.6 + Math.random() * 0.6) * SIZE);
     e.scorch.visible = true;
     e.scorch.material.opacity = 1;
     e.scorchT = 9;
@@ -218,7 +221,7 @@ export class Explosions {
     for (let k = 0; k < EMBERS; k++) {
       const d = this.emberData[slot * EMBERS + k];
       d.p.copy(pos).addScaledVector(normal, 0.15);
-      d.v.randomDirection().addScaledVector(normal, 0.8).normalize().multiplyScalar(6 + Math.random() * 9);
+      d.v.randomDirection().addScaledVector(normal, 0.8).normalize().multiplyScalar((6 + Math.random() * 9) * SIZE);
       d.life = 0.35 + Math.random() * 0.45;
     }
   }

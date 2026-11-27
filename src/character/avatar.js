@@ -19,7 +19,7 @@ import { HandActs } from './actions.js';
   vaulting (built here from the tucked jump: push off, legs swing aside over a planted hand, land), climbing (the
   gun onto the back, both hands on the ledge, leaning out over them), landing and flinching — then shaped in code: the legs turn toward travel while the torso stays on the aim,
   the body leans into speed, acceleration and turns, and the hands stay on the gun — unless the left one is busy
-  (actions.js: a knife swing, a throw, a heal). The gun kicks when it fires, dips to reload and to swap.
+  (actions.js: a punch, a throw, a heal). The gun kicks when it fires, dips to reload and to swap.
   Nothing snaps (smooth.js): every input (aim, speed, stance, leans, the reload hand) follows its target on a
   spring, one-shot clips fade in from zero, and the finished pose passes an inertializer that eases out any
   jump that still gets through. A respawn is the one cut.
@@ -447,7 +447,7 @@ export class Avatar {
     // aiming: the gun comes up to the eye line and in toward the centre
     this.arms.position.set(-0.1 + w.ads * 0.05, 0.24 + w.ads * 0.1, 0.02 + w.ads * 0.04);
     // reload: gun dips and rolls, the support hand goes to the magazine; sliding tips it up; swapping lowers it
-    // out of sight; a shot kicks it up; a busy left hand (knife, grenade, heal) dips it out of the way
+    // out of sight; a shot kicks it up; a busy left hand (a punch, grenade, heal) dips it out of the way
     const dt = this.dt ?? 1 / 60;
     // reload progress u (0 → 1) through this one; its weight eases it in, and lets go smoothly if it's cut short
     if (this.reloadT > 0 && !(this.rlLast > 0)) this.rlDur = Math.max(this.reloadT, 0.4);
@@ -501,7 +501,7 @@ export class Avatar {
     mag.position.copy(_v1);
   }
 
-  /** The free hand does something others should see: a knife swing ('slashLeft', 'slashRight', 'stab'), a
+  /** The free hand does something others should see: a punch ('cross', 'hook'), a
    *  grenade 'throw', or 'use' an item (its id) until stopAct(). */
   act(name, item) { this.hands.act(name, item); }
 

@@ -7,6 +7,8 @@ const D2R = Math.PI / 180;
 
 const _dir = new THREE.Vector3();
 const _aim = new THREE.Vector3();
+/** Aim input mode, shared by every gun (pause menu → Controls). */
+export const AIM = { mode: 'hold' };
 const _right = new THREE.Vector3();
 const _up = new THREE.Vector3();
 
@@ -52,6 +54,7 @@ export class Gunplay {
   /** Called when this weapon is drawn. */
   activate() {
     this.ads = this.adsEased = 0;
+    this.adsLatch = false;
     this.hud.setWeapon(this.def.name, this.def.kind);
     this.hud.setMagSize(this.stats.magSize);
     this.hud.setModes(this.modes);
@@ -92,11 +95,16 @@ export class Gunplay {
     this.bloom = Math.max(0, this.bloom - this.S.bloom.recovery * dt);
 
     const canAct = mv.state !== 'mantle' && mv.state !== 'vault' && !blocked;
-    const reloading = this.vm.reloading;
+    let reloading = this.vm.reloading;
 
     // ADS
     // bolt guns drop out of the scope to cycle, then come back up if aim is still held
-    const wantAds = input.mouse(2) && !reloading && !this.vm.cycling && canAct;
+    // AIM.mode 'hold': aim while RMB is down; 'toggle': each click latches it (sprinting drops the latch)
+    if (AIM.mode === 'toggle') {
+      if (input.clicked(2)) this.adsLatch = !this.adsLatch;
+      if (input.pressed('ShiftLeft')) this.adsLatch = false;
+    } else this.adsLatch = false;
+    const wantAds = (AIM.mode === 'toggle' ? this.adsLatch : input.mouse(2)) && !reloading && !this.vm.cycling && canAct;
     if (wantAds) mv.blockSprint(0.1);
     const step = dt / (this.S.adsTime * this.stats.ads);
     this.ads = THREE.MathUtils.clamp(this.ads + (wantAds ? step : -step * 1.3), 0, 1);
@@ -113,9 +121,15 @@ export class Gunplay {
 
     // shell-by-shell loading: a trigger pull stops after the current shell
     if (this.loading && input.clicked(0) && this.ammo > 0) this.loading.stop = true;
+    // a magazine reload is dropped for a shot while the old mag is still in the gun with rounds in it
+    else if (reloading && !this.loading && input.clicked(0) && this.ammo > 0 && !this.vm.magOut && canAct) {
+      this.vm.cancelClip();
+      this.vm.boltLocked = false;
+      reloading = false;
+    }
 
-    // reload
-    if (input.pressed('KeyR') && this.ammo < this.magSize && this.reserve > 0 && !reloading && canAct) this.#reload();
+    // reload (not over a bolt or pump cycle that hasn't finished)
+    if (input.pressed('KeyR') && this.ammo < this.magSize && this.reserve > 0 && !reloading && !this.vm.busy && canAct) this.#reload();
 
     // trigger
     const held = input.mouse(0);

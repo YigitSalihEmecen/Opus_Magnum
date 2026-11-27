@@ -7,8 +7,8 @@ import { buildPiece, makeContext } from '../maps/assets.js';
 import { WEAPONS } from '../weapons/weapons.js';
 
 /*
-  Title-screen lobby: the picked character idles with its signature gun in a scrapyard corner, alone; picking
-  another (the cards) swaps it in with a pop. Drag on the scene to orbit the camera around it, scroll to zoom.
+  Title-screen lobby: every character idles with its signature gun in a scrapyard corner; picking one (the cards)
+  swings the camera over to it. Drag on the scene to orbit the camera around it, scroll to zoom.
   Idles are plain AnimationClips on the shared skeleton, played by an AnimationMixer; the arms are solved
   onto the gun grips after the mixer runs.
 */
@@ -124,17 +124,17 @@ export class Lobby {
     sun.shadow.normalBias = 0.03;
     this.group.add(sun, sun.target);
     const props = [
-      ...[-4, 0, 4].flatMap((x) => [-4, 0, 4].map((z) => ({ type: 'floor', x, z, y: -0.3, color: P.oat }))),
-      { type: 'container', x: -1.2, z: -5.2, rot: 0, color: P.sky }, { type: 'container', x: -0.4, z: -5.2, y: 2.6, rot: 6, color: P.clay },
+      ...[-4, 0, 4].flatMap((x) => [-4, 0, 4].map((z) => ({ type: 'floor', x, z, color: P.oat }))),
+      { type: 'container', x: -1.2, z: -5.2, rot: 0, color: P.sky }, { type: 'container', x: -0.4, z: -5.2, y: 2.4, rot: 6, color: P.clay },
       { type: 'container', x: 6.2, z: -2.5, rot: 70, color: P.sage },
       { type: 'barrel', x: 2.6, z: -2.6, color: P.clay }, { type: 'barrel', x: 3.4, z: -2.1, color: P.slate }, { type: 'barrel', x: 3.0, z: -3.3, color: P.kraft },
-      { type: 'crate', x: -3.4, z: -2.4, rot: 18, color: P.kraft }, { type: 'crate', x: -3.6, z: -2.6, y: 1.2, rot: 5, color: P.sage },
+      { type: 'crate', x: -3.4, z: -2.4, rot: 18, color: P.kraft }, { type: 'crate', x: -3.6, z: -2.6, y: 1.18, rot: 5, color: P.sage },
       { type: 'sandbags', x: -2.8, z: 1.4, rot: 30, color: P.kraft }, { type: 'pole', x: 4.6, z: -5.4, color: P.kraft },
     ];
     const ctx = makeContext(props, () => 0);
     for (const rec of props) { const p = buildPiece(rec, ctx(rec)); if (p) this.group.add(p); }
     const ground = new THREE.Mesh(new THREE.CircleGeometry(80, 48).rotateX(-Math.PI / 2), new THREE.MeshToonMaterial({ color: 0xe7dfcf }));
-    ground.position.y = -0.31;
+    ground.position.y = -0.01;
     this.group.add(ground);
     this.group.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   }
@@ -142,18 +142,16 @@ export class Lobby {
   #picker() {
     const el = (this.ui = document.createElement('div'));
     el.className = 'char-pick';
-    el.innerHTML = `<span class="label">Character</span>${CHARACTERS.map((c) => `
+    el.innerHTML = CHARACTERS.map((c) => `
       <button class="char card" type="button" data-id="${c.id}">
-        <span class="label">${c.role}</span><b>${c.name}</b><span class="char-blurb">${c.blurb}</span>
-      </button>`).join('')}<span class="label hint">Drag to look around · scroll to zoom</span>`;
+        <b>${c.name}</b>
+      </button>`).join('');
     el.querySelectorAll('.char').forEach((b) => b.addEventListener('click', () => this.select(b.dataset.id)));
     document.body.appendChild(el);
   }
 
   select(id, snap = false) {
     const a = this.actors.find((x) => x.ch.id === id) ?? this.actors[0];
-    if (a !== this.selected && !snap) a.robot.root.scale.setScalar(0.6); // pops up in its place
-    for (const x of this.actors) x.robot.root.visible = x === a;
     this.selected = a;
     selectCharacter(a.ch.id);
     this.ui.querySelectorAll('.char').forEach((b) => b.classList.toggle('on', b.dataset.id === a.ch.id));
@@ -189,11 +187,8 @@ export class Lobby {
   }
 
   update(dt) {
-    const a = this.selected;
-    a.mixer.update(dt);
-    gripGun(a.robot, a.frame, a.def.poses);
-    a.robot.root.scale.setScalar(damp(a.robot.root.scale.x, 1, 14, dt));
-    const sel = a.robot.root.position;
+    for (const x of this.actors) { x.mixer.update(dt); gripGun(x.robot, x.frame, x.def.poses); }
+    const sel = this.selected.robot.root.position;
     this.ring.position.x = damp(this.ring.position.x, sel.x, 10, dt);
     this.ring.position.z = damp(this.ring.position.z, sel.z, 10, dt);
     this.focus.x = damp(this.focus.x, sel.x, 4, dt);
@@ -209,9 +204,10 @@ export class Lobby {
     // character cards on the right; mid-swap (no panel yet) it holds where it was
     const sheet = document.querySelector('#title:not([hidden]) > .sheet');
     if (sheet && !sheet.classList.contains('out')) {
-      const box = sheet.querySelector('.main-pick') ? null : sheet.querySelector('.mode-pick') ?? sheet; // the home buttons leave it be
-      const left = box ? box.getBoundingClientRect().right : 0;
-      const right = innerWidth > 720 ? (this.ui.getBoundingClientRect().left || innerWidth) : innerWidth;
+      const box = sheet.classList.contains('home') ? sheet : sheet.querySelector('.mode-pick') ?? sheet; // the home sidebar, or the open menu
+      const left = box.getBoundingClientRect().right;
+      const pick = this.ui.getBoundingClientRect().left;
+      const right = innerWidth > 720 && pick > left ? pick : innerWidth;
       this.goal = left && right - left > 160 ? (left + right) / 2 : innerWidth * 0.56;
     }
     this.shift = damp(this.shift ?? this.goal ?? innerWidth * 0.56, this.goal ?? innerWidth * 0.56, 6, dt);

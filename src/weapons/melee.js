@@ -2,32 +2,30 @@ import * as THREE from 'three';
 import { ZONE } from './weapons.js';
 
 /*
-  Quick melee on V: the gun drops, the knife comes up and the gun comes back. With nobody in reach the
-  knife sweeps in one continuous arc, right to left, then left to right on the next press. With someone
-  right in front of you it stabs instead. Each move is a few keyed hand poses played through a Catmull-Rom
-  curve; in its strike window a fan of short rays covers the arc and the first body in reach is hit.
-  The pose drives the knife hand in items/handheld.js (kind 'melee').
+  Quick melee on V: the gun drops and the right fist throws a punch, a straight cross, then a hook on the next
+  press. Each punch is a few keyed hand poses played through a Catmull-Rom curve: chambered back by the
+  shoulder, snapped out, held a beat at full extension, pulled back down. In its strike window a fan of short
+  rays covers the line of the punch; the first body in reach takes it. A landed punch freezes the fist for a
+  few frames (hit-stop) and jolts the view, so the contact reads; a wall gets a shorter, drier stop.
+  The pose drives the hand in items/handheld.js (kind 'melee').
 */
 
-export const MELEE = { range: 2.4, head: 1.4, cooldown: 0.1 };
+export const MELEE = { range: 2.1, head: 1.4, cooldown: 0.12, stop: 0.075, wallStop: 0.045, wallReach: 1.05 };
 
-// hand frame poses in the viewmodel camera: [x, y, z, rx, ry, rz] (degrees). The knife sits in the fist
-// blade-forward, so +rx tips it up, +ry swings the tip left, +rz rolls the hand anticlockwise
-const REST = [0.17, -0.13, -0.56, 6, -8, -4];
-const RIGHT = [0.27, -0.02, -0.58, 14, -48, -34], LEFT = [-0.17, -0.06, -0.58, 12, 46, 50];
+// fist poses in the viewmodel camera: [x, y, z, rx, ry, rz] (degrees), in the hand frame of items/handheld.js.
+// Each is turned so the forearm runs straight back from the fist toward the punching shoulder (handheld.js
+// ANCHOR_PUNCH, low and out to the right) with the back of the fist up: the arm comes in from the side
+const LOW = [0.211, -0.614, -0.429, -32, 36, 124]; // below the view, where a punch starts and ends
 const SWINGS = {
-  // one arc: in from the side, across the middle without stopping, out the other side, back to rest
-  slashLeft: {
-    time: 0.44, strike: [0.07, 0.2], sweep: [40, -40], pitch: -4, damage: 65, punch: [-0.6, 2.2, 3],
-    keys: [[0, REST], [0.06, RIGHT], [0.13, [0.04, -0.07, -0.68, -4, 2, 8]], [0.2, [-0.2, -0.17, -0.57, -14, 50, 48]], [0.44, REST]],
+  // straight right: chambered low, driven in from the side onto the centre, held a beat, pulled back down
+  cross: {
+    time: 0.5, strike: [0.12, 0.17], sweep: [-9, 9], pitch: -3, damage: 50, punch: [-1.4, 1.2, 2.5],
+    keys: [[0, LOW], [0.08, [0.221, -0.275, -0.489, -8, 28, 124]], [0.14, [-0.088, -0.085, -0.674, -8, 36, 124]], [0.2, [-0.078, -0.091, -0.664, -8, 36, 124]], [0.27, [0.032, -0.175, -0.574, -8, 36, 124]], [0.5, LOW]],
   },
-  slashRight: {
-    time: 0.44, strike: [0.07, 0.2], sweep: [-40, 40], pitch: -4, damage: 65, punch: [-0.6, -2.2, -3],
-    keys: [[0, REST], [0.06, LEFT], [0.13, [0.06, -0.08, -0.68, -4, -2, -8]], [0.2, [0.31, -0.13, -0.56, -10, -52, -46]], [0.44, REST]],
-  },
-  stab: {
-    time: 0.46, strike: [0.12, 0.2], sweep: [-7, 7], pitch: -3, damage: 80, punch: [-1.6, 0, 0],
-    keys: [[0, REST], [0.08, [0.2, -0.16, -0.42, 14, -6, -4]], [0.15, [0.06, -0.09, -0.82, -10, 6, -6]], [0.22, [0.07, -0.1, -0.78, -8, 6, -6]], [0.46, REST]],
+  // right hook: wound out wide right, the fist comes round across the front rolled knuckles-first, stops past the middle
+  hook: {
+    time: 0.52, strike: [0.13, 0.18], sweep: [24, -14], pitch: -2, damage: 50, punch: [-1, 3.2, 4.5],
+    keys: [[0, LOW], [0.09, [0.378, -0.107, -0.472, 4, 36, 84]], [0.15, [-0.106, -0.089, -0.693, -4, 20, 152]], [0.21, [-0.116, -0.095, -0.683, -4, 20, 152]], [0.28, [-0.003, -0.186, -0.552, -12, 36, 128]], [0.52, LOW]],
   },
 };
 
@@ -48,22 +46,19 @@ export function sample(keys, t) {
 export class Melee {
   constructor({ audio, hud, fx, rig }) {
     Object.assign(this, { audio, hud, fx, rig });
-    this.action = null; // { id: 'knife', kind: 'melee', name (the swing), t, time, pose }
-    this.side = 0; // which way the next slash goes
+    this.action = null; // { id: 'fist', kind: 'melee', name (the punch), t, time, pose }
+    this.side = 0; // which punch comes next
     this.wait = 0;
   }
 
   get busy() { return !!this.action; }
 
-  /** ctx: { camera, targets, octree } — someone close in front gets the stab. */
-  start(ctx) {
+  start() {
     if (this.action || this.wait > 0) return false;
-    let name;
-    if (ctx && this.#fan(SWINGS.stab, ctx, MELEE.range - 0.3)) name = 'stab';
-    else name = (this.side ^= 1) ? 'slashLeft' : 'slashRight';
+    const name = (this.side ^= 1) ? 'cross' : 'hook';
     const s = SWINGS[name];
-    this.action = { id: 'knife', kind: 'melee', name, t: 0, time: s.time, swing: s, pose: REST, struck: false };
-    this.audio.play('cloth', { volume: 0.35, rate: 1.3 });
+    this.action = { id: 'fist', kind: 'melee', name, t: 0, time: s.time, swing: s, pose: LOW, struck: false, stopT: 0 };
+    this.audio.play('cloth', { volume: 0.3, rate: 1.2 });
     return true;
   }
 
@@ -75,22 +70,22 @@ export class Melee {
     const a = this.action;
     if (!a) return;
     const s = a.swing, prev = a.t;
+    // hit-stop: the fist stays where it landed for a moment
+    if (a.stopT > 0) { a.stopT -= dt; return; }
     a.t += dt;
     a.pose = sample(s.keys, Math.min(a.t, s.time));
-    if (prev < s.strike[0] && a.t >= s.strike[0]) {
-      this.audio.play('cloth', { volume: 0.7, rate: 1.9 + Math.random() * 0.3 }); // the swish
-      this.rig.punch(...s.punch);
-    }
+    if (prev < s.strike[0] - 0.05 && a.t >= s.strike[0] - 0.05) this.audio.play('cloth', { volume: 0.6, rate: 1.7 + Math.random() * 0.3 }); // the whoosh
     if (!a.struck && a.t >= s.strike[0] && a.t <= s.strike[1] + dt) a.struck = this.#strike(a, ctx);
+    if (prev < s.strike[1] && a.t >= s.strike[1] && !a.struck && !a.clanged) this.rig.punch(...s.punch.map((v) => v * 0.4)); // a whiff: a little follow-through
     if (a.t >= s.time) { this.action = null; this.wait = MELEE.cooldown; }
   }
 
-  /** The nearest body a fan of rays across the swing's arc finds within `range` (walls in front block it). */
+  /** The nearest body a fan of rays across the punch's line finds within reach (walls in front block it). */
   #fan(s, { camera, targets, octree }, range = MELEE.range) {
     const dummies = targets.filter((t) => t.userData.dummy);
     let best = null;
     this.wall = null;
-    // two rows of rays every ~5° across the arc: nothing body-sized in reach slips between them
+    // two rows of rays every ~5° across the line: nothing body-sized in reach slips between them
     const n = Math.max(2, Math.ceil(Math.abs(s.sweep[1] - s.sweep[0]) / 5));
     for (let i = 0; i <= n * 2 + 1; i++) {
       const yaw = THREE.MathUtils.lerp(s.sweep[0], s.sweep[1], (i >> 1) / n) * D2R;
@@ -109,28 +104,30 @@ export class Melee {
     return best;
   }
 
-  /** The strike: the body the arc finds takes the hit; a wall in the way gets a scrape. */
+  /** The strike: the body the fan finds takes the punch; a wall in the way stops the fist. */
   #strike(a, ctx) {
     const s = a.swing, best = this.#fan(s, ctx), wall = this.wall, { now } = ctx;
     if (best) {
       const who = best.object.userData.dummy, zone = best.object.userData.zone, head = zone === 'head';
       const dmg = s.damage * (head ? MELEE.head : ZONE[zone] ?? 1);
-      const res = who.damage(dmg, zone, best.point, best.dir, now, 'knife');
+      const res = who.damage(dmg, zone, best.point, best.dir, now, 'fist');
       if (!res) return false;
       this.hud.hitmarker(res.killed ? 'kill' : 'hit', head);
       this.hud.damageNumber(best.point, Math.round(dmg), head);
+      this.audio.punch();
       this.audio.hit(res.killed ? 'kill' : 'body', head);
-      this.audio.play('land', { volume: 0.5, rate: 1.7 });
       this.fx.impact(best.point, best.dir.clone().negate(), { flesh: true });
-      this.rig.punch(-0.6, 0, 0);
+      this.rig.punch(...s.punch.map((v) => v * 1.6));
+      a.stopT = MELEE.stop * (res.killed ? 1.6 : 1);
       return true;
     }
-    // the blade scrapes a wall: once a swing, and the rest of the window can still find a body
-    if (wall && !a.clanged) {
+    // knuckles on a wall: once a punch, and the rest of the window can still find a body
+    if (wall && wall.distance < MELEE.wallReach && !a.clanged) {
       a.clanged = true;
       this.fx.impact(wall.position, wall.triangle.getNormal(new THREE.Vector3()));
-      this.audio.play('click', { volume: 0.5, rate: 0.7 });
-      this.rig.punch(-0.4, 0, 0);
+      this.audio.punch({ wall: true });
+      this.rig.punch(...s.punch.map((v) => v * 0.8));
+      a.stopT = MELEE.wallStop;
     }
     return false;
   }

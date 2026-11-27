@@ -5,25 +5,26 @@
   and server updates come back through set().
 */
 
-export const MAX_HP = 150;
+export const MAX_HP = 100; // the default; each character sets its own (characters.js hp)
 export const REGEN = { delay: 8, rate: 10 };
 
 export class Vitals {
   constructor() {
     this.sync = null;
     this.serverOwned = false;
+    this.max = MAX_HP;
     this.reset();
   }
 
   reset() {
-    this.hp = MAX_HP;
+    this.hp = this.max;
     this.armour = 0;
     this.armourMax = 0;
     this.quiet = 0;
   }
 
   get dead() { return this.hp <= 0; }
-  get hurt() { return this.hp < MAX_HP; }
+  get hurt() { return this.hp < this.max; }
   get armourMissing() { return this.armourMax - this.armour; }
 
   /** Takes a hit; returns the health actually lost (armour soaks first). */
@@ -37,7 +38,7 @@ export class Vitals {
   }
 
   heal(amount) {
-    this.hp = Math.min(MAX_HP, this.hp + amount);
+    this.hp = Math.min(this.max, this.hp + amount);
     this.sync?.('heal', amount);
   }
 
@@ -62,6 +63,6 @@ export class Vitals {
 
   update(dt) {
     this.quiet += dt;
-    if (!this.serverOwned && !this.dead && this.quiet > REGEN.delay) this.hp = Math.min(MAX_HP, this.hp + REGEN.rate * dt);
+    if (!this.serverOwned && !this.dead && this.quiet > REGEN.delay) this.hp = Math.min(this.max, this.hp + REGEN.rate * dt);
   }
 }

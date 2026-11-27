@@ -148,6 +148,9 @@ export class CameraRig {
     if (Math.abs(this.lean) < 1e-4) this.lean = 0;
     cam.position.addScaledVector(right, this.lean * LEAN.side);
     cam.position.y -= Math.abs(this.lean) * LEAN.drop;
-    cam.rotation.set(this.pitch + (pp + mantlePitch - vaultK * 3 * D2R + dipY * 0.02) * zk, this.yaw + py * zk, (this.roll - this.lean * LEAN.roll) * zk + (pr + mantleRoll + vaultK * 4 * D2R) * zk);
+    // wall jump: the head swings out away from the wall and tilts with it, then settles
+    const wl = mv.wallLean;
+    cam.position.addScaledVector(right, wl * 0.06);
+    cam.rotation.set(this.pitch + (pp + mantlePitch - vaultK * 3 * D2R + dipY * 0.02) * zk, this.yaw + py * zk, (this.roll - this.lean * LEAN.roll - wl * 9 * D2R) * zk + (pr + mantleRoll + vaultK * 4 * D2R) * zk);
   }
 }
