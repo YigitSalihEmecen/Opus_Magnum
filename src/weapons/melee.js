@@ -36,7 +36,7 @@ const _o = new THREE.Vector3(), _d = new THREE.Vector3(), _e = new THREE.Euler(0
 const _ray = new THREE.Raycaster();
 
 /** Catmull-Rom through the keys (each a pose array), at time t. */
-function sample(keys, t) {
+export function sample(keys, t) {
   let i = 0;
   while (i < keys.length - 2 && t > keys[i + 1][0]) i++;
   const [t1, p1] = keys[i], [t2, p2] = keys[i + 1];

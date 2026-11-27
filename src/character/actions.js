@@ -19,8 +19,9 @@ export const ACTS = {
   slashLeft: { time: 0.44, item: 'knife', dip: 0.3, fade: 0.05, keys: [[0.06, [-0.3, 0.22, 0.3]], [0.13, [0.02, 0.06, 0.62]], [0.22, [0.4, -0.1, 0.42]]] },
   slashRight: { time: 0.44, item: 'knife', dip: 0.3, fade: 0.05, keys: [[0.06, [0.42, 0.24, 0.26]], [0.13, [0.1, 0.06, 0.62]], [0.22, [-0.28, -0.08, 0.46]]] },
   stab: { time: 0.46, item: 'knife', dip: 0.3, fade: 0.05, keys: [[0.08, [0.2, 0.0, 0.18]], [0.15, [0.06, 0.05, 0.74]], [0.24, [0.06, 0.03, 0.7]]] },
-  // a grenade: held low, pin, wound back past the head, flung forward, followed through
-  throw: { time: THROW.time, item: 'grenade', release: THROW.release, dip: 0.45, fade: 0.1, keys: [[0.12, [0.16, -0.12, 0.3]], [THROW.pin, [0.18, -0.06, 0.32]], [THROW.release - 0.08, [0.3, 0.42, -0.22]], [THROW.release + 0.06, [0.12, 0.22, 0.68]], [0.76, [0.14, -0.18, 0.48]]] },
+  // a grenade, overhand on the free (left) side: held low while the pin comes out, swung back and up beside the
+  // head, over and forward to let go high in front, then down and across in the follow-through
+  throw: { time: THROW.time, item: 'grenade', release: THROW.release, dip: 0.45, fade: 0.1, keys: [[0.12, [0.18, -0.12, 0.3]], [THROW.pin, [0.2, -0.06, 0.3]], [THROW.release - 0.12, [0.34, 0.48, -0.3]], [THROW.release, [0.24, 0.6, 0.38]], [THROW.release + 0.12, [0.08, 0.18, 0.62]], [0.8, [0.0, -0.14, 0.45]]] },
   // a heal or a charger, worked at the chest until it's done (stop)
   use: { time: Infinity, dip: 0.55, fade: 0.2, keys: [[0.25, [0.06, -0.08, 0.3]]] },
 };
