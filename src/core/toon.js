@@ -35,6 +35,10 @@ const GRADIENT_SOFT = gradientMap([120, 190, 235, 255]);
  */
 export function toon(color, { rim = 0.18, rimColor = 0xffffff, soft = false, ...rest } = {}) {
   const mat = new THREE.MeshToonMaterial({ color, gradientMap: soft ? GRADIENT_SOFT : GRADIENT, ...rest });
+  // shadows are cast from back faces (three's default), so a sunlit face never tests against itself (no acne at
+  // any sun angle, with next to no bias, so shade under a ledge stays shut); a face turned away from the sun gets
+  // none of it instead of testing against itself (core/renderer.js)
+  mat.defines.SUN_FACING = '';
   if (rim > 0) {
     const rimUniforms = { rimStrength: { value: rim }, rimColor: { value: new THREE.Color(rimColor) } };
     mat.userData.rim = rimUniforms;

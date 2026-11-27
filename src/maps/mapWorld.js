@@ -264,6 +264,5 @@ function atmosphere(scene, group, half) {
   const c = sun.shadow.camera;
   c.near = 10;
   c.far = 260;
-  sun.shadow.bias = -0.0004;
   group.add(sun, sun.target);
 }

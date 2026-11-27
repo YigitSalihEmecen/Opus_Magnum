@@ -19,12 +19,9 @@ import { WEAPONS } from '../weapons/weapons.js';
 */
 
 const mats = new Map();
-/**
- * Flat toon colour, shared per colour. Shadows are cast from front faces, so the underside of a slab
- * compares against its own top and reads as solid shade (back faces striped with acne).
- */
+/** Flat toon colour, shared per colour. */
 export function mat(color) {
-  if (!mats.has(color)) mats.set(color, toon(color, { rim: 0.16, shadowSide: THREE.FrontSide }));
+  if (!mats.has(color)) mats.set(color, toon(color, { rim: 0.16 }));
   return mats.get(color);
 }
 const decal = (color) => toon(color, { rim: 0, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });

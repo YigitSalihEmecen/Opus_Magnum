@@ -12,20 +12,31 @@ export const FX_LAYER = 1;
   targets write the attachment themselves (NORMAL_OUT_DECL).
 */
 export const NORMAL_OUT_DECL = 'layout(location = 1) out highp vec4 gNormal;';
-THREE.ShaderChunk.fog_pars_fragment = `${NORMAL_OUT_DECL}\n${THREE.ShaderChunk.fog_pars_fragment}`;
-THREE.ShaderChunk.normal_fragment_begin += '\n#ifndef OM_NORMAL\n#define OM_NORMAL\n#endif\n';
-THREE.ShaderChunk.opaque_fragment += `
-#if defined( OPAQUE ) && defined( OM_NORMAL )
-gNormal = vec4( normalize( normal ) * 0.5 + 0.5, 1.0 );
-#elif defined( OPAQUE )
-gNormal = vec4( 0.5, 0.5, 1.0, 0.0 );
-#else
-gNormal = vec4( 0.0 );
-#endif
-`;
-for (const k of ['background', 'backgroundCube']) {
-  const sh = THREE.ShaderLib[k];
-  sh.fragmentShader = sh.fragmentShader.replace('void main() {', `${NORMAL_OUT_DECL}\nvoid main() {\n\tgNormal = vec4( 0.0 );`);
+// patched once per page (a hot reload of this module must not stack a second copy onto three's chunks)
+const PATCHED = THREE.ShaderChunk.fog_pars_fragment.includes(NORMAL_OUT_DECL);
+if (!PATCHED) {
+  THREE.ShaderChunk.fog_pars_fragment = `${NORMAL_OUT_DECL}\n${THREE.ShaderChunk.fog_pars_fragment}`;
+  THREE.ShaderChunk.normal_fragment_begin += '\n#ifndef OM_NORMAL\n#define OM_NORMAL\n#endif\n';
+  THREE.ShaderChunk.opaque_fragment += `
+  #if defined( OPAQUE ) && defined( OM_NORMAL )
+  gNormal = vec4( normalize( normal ) * 0.5 + 0.5, 1.0 );
+  #elif defined( OPAQUE )
+  gNormal = vec4( 0.5, 0.5, 1.0, 0.0 );
+  #else
+  gNormal = vec4( 0.0 );
+  #endif
+  `;
+  // a toon surface turned away from the sun gets none of it (shadows come from back faces; see core/toon.js)
+  THREE.ShaderChunk.lights_fragment_begin = THREE.ShaderChunk.lights_fragment_begin.replace(
+    'directionalLightShadow.shadowRadius, vDirectionalShadowCoord[ i ] ) : 1.0;',
+    'directionalLightShadow.shadowRadius, vDirectionalShadowCoord[ i ] ) : 1.0;\n\t\t#ifdef SUN_FACING\n\t\tdirectLight.color *= step( 0.0, dot( geometryNormal, directLight.direction ) );\n\t\t#endif',
+  );
+  if (!THREE.ShaderChunk.lights_fragment_begin.includes('SUN_FACING')) console.warn('sun-facing shadows: three.js chunk changed');
+
+  for (const k of ['background', 'backgroundCube']) {
+    const sh = THREE.ShaderLib[k];
+    sh.fragmentShader = sh.fragmentShader.replace('void main() {', `${NORMAL_OUT_DECL}\nvoid main() {\n\tgNormal = vec4( 0.0 );`);
+  }
 }
 
 const COMPOSITE_VERT = /* glsl */ `
@@ -354,7 +365,7 @@ const ZERO4 = [0, 0, 0, 0];
 const _c = new THREE.Vector3(), _f = new THREE.Vector3(), _lx = new THREE.Vector3(), _ly = new THREE.Vector3(), _lz = new THREE.Vector3();
 /**
  * A sun with userData.shadowFollow = r keeps its shadow box (±r m) on the view instead of on the whole map, so
- * the same map size gives sharp shadows on any level, and sets its normal bias to the texel size. The box sits a little ahead of the view and moves in
+ * the same map size gives sharp shadows on any level, and keeps its bias tiny (see core/toon.js). The box sits a little ahead of the view and moves in
  * whole shadow texels, so standing shadows don't shimmer as you walk.
  */
 function followShadow(light, cam) {
@@ -367,9 +378,10 @@ function followShadow(light, cam) {
   _lx.set(0, 1, 0).cross(_lz).normalize();
   _ly.crossVectors(_lz, _lx);
   const texel = (2 * r) / light.shadow.mapSize.x;
-  // look the shadow up half a texel off the surface: enough to stop acne, little enough that the shade right under
-  // a ledge or a cap stays shut (a bigger offset leaks a lit strip there)
-  light.shadow.normalBias = texel * 0.5;
+  // surfaces cast from their back faces, so a lit face never tests against itself and needs next to no bias;
+  // any offset (sideways or toward the sun) bigger than a ledge's overhang leaks a lit strip under it
+  light.shadow.normalBias = 0;
+  light.shadow.bias = -0.00002;
   const x = Math.round(_c.dot(_lx) / texel) * texel, y = Math.round(_c.dot(_ly) / texel) * texel, z = _c.dot(_lz);
   _c.set(0, 0, 0).addScaledVector(_lx, x).addScaledVector(_ly, y).addScaledVector(_lz, z);
   light.target.position.copy(_c);
