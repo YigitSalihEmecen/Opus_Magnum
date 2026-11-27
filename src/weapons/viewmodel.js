@@ -202,7 +202,7 @@ export class Viewmodel {
     this.kickPos = new Spring3(420, 26);
     this.kickRot = new Spring3(340, 22);
     this.swayLag = new THREE.Vector3();
-    this.w = { sprint: 0, slide: 0, wall: 0, walk: 0, air: 0, crouch: 0, strafe: 0 };
+    this.w = { sprint: 0, slide: 0, walk: 0, air: 0, crouch: 0, strafe: 0 };
     this.time = 0;
     this.boltCycle = 1;
     this.boltLocked = false;
@@ -376,8 +376,7 @@ export class Viewmodel {
     const onGround = mv.state === 'ground' && mv.grounded;
     w.sprint = damp(w.sprint, mv.sprinting && onGround ? 1 : 0, 9, dt);
     w.slide = damp(w.slide, mv.state === 'slide' ? 1 : 0, 10, dt);
-    w.wall = damp(w.wall, mv.state === 'wallrun' ? mv.wallSide : 0, 8, dt);
-    w.walk = damp(w.walk, onGround || mv.state === 'wallrun' ? Math.min(1, mv.speed / MOVE.sprintSpeed) : 0, 10, dt);
+    w.walk = damp(w.walk, onGround ? Math.min(1, mv.speed / MOVE.sprintSpeed) : 0, 10, dt);
     w.air = damp(w.air, mv.state === 'air' ? THREE.MathUtils.clamp(mv.vel.y / 8, -1, 1) : 0, 8, dt);
     w.crouch = damp(w.crouch, mv.crouched ? 1 : 0, 10, dt);
     w.strafe = damp(w.strafe, axes.x, 8, dt);
@@ -390,7 +389,7 @@ export class Viewmodel {
     const o = this.optic;
     const steady = o.shadow ? 1 : 0.85;
     const free = (1 - ads * steady) * (1 - ie * 0.75);
-    // movement poses (slide cant, air, wallrun, crouch, strafe lean) are hip-only: aimed, the sight stays dead centre
+    // movement poses (slide cant, air, crouch, strafe lean) are hip-only: aimed, the sight stays dead centre
     const move = (1 - ads) * (1 - ie * 0.75);
 
     // mouse sway lags behind the view
@@ -437,7 +436,7 @@ export class Viewmodel {
     rx += sl * (Math.atan2(-(p.y + SLIDE_BORE_H), aimDist) - HIP_ROT.x * hipK);
     const ry = HIP_ROT.y * hipK + SPRINT_ROT.y * sprint + this.swayLag.y * free + sl * (Math.atan2(p.x, aimDist) - HIP_ROT.y * hipK);
     const rz = HIP_ROT.z * hipK + SPRINT_ROT.z * sprint + this.swayLag.y * 0.8 * free + Math.sin(ph) * 1.8 * D2R * bobAmp - w.strafe * 3 * D2R * move
-      + sl * 28 * D2R + w.wall * 7 * D2R * move + 12 * D2R * mantle + 34 * D2R * vault;
+      + sl * 28 * D2R + 12 * D2R * mantle + 34 * D2R * vault;
     // while inspecting, the gun leans toward the cursor
     const cx = cursor ? cursor.x : 0, cy = cursor ? cursor.y : 0;
     this.sway.rotation.set(

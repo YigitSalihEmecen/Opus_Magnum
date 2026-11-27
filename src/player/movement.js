@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { Capsule } from 'three/examples/jsm/math/Capsule.js';
 
-/** Global horizontal pace: every ground/air/wall speed below is scaled by it (jumps and falls are not). */
+/** Global horizontal pace: every ground/air speed below is scaled by it (jumps and falls are not). */
 export const SPEED = 0.7;
 
 /** All movement tuning lives here. Units: metres, seconds. */
@@ -36,17 +36,6 @@ export const MOVE = {
   slideEndSpeed: 3.0 * SPEED,
   slideSteerAccel: 4,
 
-  wallrunMinSpeed: 4.6 * SPEED,
-  wallrunSpeed: 9.2 * SPEED,
-  wallrunAccel: 9,
-  wallrunMaxTime: 1.85,
-  wallrunGravity: 2.6,
-  wallrunReach: 0.55,
-  wallrunEntryLift: 1.6,
-  wallJumpOut: 6.4 * SPEED,
-  wallJumpUp: 6.8,
-  wallrunCooldown: 0.3,
-
   mantleReach: 0.55,
   mantleMinHeight: 0.45,
   mantleMaxHeight: 1.75,
@@ -65,7 +54,6 @@ export const MOVE = {
   vaultTuck: 1.0, // body height while vaulting (legs tucked): what has to fit through a window
 };
 
-const UP = new THREE.Vector3(0, 1, 0);
 const STEP_UP = 0.45; // ledges this low are walked up, not bumped into (a stair, a kerb, a slab edge)
 const SNAP_DOWN = 0.45; // grounded, we stay glued to floors this far below (down stairs and slopes)
 const STEP = 1 / 120;
@@ -78,7 +66,7 @@ const horiz = (v, out = _v) => out.set(v.x, 0, v.z);
 
 /**
  * Pilot-style character controller on top of a triangle Octree.
- * States: ground · air · slide · wallrun · mantle · vault
+ * States: ground · air · slide · mantle · vault
  * Emits events via this.onEvent(name, data).
  */
 export class Movement {
@@ -88,8 +76,6 @@ export class Movement {
     this.vel = new THREE.Vector3();
     this.capsule = new Capsule();
     this.groundNormal = new THREE.Vector3(0, 1, 0);
-    this.wallNormal = new THREE.Vector3();
-    this.lastWallNormal = new THREE.Vector3();
     this.onEvent = () => {};
     this.respawn(spawn);
   }
@@ -106,10 +92,6 @@ export class Movement {
     this.jumpBufferT = 0;
     this.jumpLock = 0;
     this.slideBoostT = 0;
-    this.wallrunT = 0;
-    this.wallrunCooldownT = 0;
-    this.wallSide = 0;
-    this.hasLastWall = false;
     this.sprintBlockT = 0;
     this.stepDist = 0;
     this.steps = 0;
@@ -161,19 +143,17 @@ export class Movement {
     this.coyote -= dt;
     this.jumpLock -= dt;
     this.slideBoostT -= dt;
-    this.wallrunCooldownT -= dt;
     this.vaultWindowT -= dt;
 
     if (this.state === 'mantle') return this.#updateMantle(dt);
     if (this.state === 'vault') return this.#updateVault(dt);
-    if (this.state === 'wallrun') this.#updateWallrun(dt, c);
-    else if (this.grounded) this.#updateGround(dt, c);
+    if (this.grounded) this.#updateGround(dt, c);
     else this.#updateAir(dt, c);
 
     if (this.state === 'mantle') return;
 
     // jump (buffered + coyote); running at something low and thin turns the jump into a vault
-    if (this.jumpBufferT > 0 && this.state !== 'wallrun' && (this.grounded || this.coyote > 0)) {
+    if (this.jumpBufferT > 0 && (this.grounded || this.coyote > 0)) {
       if (this.#tryVault(c)) return;
       this.#jump(c);
     }
@@ -197,7 +177,6 @@ export class Movement {
   #updateGround(dt, c) {
     this.coyote = MOVE.coyoteTime;
     this.airTime = 0;
-    this.hasLastWall = false;
 
     if (this.state === 'slide') return this.#updateSlide(dt, c);
 
@@ -267,7 +246,6 @@ export class Movement {
     // jumped a little early at something vaultable: the jump becomes the vault when we get there
     if (this.vaultWindowT > 0 && c.axes.y > 0 && this.#tryVault(c, true)) return;
     if (c.axes.y > 0 && this.#tryMantle(c)) return;
-    if (this.jumpLock <= 0 || this.airTime > 0.06) this.#tryWallrun(c);
   }
 
   #jump(c) {
@@ -284,96 +262,12 @@ export class Movement {
     this.onEvent('jump', { slide: wasSlide });
   }
 
-  // ───────────────────────── wallrun ─────────────────────────
+  // ───────────────────────── walls ─────────────────────────
 
   #probeWall(origin, dir, reach) {
     const hit = this.#cast(origin, dir, MOVE.radius + reach);
     if (!hit || Math.abs(hit.normal.y) > 0.3) return null;
     return hit;
-  }
-
-  #tryWallrun(c) {
-    if (this.wallrunCooldownT > 0 || c.axes.y <= 0 || this.speed < MOVE.wallrunMinSpeed) return false;
-    if (this.#cast(this.feet, new THREE.Vector3(0, -1, 0), 0.7)) return false; // too close to the floor
-
-    const center = _v2.copy(this.feet).setY(this.feet.y + this.height * 0.55);
-    const vdir = horiz(this.vel, new THREE.Vector3()).normalize();
-    const vright = new THREE.Vector3(-vdir.z, 0, vdir.x);
-    let best = null;
-    for (const d of [c.right, c.right.clone().negate(), vright, vright.clone().negate()]) {
-      const hit = this.#probeWall(center, d, MOVE.wallrunReach);
-      if (hit && (!best || hit.distance < best.distance)) best = hit;
-    }
-    if (!best) return false;
-    const n = best.normal;
-    n.y = 0;
-    n.normalize();
-    if (-vdir.dot(n) > 0.8) return false; // running straight into it: that's a mantle, not a wallrun
-    if (this.hasLastWall && n.dot(this.lastWallNormal) > 0.92) return false;
-
-    this.state = 'wallrun';
-    this.wallNormal.copy(n);
-    this.wallrunT = 0;
-    this.wallSide = Math.sign(-n.dot(c.right)) || 1;
-    // shed velocity into the wall, give a small lift
-    const into = this.vel.dot(n);
-    if (into < 0) this.vel.addScaledVector(n, -into);
-    this.vel.y = Math.max(this.vel.y * 0.4, 0) + MOVE.wallrunEntryLift;
-    this.onEvent('wallrunStart', { side: this.wallSide });
-    return true;
-  }
-
-  #updateWallrun(dt, c) {
-    this.wallrunT += dt;
-    const center = _v2.copy(this.feet).setY(this.feet.y + this.height * 0.55);
-    const hit = this.#probeWall(center, this.wallNormal.clone().negate(), MOVE.wallrunReach + 0.25);
-    if (hit) {
-      hit.normal.y = 0;
-      this.wallNormal.copy(hit.normal.normalize());
-    }
-    this.wallSide = Math.sign(-this.wallNormal.dot(c.right)) || this.wallSide;
-
-    const n = this.wallNormal;
-    const along = horiz(this.vel, new THREE.Vector3()).addScaledVector(n, -this.vel.dot(n));
-    along.y = 0;
-    if (along.lengthSq() < 1e-4) along.crossVectors(UP, n).multiplyScalar(c.fwd.dot(_v.crossVectors(UP, n)) >= 0 ? 1 : -1);
-    along.normalize();
-
-    let s = Math.max(0, this.vel.x * along.x + this.vel.z * along.z);
-    if (c.axes.y > 0) s += Math.max(0, MOVE.wallrunSpeed - s) * Math.min(1, MOVE.wallrunAccel * dt);
-    this.vel.x = along.x * s - n.x * 1.5;
-    this.vel.z = along.z * s - n.z * 1.5;
-
-    const t = this.wallrunT / MOVE.wallrunMaxTime;
-    const g = MOVE.wallrunGravity * (0.4 + t * t * 4);
-    this.vel.y -= g * dt;
-    if (this.vel.y > 0) this.vel.y -= this.vel.y * Math.min(1, 3.5 * dt);
-    this.vel.y = Math.max(this.vel.y, -4);
-
-    const end = (why) => {
-      this.state = 'air';
-      this.wallrunCooldownT = MOVE.wallrunCooldown;
-      this.lastWallNormal.copy(n);
-      this.hasLastWall = true;
-      this.onEvent('wallrunEnd', { why });
-    };
-
-    if (this.jumpBufferT > 0) {
-      this.jumpBufferT = 0;
-      this.vel.addScaledVector(n, MOVE.wallJumpOut).addScaledVector(c.wish, 1.6);
-      this.vel.y = MOVE.wallJumpUp;
-      this.jumpLock = 0.15;
-      end('jump');
-      this.onEvent('jump', { wall: true });
-      return;
-    }
-    if (c.axes.y > 0 && this.#tryMantle(c)) return;
-    if (!hit) return end('lost');
-    if (this.grounded) return end('ground');
-    if (this.wallrunT > MOVE.wallrunMaxTime || c.axes.y <= 0 || c.crouchPressed || s < MOVE.wallrunMinSpeed * 0.6) {
-      this.vel.addScaledVector(n, 1.2);
-      return end('timeout');
-    }
   }
 
   // ───────────────────────── mantle ─────────────────────────
@@ -405,7 +299,6 @@ export class Movement {
     }
 
     const prev = this.state;
-    if (prev === 'wallrun') this.onEvent('wallrunEnd', { why: 'mantle' });
     this.state = 'mantle';
     this.mantle = {
       t: 0,
@@ -699,13 +592,12 @@ export class Movement {
   #footsteps(dt) {
     let stride = 0, s = 0;
     if (this.state === 'ground' && this.grounded) { s = this.speed; stride = this.sprinting ? 2.3 : this.crouched ? 1.3 : 1.8; }
-    else if (this.state === 'wallrun') { s = this.speed; stride = 2.1; }
     if (stride === 0 || s < 0.8) return;
     this.stepDist += s * dt;
     if (this.stepDist > stride) {
       this.stepDist -= stride;
       this.steps++;
-      this.onEvent('step', { speed: s, wall: this.state === 'wallrun' });
+      this.onEvent('step', { speed: s });
     }
   }
 

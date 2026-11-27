@@ -52,7 +52,7 @@ const vmCamera = new THREE.PerspectiveCamera(54, innerWidth / innerHeight, 0.01,
 const customWorld = async (mapId) => (await import('./maps/mapWorld.js')).buildMapWorld(scene, getMap(mapId));
 const MODES = [
   {
-    id: 'range', index: '01 / PRACTICE', title: 'Shooting Range', short: 'Warm up and tune', accent: '#8a9a7b', builtin: 'Test Range', blurb: 'Targets, wallrun lanes, mantle steps and a slide ramp. Tune your feel and your loadout.',
+    id: 'range', index: '01 / PRACTICE', title: 'Shooting Range', short: 'Warm up and tune', accent: '#8a9a7b', builtin: 'Test Range', blurb: 'Targets, vault blocks, mantle steps and a slide ramp. Tune your feel and your loadout.',
     load: async (mapId) => {
       if (mapId && getMap(mapId)) {
         const w = await customWorld(mapId);
@@ -169,11 +169,11 @@ function setInspect(on) {
 mv.onEvent = (name, d = {}) => {
   switch (name) {
     case 'step':
-      audio.play('step', { volume: d.wall ? 0.07 : 0.025 + Math.min(0.05, d.speed * 0.006), rate: d.wall ? 1.15 : 1 });
+      audio.play('step', { volume: 0.025 + Math.min(0.05, d.speed * 0.006) });
       break;
     case 'jump':
       audio.play('cloth', { volume: 0.25 });
-      if (!d.wall) audio.play('step', { volume: 0.06, rate: 0.9 });
+      audio.play('step', { volume: 0.06, rate: 0.9 });
       vm.kickPos.kick(0, -0.25, 0);
       vm.kickRot.kick(-0.6, 0, 0);
       break;
@@ -189,11 +189,6 @@ mv.onEvent = (name, d = {}) => {
     case 'slideStart':
       audio.play('cloth', { volume: 0.45, rate: 0.85 });
       rig.punch(-1.2, 0, 1.5);
-      break;
-    case 'wallrunStart':
-      audio.play('step', { volume: 0.08, rate: 1.1 });
-      audio.play('cloth', { volume: 0.3 });
-      vm.kickRot.kick(0, 0, d.side * 0.6);
       break;
     case 'mantle':
       audio.play('cloth', { volume: 0.5 });
@@ -462,7 +457,7 @@ function tick(dt) {
   vitalsHud.update(dt, { vitals, inv, prompt });
   audio.setLoops({
     wind: THREE.MathUtils.clamp((mv.speed / SPEED - 6) / 9, 0, 1) + (mv.state === 'air' ? Math.min(0.5, Math.abs(mv.vel.y) / 20) : 0),
-    scrape: mv.state === 'slide' ? Math.min(1, mv.speed / SPEED / 10) : mv.state === 'wallrun' ? 0.35 : 0,
+    scrape: mv.state === 'slide' ? Math.min(1, mv.speed / SPEED / 10) : 0,
   });
 
   renderer.render(scene, camera, vmScene, vmCamera, { eyepiece: vm.eyepieceInfo(), focus: vm.inspectEase });

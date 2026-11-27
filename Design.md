@@ -4,7 +4,7 @@ A fast, movement-first arena shooter. Gunplay should feel tactile and weighty, m
 expressive. Everything on screen should read instantly.
 
 ## Feel
-- **Movement first.** Sliding, wallrunning and mantling flow into each other with momentum. Nothing should
+- **Movement first.** Sliding, vaulting and mantling flow into each other with momentum. Nothing should
   stop the player abruptly.
 - **Tactile guns.** Every shot has weight: recoil you can see and feel, moving mechanical parts, and
   reloads that show real hand work.

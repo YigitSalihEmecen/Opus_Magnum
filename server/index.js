@@ -16,7 +16,7 @@ import { WebSocketServer } from 'ws';
   After a match everyone votes for the next map among the builtin maps the room's opener listed (hello.maps).
 
   client → server   hello { v, name, room, char, mapId, map?, maps, weapons } · fire { o, d, w, sup } · hit { id, zone, dmg }
-                    s { q: [px, py, pz, vx, vy, vz, yaw, pitch, weapon, state, flags, wallSide, clientMs] }
+                    s { q: [px, py, pz, vx, vy, vz, yaw, pitch, weapon, state, flags, 0 (unused), clientMs] }
                     hit { id, zone, dmg, w? }  (w: what did it — arsenal id, 'knife', 'grenade', 'fall')
                     take { id } · drop { w, p, ammo, reserve } · vit { op: heal|wear|charge, v } · nade { p, v, f }
                     door { id, open, dir } · vote { map } · ping { c }

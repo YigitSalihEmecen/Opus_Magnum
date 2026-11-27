@@ -8,7 +8,7 @@ import { applySky } from './sky.js';
 
           -X  ◄──────────────────────────────────►  +X
     ┌─────────────────────────────────────────────────────────┐
-    │ PILLARS     MANTLE     SHOOTING LANE   WALLRUN   SLIDE   │  z = -40
+    │ PILLARS     MANTLE     SHOOTING LANE   VAULT     SLIDE   │  z = -40
     │ x≈-52       x≈-30      x∈[-12,12]      x≈29      x≈53    │
     │                                                          │
     │                         ▲ spawn (0, 40)                  │  z = +50
@@ -34,7 +34,7 @@ export class TestRange {
     this.#ground();
     this.#perimeter();
     this.#shootingLane();
-    this.#wallrunCourse();
+    this.#vaultCourse();
     this.#mantleCourse();
     this.#slideRamp();
     this.#pillars();
@@ -197,16 +197,10 @@ export class TestRange {
     ];
   }
 
-  #wallrunCourse() {
-    this.sign(29, 34, '02 / MOVE', 'Wallrun', 'SPRINT · JUMP · HOLD W');
-    const H = 7, T = 0.8;
-    // alternating panels, 6 m apart
-    this.block(32, 0, 18, T, H, 14, P.clay);
-    this.block(26, 0, 2, T, H, 14, P.clay);
-    this.block(32, 0, -14, T, H, 14, P.clay);
-    this.block(26, 0, -30, T, H, 14, P.clay);
-    // long wall for sustained runs + landing deck
-    this.block(40, 0, -6, T, H, 52, P.bookcloth);
+  #vaultCourse() {
+    this.sign(29, 34, '02 / MOVE', 'Vault', 'SPRINT · JUMP AT IT');
+    // a lane of low, thin obstacles, rising in height (thicker ones you climb onto instead)
+    [0.6, 0.9, 1.1, 1.3].forEach((h, i) => this.block(29, 0, 18 - i * 14, 8, h, 0.5, P.clay, { label: `${h.toFixed(1)} M` }));
     this.block(29, 0, -44, 12, 3, 6, P.ivory);
     this.block(29, 3, -46.5, 12, 0.3, 1, P.ink);
   }
@@ -218,7 +212,6 @@ export class TestRange {
     });
     // step tower: each tier needs a mantle
     [1.2, 2.4, 3.6, 4.8].forEach((h, i) => this.block(-36, 0, -24 - i * 4, 5, h, 4, P.sage));
-    this.block(-24, 0, -30, 4, 6, 12, P.ivory); // wall to wallrun-mantle onto the tower
   }
 
   #slideRamp() {
@@ -230,7 +223,7 @@ export class TestRange {
   }
 
   #pillars() {
-    this.sign(-55, 34, '05 / FLOW', 'Pillars', 'CHAIN WALLRUNS');
+    this.sign(-55, 34, '05 / FLOW', 'Pillars', 'PEEK · STRAFE · COVER');
     for (let i = 0; i < 4; i++) {
       for (let j = 0; j < 2; j++) {
         this.block(-60 + j * 9, 0, 18 - i * 11 + j * 5.5, 2.2, 9, 2.2, P.sky);

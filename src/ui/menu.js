@@ -1,5 +1,5 @@
 const CONTROLS = [
-  ['WASD', 'Move'], ['Mouse', 'Look'], ['Space', 'Jump · wall-jump'], ['Shift', 'Sprint (toggle)'],
+  ['WASD', 'Move'], ['Mouse', 'Look'], ['Space', 'Jump · vault'], ['Shift', 'Sprint (toggle)'],
   ['C / Ctrl', 'Crouch · slide'], ['LMB', 'Fire'], ['RMB', 'Aim down sights'], ['R', 'Reload'],
   ['1 – 5', 'Switch weapon'], ['E', 'Pick up · swap'], ['T', 'Drop weapon'], ['G', 'Throw grenade'], ['V', 'Knife'], ['Q', 'Heal'],
   ['X', 'Charge armour'], ['F', 'Gunsmith'], ['B', 'Fire mode'], ['Tab', 'Scoreboard'], ['Esc / P', 'Pause · settings'],
@@ -25,7 +25,7 @@ export class Menu {
         <div class="stamp">BUILD 0.1 · TEST RANGE</div>
         <div class="eyebrow">Pilot movement &amp; gunplay testbed</div>
         <h1>Opus Magnum</h1>
-        <p class="lede">A clean range for tuning feel: wallruns, slides, auto-mantles and two guns that kick back. Everything here is meant to be iterated on.</p>
+        <p class="lede">A clean range for tuning feel: vaults, slides, auto-mantles and two guns that kick back. Everything here is meant to be iterated on.</p>
         <div class="grid">${CONTROLS.map(([k, v]) => `<div class="key"><kbd>${k}</kbd><span>${v}</span></div>`).join('')}</div>
         <div class="settings">
           ${slider('sensitivity', 'Sensitivity', 0.2, 3, 0.05)}

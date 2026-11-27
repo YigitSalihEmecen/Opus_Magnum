@@ -24,7 +24,7 @@ export const PROTOCOL = 3; // server/index.js PROTOCOL
 const SEND_HZ = 30;
 const INTERP = 80;
 const COAST = 120; // ms of extrapolation past the newest pose
-const STATES = ['ground', 'air', 'slide', 'wallrun', 'mantle', 'vault'];
+const STATES = ['ground', 'air', 'slide', 'wallrun', 'mantle', 'vault']; // 'wallrun' is retired; kept so indices don't shift
 
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3();
 const _ray = new THREE.Ray();
@@ -139,16 +139,16 @@ class Remote extends Avatar {
       const p = this.poseTarget;
       p.crouch = b.cr && b.st !== 'slide' ? 1 : 0;
       p.slide = b.st === 'slide' ? 1 : 0;
-      p.wall = b.st === 'wallrun' ? b.ws || 0 : 0;
       p.air = b.st === 'air' ? 1 : 0;
-      p.mantle = b.st === 'mantle' || b.st === 'vault' ? 1 : 0;
+      p.mantle = b.st === 'mantle' ? 1 : 0;
+      p.vault = b.st === 'vault' ? 1 : 0;
       p.ads = b.ads ? 1 : 0;
       this.reloadT = b.rl ? this.reloadTime * 0.5 : 0;
       // footsteps on the gait, only while running on something
       const step = Math.floor(this.phase / Math.PI);
       if (step !== this.lastStep) {
         this.lastStep = step;
-        if ((b.st === 'ground' || b.st === 'wallrun') && this.vel.lengthSq() > 1) this.world.footstep(this.pos, b.st === 'wallrun');
+        if (b.st === 'ground' && this.vel.lengthSq() > 1) this.world.footstep(this.pos);
       }
     }
     this.pose(dt);
@@ -423,13 +423,13 @@ class Online {
   }
 
   /** A remote player's footstep, quieter with distance and panned. */
-  footstep(pos, wall) {
+  footstep(pos) {
     const cam = this.camera.position, d = pos.distanceTo(cam);
-    const vol = (wall ? 0.16 : 0.12) * Math.pow(THREE.MathUtils.clamp(1 - d / 28, 0, 1), 1.6);
+    const vol = 0.12 * Math.pow(THREE.MathUtils.clamp(1 - d / 28, 0, 1), 1.6);
     if (vol < 0.01) return;
     _c.subVectors(pos, cam).normalize();
     _b.setFromMatrixColumn(this.camera.matrixWorld, 0);
-    this.audio.play('step', { volume: vol, rate: wall ? 1.15 : 1, pan: THREE.MathUtils.clamp(_c.dot(_b), -1, 1) * 0.7 });
+    this.audio.play('step', { volume: vol, pan: THREE.MathUtils.clamp(_c.dot(_b), -1, 1) * 0.7 });
   }
 
   #bearing(p) {
@@ -537,7 +537,7 @@ class Online {
       const g = this.arsenal[w];
       const f = (mv.crouched ? 1 : 0) | (g && g.gun.adsEased > 0.5 ? 2 : 0) | (g && g.vm.reloading ? 4 : 0);
       const r2 = (x) => Math.round(x * 100) / 100, r3 = (x) => Math.round(x * 1000) / 1000;
-      this.send({ t: 's', q: [r3(mv.feet.x), r3(mv.feet.y), r3(mv.feet.z), r2(mv.vel.x), r2(mv.vel.y), r2(mv.vel.z), r3(this.rig.yaw + Math.PI), r3(this.rig.pitch), w, Math.max(0, STATES.indexOf(mv.state)), f, mv.wallSide || 0, Math.round(performance.now())] });
+      this.send({ t: 's', q: [r3(mv.feet.x), r3(mv.feet.y), r3(mv.feet.z), r2(mv.vel.x), r2(mv.vel.y), r2(mv.vel.z), r3(this.rig.yaw + Math.PI), r3(this.rig.pitch), w, Math.max(0, STATES.indexOf(mv.state)), f, 0, Math.round(performance.now())] });
     }
     if ((this.pingT -= dt) <= 0) { this.pingT = 2; this.send({ t: 'ping', c: performance.now() }); }
 

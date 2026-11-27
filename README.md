@@ -1,6 +1,6 @@
 # Opus Magnum
 
-Movement-first FPS in Three.js: wallrun, slide, auto-mantle and vault, five hand-animated weapons
+Movement-first FPS in Three.js: slide, auto-mantle and vault, five hand-animated weapons
 (carbine, SMG, pump shotgun, pistol, bolt sniper) with an in-world gunsmith, items (heals, armour,
 grenades, ammo), Team Deathmatch against bots, online 1v1 and a map editor, rendered cel-shaded with an
 ink outline pass. The style direction lives in [Design.md](Design.md).
@@ -13,7 +13,7 @@ node server/index.js   # match server for online play (ws://localhost:8787); nod
 ```
 
 ## Controls
-WASD move · Mouse look · Space jump / wall-jump · Shift sprint (toggle) · C or Ctrl crouch/slide ·
+WASD move · Mouse look · Space jump / vault · Shift sprint (toggle) · C or Ctrl crouch/slide ·
 LMB fire · RMB aim · R reload · 1–5 or wheel switch weapon · B fire mode · F gunsmith · Tab scoreboard ·
 E pick up / swap · T drop weapon · G throw grenade · V knife · Q heal · X charge armour · Esc or P pause/settings
 
@@ -45,7 +45,7 @@ src/
     input.js              keyboard/mouse with per-frame edges, pointer lock
     audio.js              sample bank + synthesized layers (sub thump, brass, hit sounds, explosions, wind)
   world/
-    testRange.js          the range: lane, wallrun, mantle, slide ramp, pillars (+ collision octree)
+    testRange.js          the range: lane, vault blocks, mantle, slide ramp, pillars (+ collision octree)
     dummies.js            static / strafing / orbiting targets with hit zones
     sky.js                painted sky, clouds, sun
   player/
@@ -98,7 +98,7 @@ src/
   modes/editor/           map editor UI, loaded only when picked
     editor.js             grid, orbit camera, place/select/drag, inspector, undo, open/save UI
   modes/gallery/          animation gallery, loaded only when picked
-    gallery.js            animation demo: three robots run a parkour loop (vault, slide, wallrun, climb, gaps); [ ] \ time
+    gallery.js            animation demo: three robots run a parkour loop (vaults, slide, climb, gaps); [ ] \ time
   net/
     online.js             online mode: remote players, poses, server-owned vitals, pickups, map vote
   ui/

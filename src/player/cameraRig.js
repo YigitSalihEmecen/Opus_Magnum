@@ -69,19 +69,18 @@ export class CameraRig {
     this.eye = damp(this.eye, mv.eyeHeight, mv.state === 'slide' || mv.state === 'vault' ? 20 : 12, dt);
 
     // head bob from gait
-    const moving = (mv.state === 'ground' && mv.grounded) || mv.state === 'wallrun';
+    const moving = mv.state === 'ground' && mv.grounded;
     const speedT = Math.min(1, mv.speed / (8 * SPEED));
     this.bobWeight = damp(this.bobWeight, moving ? speedT : 0, 10, dt);
     const ph = mv.gaitPhase;
     const amp = this.bobWeight * (1 - ads * 0.8);
     this.bob.set(Math.sin(ph) * 0.018 * amp, (Math.cos(ph * 2) - 1) * 0.5 * 0.028 * amp);
 
-    // roll: wallrun lean, strafe lean, slide tilt
+    // roll: strafe lean, slide tilt
     let targetRoll = -axes.x * 1.1 * D2R;
-    if (mv.state === 'wallrun') targetRoll = mv.wallSide * 12 * D2R;
-    else if (mv.state === 'slide') targetRoll = 3.5 * D2R;
+    if (mv.state === 'slide') targetRoll = 3.5 * D2R;
     targetRoll *= 1 - ads * 0.75; // aimed, keep the horizon nearly level
-    this.roll = damp(this.roll, targetRoll, mv.state === 'wallrun' ? 7 : 9, dt);
+    this.roll = damp(this.roll, targetRoll, 9, dt);
 
     // mantle dip
     const mp = mv.mantleProgress;

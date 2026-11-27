@@ -10,16 +10,16 @@ import { applySky } from '../../world/sky.js';
   and once rotated 180° onto the other side.
 
         z = -31 ┌──────────────────────────────────────────────────────────────┐
-                │ SPAWN W   crates     ║ GALLERY (wallrun wall) ║    BUILDING E│
+                │ SPAWN W   crates     ║ GALLERY (long wall)    ║    BUILDING E│
                 │                      pillars         pillars      ramp  ▲    │
      allies ──► │ shield  low wall       ┌── PLINTH ──┐          low wall      │ ◄── enemies
                 │                      pillars    monolith  pillars            │
-                │ ▼ ramp  BUILDING W   ║ GALLERY (wallrun wall) ║   crates     │
+                │ ▼ ramp  BUILDING W   ║ GALLERY (long wall)    ║   crates     │
         z = +31 └──────────────────────────────────────────────────────────────┘
                x = -45                                                  x = +45
 
-  Movement first: the gallery walls are wallrun lanes, the buildings are mantle/ramp high ground,
-  the plinth is the contested centre, and pillars chain wallruns across mid. No spawn-to-spawn
+  Movement first: the gallery walls split the lanes, the buildings are mantle/ramp high ground,
+  the plinth is the contested centre, and pillars and low walls break up mid. No spawn-to-spawn
   sightline: the plinth and monolith break the long axis.
 */
 
@@ -206,7 +206,7 @@ export class Arena {
     this.block(-43, 0, -16, 4, 4, 3, P.slate, o);
     this.block(-43, 0, 16, 4, 4, 3, P.slate, o);
 
-    // north gallery: long wallrun wall separating the outer lane from mid
+    // north gallery: long wall separating the outer lane from mid
     this.block(-15, 0, -17, 16, 5.5, 0.8, P.bookcloth, o);
     this.block(-15, 5.5, -17, 16.2, 0.2, 1, P.ink, { ...o });
     this.block(-20, 0, -24.5, 2.4, 1.2, 2.4, P.kraft, o);
@@ -222,7 +222,7 @@ export class Arena {
     this.block(-16, 0, 15.6, 2.6, 1.5, 2.6, P.sage, o);
     this.block(-10, 0, 21, 2, 1.1, 3, P.kraft, o);
 
-    // mid flanks: pillars to chain wallruns, low walls to crouch behind
+    // mid flanks: pillars to peek from, low walls to crouch behind or vault
     for (const [x, z] of [[-9, -10], [-9, 10], [-17, -6]]) {
       this.block(x, 0, z, 1.8, 6, 1.8, P.sky, o);
       this.block(x, 6, z, 2, 0.2, 2, P.ink, { ...o });
