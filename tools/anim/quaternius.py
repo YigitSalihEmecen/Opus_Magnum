@@ -31,7 +31,7 @@ BONES = {
 CLIPS = {
     'idle': (1, 'Idle_Loop', True), 'walk': (1, 'Walk_Loop', True), 'jog': (1, 'Jog_Fwd_Loop', True), 'sprint': (1, 'Sprint_Loop', True),
     'crouchIdle': (1, 'Crouch_Idle_Loop', True), 'crouchWalk': (1, 'Crouch_Fwd_Loop', True),
-    'jump': (1, 'Jump_Start', False), 'air': (1, 'Jump_Loop', True), 'land': (1, 'Jump_Land', False), 'hit': (1, 'Hit_Chest', False),
+    'air': (1, 'Jump_Loop', True), 'land': (1, 'Jump_Land', False), 'hit': (1, 'Hit_Chest', False),
     'slide': (2, 'Slide_Loop', True), 'climb': (2, 'ClimbUp_1m_RM', False),
     # the tucked jump: the vault is built from these in avatar.js (the libraries have no vault)
     'tuckStart': (2, 'NinjaJump_Start', False), 'tuck': (2, 'NinjaJump_Idle_Loop', True), 'tuckLand': (2, 'NinjaJump_Land', False),

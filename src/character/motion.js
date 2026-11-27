@@ -20,7 +20,7 @@ const SRC_HIPS = data.hips[1];
 /** Decoded once: per clip, per bone a Float32Array of quaternions, and the hips offsets. */
 const decode = (b64, scale) => { const s = atob(b64), n = s.length / 2, out = new Float32Array(n); for (let i = 0; i < n; i++) { const v = s.charCodeAt(2 * i) | (s.charCodeAt(2 * i + 1) << 8); out[i] = (v > 32767 ? v - 65536 : v) / scale; } return out; };
 let clips = null;
-export function motionClips() {
+function motionClips() {
   return (clips ??= Object.fromEntries(Object.entries(data.clips).map(([name, c]) => [name, {
     name, frames: c.frames, loop: c.loop, speed: c.speed ?? 0, duration: (c.frames - (c.loop ? 0 : 1)) / data.fps,
     q: Object.fromEntries(BONES.map((b) => [b, decode(c.q[b], 32767)])), p: decode(c.p, 1000),
