@@ -1,8 +1,32 @@
 import * as THREE from 'three';
 import { PALETTE } from './toon.js';
 
-/** Objects on this layer (tracers, flashes, sprites) render in colour but are skipped by the outline pass. */
+/** Objects on this layer (tracers, flashes, sprites): tags for effects, which are all transparent and so leave no normals. */
 export const FX_LAYER = 1;
+
+/*
+  Every built-in material also writes its view-space normal to a second colour attachment (MRT), so the outline's
+  normals come from the same pass as the colour instead of drawing the whole scene again. Lit materials write
+  their normal and a crease flag (alpha 1); unlit opaque ones a camera-facing normal without the flag; transparent
+  ones zero, which their blending (src alpha 0) leaves the target unchanged by. Shader materials drawn into these
+  targets write the attachment themselves (NORMAL_OUT_DECL).
+*/
+export const NORMAL_OUT_DECL = 'layout(location = 1) out highp vec4 gNormal;';
+THREE.ShaderChunk.fog_pars_fragment = `${NORMAL_OUT_DECL}\n${THREE.ShaderChunk.fog_pars_fragment}`;
+THREE.ShaderChunk.normal_fragment_begin += '\n#ifndef OM_NORMAL\n#define OM_NORMAL\n#endif\n';
+THREE.ShaderChunk.opaque_fragment += `
+#if defined( OPAQUE ) && defined( OM_NORMAL )
+gNormal = vec4( normalize( normal ) * 0.5 + 0.5, 1.0 );
+#elif defined( OPAQUE )
+gNormal = vec4( 0.5, 0.5, 1.0, 0.0 );
+#else
+gNormal = vec4( 0.0 );
+#endif
+`;
+for (const k of ['background', 'backgroundCube']) {
+  const sh = THREE.ShaderLib[k];
+  sh.fragmentShader = sh.fragmentShader.replace('void main() {', `${NORMAL_OUT_DECL}\nvoid main() {\n\tgNormal = vec4( 0.0 );`);
+}
 
 const COMPOSITE_VERT = /* glsl */ `
 varying vec2 vUv;
@@ -90,14 +114,13 @@ void main() {
 }
 `;
 
-// 8-bit, single-sample: the ink lines already cover every silhouette, so MSAA (and half-float colour, there's no
-// HDR) only cost bandwidth, about 7 ms a frame at 2x pixel ratio
-function makeTargets(w, h) {
-  const color = new THREE.WebGLRenderTarget(w, h, { colorSpace: THREE.SRGBColorSpace });
-  color.depthTexture = new THREE.DepthTexture(w, h, THREE.UnsignedIntType);
-  const normal = new THREE.WebGLRenderTarget(w, h);
-  normal.depthTexture = new THREE.DepthTexture(w, h, THREE.UnsignedIntType);
-  return { color, normal };
+// colour (textures[0]) + normals (textures[1]) + depth. 8-bit, single-sample: the ink lines already cover every
+// silhouette, so MSAA (and half-float colour, there's no HDR) only cost bandwidth, about 7 ms a frame at 2x
+function makeTarget(w, h) {
+  const t = new THREE.WebGLRenderTarget(w, h, { count: 2 });
+  t.textures[0].colorSpace = THREE.SRGBColorSpace;
+  t.depthTexture = new THREE.DepthTexture(w, h, THREE.UnsignedIntType);
+  return t;
 }
 
 /**
@@ -111,7 +134,7 @@ export const QUALITY = {
 };
 
 /**
- * Two-scene renderer: world + first-person viewmodel, each rendered to colour/depth/normal
+ * Two-scene renderer: world + first-person viewmodel, each rendered in one pass to colour/normal/depth
  * buffers and composited with an ink outline pass for the cel-shaded look.
  */
 export class Renderer {
@@ -123,23 +146,22 @@ export class Renderer {
     gl.shadowMap.enabled = true;
     gl.shadowMap.type = THREE.PCFShadowMap;
     gl.shadowMap.autoUpdate = false;
-
-    this.normalMaterial = new THREE.MeshNormalMaterial();
+    gl.autoClear = false; // #pass clears each attachment itself
     this.size = new THREE.Vector2();
     gl.getDrawingBufferSize(this.size);
-    this.world = makeTargets(this.size.x, this.size.y);
-    this.vm = makeTargets(this.size.x, this.size.y);
+    this.world = makeTarget(this.size.x, this.size.y);
+    this.vm = makeTarget(this.size.x, this.size.y);
 
     this.composite = new THREE.ShaderMaterial({
       vertexShader: COMPOSITE_VERT,
       fragmentShader: COMPOSITE_FRAG,
       uniforms: {
-        tWorld: { value: this.world.color.texture },
-        tWorldDepth: { value: this.world.color.depthTexture },
-        tWorldNormal: { value: this.world.normal.texture },
-        tVM: { value: this.vm.color.texture },
-        tVMDepth: { value: this.vm.color.depthTexture },
-        tVMNormal: { value: this.vm.normal.texture },
+        tWorld: { value: this.world.textures[0] },
+        tWorldDepth: { value: this.world.depthTexture },
+        tWorldNormal: { value: this.world.textures[1] },
+        tVM: { value: this.vm.textures[0] },
+        tVMDepth: { value: this.vm.depthTexture },
+        tVMNormal: { value: this.vm.textures[1] },
         texel: { value: new THREE.Vector2(1 / this.size.x, 1 / this.size.y) },
         near: { value: 0.1 }, far: { value: 500 },
         vmNear: { value: 0.01 }, vmFar: { value: 10 },
@@ -197,32 +219,22 @@ export class Renderer {
     this.cssW = w; this.cssH = h;
     this.gl.setSize(w, h, false);
     this.gl.getDrawingBufferSize(this.size);
-    for (const t of [this.world, this.vm]) {
-      t.color.setSize(this.size.x, this.size.y);
-      t.normal.setSize(this.size.x, this.size.y);
-    }
+    for (const t of [this.world, this.vm]) t.setSize(this.size.x, this.size.y);
     this.composite.uniforms.texel.value.set(1 / this.size.x, 1 / this.size.y);
   }
 
-  #pass(scene, camera, targets, clearAlpha) {
+  #pass(scene, camera, target, clearAlpha) {
     const gl = this.gl;
-    gl.setRenderTarget(targets.color);
-    gl.setClearColor(0x000000, clearAlpha);
-    gl.clear();
-    camera.layers.enable(FX_LAYER);
-    gl.render(scene, camera);
-
+    gl.setRenderTarget(target);
+    // a colour background is the clear colour (three would clear the normals with it too); a sky texture draws itself
     const bg = scene.background;
-    scene.background = null;
-    scene.overrideMaterial = this.normalMaterial;
-    camera.layers.disable(FX_LAYER);
-    gl.setRenderTarget(targets.normal);
-    gl.setClearColor(0x000000, 0);
+    if (bg?.isColor) scene.background = null;
+    gl.setClearColor(bg?.isColor ? bg : 0x000000, clearAlpha);
     gl.clear();
-    gl.render(scene, camera);
-    scene.overrideMaterial = null;
-    scene.background = bg;
+    gl.getContext().clearBufferfv(gl.getContext().COLOR, 1, ZERO4);
     camera.layers.enable(FX_LAYER);
+    gl.render(scene, camera);
+    scene.background = bg;
   }
 
   /** opts.eyepiece: { x, y, r, shadow } in screen UV (or null); opts.focus: 0..1 inspect blur. */
@@ -247,3 +259,5 @@ export class Renderer {
     this.gl.render(this.quadScene, this.quadCam);
   }
 }
+
+const ZERO4 = [0, 0, 0, 0];

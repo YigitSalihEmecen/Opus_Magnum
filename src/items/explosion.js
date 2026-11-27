@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { FX_LAYER } from '../core/renderer.js';
+import { FX_LAYER, NORMAL_OUT_DECL } from '../core/renderer.js';
 
 /*
   Grenade blast in the game's cel style, pooled (nothing is created per explosion).
@@ -60,12 +60,16 @@ const fbm = (x, y, z) => noise(x, y, z) * 0.62 + noise(x * 2.1, y * 2.1, z * 2.1
 const FIRE_VERT = /* glsl */`
   varying vec3 vP;
   varying vec3 vWN;
+  varying vec3 vVN;
   void main() {
     vP = position;
     vWN = normalize(mat3(modelMatrix) * normal);
+    vVN = normalMatrix * normal;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }`;
 const FIRE_FRAG = /* glsl */`
+  ${NORMAL_OUT_DECL}
+  varying vec3 vVN;
   uniform float uHeat;
   uniform float uTime;
   uniform vec3 uSeed;
@@ -87,6 +91,7 @@ const FIRE_FRAG = /* glsl */`
     vec3 c = heat > 0.98 ? uCol[0] : heat > 0.74 ? uCol[1] : heat > 0.52 ? uCol[2] : heat > 0.34 ? uCol[3] : heat > 0.2 ? uCol[4]
       : (L + (n - 0.5) * 0.3 > 0.52 ? uCol[5] : uCol[6]);
     gl_FragColor = vec4(c, 1.0);
+    gNormal = vec4(normalize(vVN) * 0.5 + 0.5, 1.0);
     #include <colorspace_fragment>
   }`;
 const FIRE_COLS = [0xfff2b0, 0xffd447, 0xff9b2f, 0xe4552a, 0x8e3b2b, 0xaaa59c, 0x7b766f].map((c) => new THREE.Color(c));
