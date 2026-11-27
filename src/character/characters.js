@@ -1,4 +1,4 @@
-import { buildRobot, buildArm, robotMaterials, SCHEMES } from './robot.js';
+import { buildRobot, buildArm, robotMaterials, SCHEMES, withDetail, addLods } from './robot.js';
 import { buildKite, buildKiteArm, kiteMaterials, KITE_SCHEMES } from './kite.js';
 
 /*
@@ -13,8 +13,22 @@ export const CHARACTERS = [
 
 export const characterById = (id) => CHARACTERS.find((c) => c.id === id) ?? CHARACTERS[0];
 
+// distance LODs: [detail, from (m)]. Past 14 m the rounded edges and round parts are half as fine; past 32 m
+// boxes and the fewest segments. The ink lines carry the silhouette, so it reads the same.
+export const LODS = [[0.5, 14], [0.25, 32]];
+const lodGeometry = new Map(); // `${id}|${team}|${detail}` → skinned geometry, built once and shared
+
 /** team: 'player' | 'ally' | 'enemy'. */
-export const buildCharacter = (id, team = 'player') => characterById(id).build(team);
+export function buildCharacter(id, team = 'player') {
+  const c = characterById(id), r = c.build(team);
+  const levels = LODS.map(([d, from]) => {
+    const key = `${c.id}|${team}|${d}`;
+    if (!lodGeometry.has(key)) lodGeometry.set(key, withDetail(d, () => c.build(team)).skin.geometry);
+    return [lodGeometry.get(key), from];
+  });
+  r.lod = addLods(r.skin, levels);
+  return r;
+}
 
 const KEY = 'om.character';
 export function selectedCharacter() {

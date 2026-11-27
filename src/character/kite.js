@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { PALETTE as P, toon } from '../core/toon.js';
-import { bone, part, ext, slot, rb, cyl, ball, ram, buildHand, finishRobot } from './robot.js';
+import { bone, part, ext, slot, rb, cyl, ball, ram, buildHand, finishRobot, seg } from './robot.js';
 
 /*
   Kite — slender, quick scout. Same skeleton (bone names, hand frame) as Rivet, different build: long
@@ -84,7 +84,7 @@ export function buildKite({ scheme = KITE_SCHEMES.player } = {}) {
     discs.push(new THREE.Vector2(0.03, y), new THREE.Vector2(0.052, y + 0.004), new THREE.Vector2(0.052, y + 0.02), new THREE.Vector2(0.03, y + 0.024));
   }
   discs.push(new THREE.Vector2(0.03, 0.2));
-  part(spine, new THREE.LatheGeometry(discs, 20), m.metal);
+  part(spine, new THREE.LatheGeometry(discs, seg(20, 8)), m.metal);
   part(spine, rb(0.1, 0.12, 0.075, 0.02), m.shell, [0, 0.045, 0.045]);
   part(spine, cyl(0.036, 0.024, 16, 'x'), m.dark, [0.062, 0.045, 0.045]);
   for (const x of [-1, 1]) links.push(ram(m, hips, [x * 0.072, 0.02, -0.03], chest, [x * 0.072, -0.02, -0.03], { r: 0.012, len: 0.19 }));

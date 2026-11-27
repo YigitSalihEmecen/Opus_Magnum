@@ -41,9 +41,20 @@ export function robotMaterials(scheme = SCHEMES.player) {
   };
 }
 
-export const rb = (w, h, d, r = 0.012) => new RoundedBoxGeometry(w, h, d, 2, Math.min(r, w / 2.01, h / 2.01, d / 2.01));
-export const cyl = (r, h, seg = 16, axis = 'y') => { const g = new THREE.CylinderGeometry(r, r, h, seg); if (axis === 'x') g.rotateZ(Math.PI / 2); if (axis === 'z') g.rotateX(Math.PI / 2); return g; };
-export const ball = (r) => new THREE.SphereGeometry(r, 18, 12);
+// Geometry detail while building: 1 is the full model; the distance LODs are built again at less (withDetail).
+// The parts and their order stay the same at every detail, so every level skins onto the same skeleton.
+let detail = 1;
+export function withDetail(d, build) {
+  const prev = detail;
+  detail = d;
+  try { return build(); } finally { detail = prev; }
+}
+/** A segment count scaled by the current detail. */
+export const seg = (n, min = 3) => Math.max(min, Math.round(n * detail));
+
+export const rb = (w, h, d, r = 0.012) => detail < 0.5 ? new THREE.BoxGeometry(w, h, d) : new RoundedBoxGeometry(w, h, d, detail < 1 ? 1 : 2, Math.min(r, w / 2.01, h / 2.01, d / 2.01));
+export const cyl = (r, h, n = 16, axis = 'y') => { const g = new THREE.CylinderGeometry(r, r, h, seg(n, 5)); if (axis === 'x') g.rotateZ(Math.PI / 2); if (axis === 'z') g.rotateX(Math.PI / 2); return g; };
+export const ball = (r) => new THREE.SphereGeometry(r, seg(18, 6), seg(12, 4));
 
 /**
  * Shaped shell: a 2D outline (with optional holes) extruded `depth` thick with a soft chamfer.
@@ -55,7 +66,7 @@ export function ext(pts, depth, { bevel = 0.008, axis = 'x', holes = [] } = {}) 
   const shape = new THREE.Shape(v(pts));
   for (const h of holes) shape.holes.push(new THREE.Path(v(h)));
   const d = depth - 2 * bevel;
-  const g = new THREE.ExtrudeGeometry(shape, { depth: d, bevelEnabled: bevel > 0, bevelThickness: bevel, bevelSize: bevel, bevelOffset: -bevel, bevelSegments: 2, curveSegments: 8 });
+  const g = new THREE.ExtrudeGeometry(shape, { depth: d, bevelEnabled: bevel > 0, bevelThickness: bevel, bevelSize: bevel, bevelOffset: -bevel, bevelSegments: detail < 1 ? 1 : 2, curveSegments: seg(8, 2) });
   g.translate(0, 0, -d / 2);
   if (axis === 'x') g.rotateY(-Math.PI / 2);
   return g;
@@ -275,7 +286,7 @@ function bellows(r0, r1, y0, y1, folds) {
   const pts = [new THREE.Vector2(0.055, y0)];
   for (let i = 0; i <= folds * 2; i++) pts.push(new THREE.Vector2(i % 2 ? r1 : r0, y0 + ((y1 - y0) * i) / (folds * 2)));
   pts.push(new THREE.Vector2(0.055, y1));
-  return new THREE.LatheGeometry(pts, 28);
+  return new THREE.LatheGeometry(pts, seg(28, 8));
 }
 
 /** Rivet, the scrapyard bruiser. Returns { root, bones, skeleton, arms: { L, R }, legs, mats, hitboxes, update() }. */
@@ -317,7 +328,7 @@ export function buildRobot({ scheme = SCHEMES.player } = {}) {
   part(head, cyl(0.03, 0.03, 20, 'z'), m.rubber, [0.03, 0.055, 0.08]);
   part(head, cyl(0.019, 0.012, 20, 'z'), m.lens, [0.03, 0.055, 0.096]);
   part(head, cyl(0.05, 0.02, 18), m.metal, [0, 0.112, 0]);
-  const saucer = new THREE.LatheGeometry([[0, 0], [0.19, 0], [0.215, 0.018], [0.215, 0.04], [0.19, 0.06], [0, 0.064]].map(([x, y]) => new THREE.Vector2(x, y)), 36);
+  const saucer = new THREE.LatheGeometry([[0, 0], [0.19, 0], [0.215, 0.018], [0.215, 0.04], [0.19, 0.06], [0, 0.064]].map(([x, y]) => new THREE.Vector2(x, y)), seg(36, 8));
   part(head, saucer, m.shell, [0, 0.12, 0]);
   part(head, cyl(0.218, 0.016, 36), m.trim, [0, 0.149, 0]);
   part(head, cyl(0.007, 0.1, 6), m.rubber, [-0.08, 0.23, -0.05]);
@@ -439,6 +450,26 @@ function skinParts(root) {
   return skin;
 }
 
+/**
+ * Distance levels for a skinned character: levels [[geometry, from distance (m)], …], each skinned onto the
+ * same skeleton (geometry built by the same builder at less detail). three.js picks the level per frame from
+ * the camera distance; shadows use the same level.
+ */
+export function addLods(skin, levels) {
+  const lod = new THREE.LOD();
+  skin.parent.add(lod);
+  lod.addLevel(skin, 0, LOD_HYSTERESIS);
+  for (const [geometry, distance] of levels) {
+    const m = new THREE.SkinnedMesh(geometry, skin.material);
+    m.castShadow = true;
+    m.boundingSphere = skin.boundingSphere;
+    m.bind(skin.skeleton, skin.bindMatrix);
+    lod.addLevel(m, distance, LOD_HYSTERESIS);
+  }
+  return lod;
+}
+const LOD_HYSTERESIS = 0.1; // switch back this much (fraction) closer, so a body at the edge doesn't flicker
+
 const NO_GEOMETRY = new THREE.BufferGeometry(); // a skinned part's own copy is only dead weight
 
 function flipWinding(g) {
@@ -482,7 +513,7 @@ export function finishRobot({ root, links, ...rest }) {
   update();
   const hitboxes = hitProxies(root, bones);
   const skin = skinParts(root);
-  return { root, bones, skeleton, hitboxes, update, flashMats: [skin.material], ...rest };
+  return { root, bones, skeleton, hitboxes, update, skin, flashMats: [skin.material], ...rest };
 }
 
 // one rough box per body segment, a little bigger than the plating; hands and feet ride with their limb
