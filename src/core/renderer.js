@@ -20,18 +20,18 @@ uniform vec3 ink;
 uniform vec2 eyeCenter;
 uniform float eyeRadius, eyeShadow, aspect, focus;
 
-float viewZ(sampler2D t, vec2 uv, float n, float f) {
-  return -perspectiveDepthToViewZ(texture2D(t, uv).x, n, f);
-}
+float viewZ(float d, float n, float f) { return -perspectiveDepthToViewZ(d, n, f); }
 
-// Outline from depth discontinuities + normal creases (cross-shaped kernel).
-float edge(sampler2D tD, sampler2D tN, vec2 uv, float n, float f, float depthTol, out float z0) {
+// Outline from depth discontinuities + normal creases (cross-shaped kernel). sparse: a mostly empty layer (the
+// viewmodel): where none of the five depths was drawn, skip the normals.
+float edge(sampler2D tD, sampler2D tN, vec2 uv, float n, float f, float depthTol, bool sparse, out float z0) {
   vec2 o = texel * lineWidth;
-  z0 = viewZ(tD, uv, n, f);
-  float zl = viewZ(tD, uv - vec2(o.x, 0.0), n, f);
-  float zr = viewZ(tD, uv + vec2(o.x, 0.0), n, f);
-  float zu = viewZ(tD, uv + vec2(0.0, o.y), n, f);
-  float zd = viewZ(tD, uv - vec2(0.0, o.y), n, f);
+  float d0 = texture2D(tD, uv).x;
+  float dl = texture2D(tD, uv - vec2(o.x, 0.0)).x, dr = texture2D(tD, uv + vec2(o.x, 0.0)).x;
+  float du = texture2D(tD, uv + vec2(0.0, o.y)).x, dd = texture2D(tD, uv - vec2(0.0, o.y)).x;
+  z0 = viewZ(d0, n, f);
+  if (sparse && min(min(d0, dl), min(min(dr, du), dd)) >= 1.0) return 0.0;
+  float zl = viewZ(dl, n, f), zr = viewZ(dr, n, f), zu = viewZ(du, n, f), zd = viewZ(dd, n, f);
   float zmin = min(min(zl, zr), min(zu, zd));
   float lap = abs(zl + zr + zu + zd - 4.0 * z0) / max(min(z0, zmin), 1e-3);
   float de = smoothstep(depthTol, depthTol * 1.8, lap);
@@ -50,7 +50,7 @@ float edge(sampler2D tD, sampler2D tN, vec2 uv, float n, float f, float depthTol
 void main() {
   vec2 uvW = vUv;
   float zw;
-  float ew = edge(tWorldDepth, tWorldNormal, uvW, near, far, 0.06, zw);
+  float ew = edge(tWorldDepth, tWorldNormal, uvW, near, far, 0.06, false, zw);
   float fog = smoothstep(fogNear, fogFar, zw);
   vec3 world = texture2D(tWorld, uvW).rgb;
   world = mix(world, ink, ew * (1.0 - fog) * 0.92 * (1.0 - focus));
@@ -76,7 +76,7 @@ void main() {
   }
 
   float zv;
-  float ev = edge(tVMDepth, tVMNormal, vUv, vmNear, vmFar, 0.12, zv);
+  float ev = edge(tVMDepth, tVMNormal, vUv, vmNear, vmFar, 0.12, true, zv);
   vec4 vm = texture2D(tVM, vUv);
   vec3 col = mix(world, vm.rgb / max(vm.a, 1e-4), vm.a);
   col = mix(col, ink, ev * 0.95);
@@ -90,10 +90,12 @@ void main() {
 }
 `;
 
-function makeTargets(w, h, samples) {
-  const color = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, samples });
+// 8-bit, single-sample: the ink lines already cover every silhouette, so MSAA (and half-float colour, there's no
+// HDR) only cost bandwidth, about 7 ms a frame at 2x pixel ratio
+function makeTargets(w, h) {
+  const color = new THREE.WebGLRenderTarget(w, h, { colorSpace: THREE.SRGBColorSpace });
   color.depthTexture = new THREE.DepthTexture(w, h, THREE.UnsignedIntType);
-  const normal = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType });
+  const normal = new THREE.WebGLRenderTarget(w, h);
   normal.depthTexture = new THREE.DepthTexture(w, h, THREE.UnsignedIntType);
   return { color, normal };
 }
@@ -103,9 +105,9 @@ function makeTargets(w, h, samples) {
  * view distance are identical on every preset, so nobody gains a gameplay edge from a lower setting.
  */
 export const QUALITY = {
-  high: { ratio: 2, scale: 1, msaa: 4, shadows: true, shadowScale: 1, shadowEvery: 1 },
-  medium: { ratio: 1.5, scale: 1, msaa: 2, shadows: true, shadowScale: 0.5, shadowEvery: 2 },
-  low: { ratio: 1, scale: 0.75, msaa: 0, shadows: false, shadowScale: 0.5, shadowEvery: 4 },
+  high: { ratio: 2, scale: 1, shadows: true, shadowScale: 1, shadowEvery: 1 },
+  medium: { ratio: 1.5, scale: 1, shadows: true, shadowScale: 0.5, shadowEvery: 2 },
+  low: { ratio: 1, scale: 0.75, shadows: false, shadowScale: 0.5, shadowEvery: 4 },
 };
 
 /**
@@ -125,8 +127,8 @@ export class Renderer {
     this.normalMaterial = new THREE.MeshNormalMaterial();
     this.size = new THREE.Vector2();
     gl.getDrawingBufferSize(this.size);
-    this.world = makeTargets(this.size.x, this.size.y, 4);
-    this.vm = makeTargets(this.size.x, this.size.y, 4);
+    this.world = makeTargets(this.size.x, this.size.y);
+    this.vm = makeTargets(this.size.x, this.size.y);
 
     this.composite = new THREE.ShaderMaterial({
       vertexShader: COMPOSITE_VERT,
@@ -160,7 +162,7 @@ export class Renderer {
     this.frameN = 0;
   }
 
-  /** Switch preset: pixel ratio, MSAA of the offscreen targets, shadow on/off + resolution + refresh rate. */
+  /** Switch preset: pixel ratio, shadow on/off + resolution + refresh rate. */
   setQuality(name) {
     const q = QUALITY[name] ?? QUALITY.high;
     if (q === this.q && this.qSet) return;
@@ -170,16 +172,6 @@ export class Renderer {
     const gl = this.gl;
     gl.setPixelRatio(Math.min(window.devicePixelRatio, q.ratio) * q.scale);
     this.composite.uniforms.lineWidth.value = Math.max(1, gl.getPixelRatio());
-    if (prev.msaa !== q.msaa) {
-      for (const t of [this.world, this.vm]) { t.color.dispose(); t.normal.dispose(); }
-      gl.getDrawingBufferSize(this.size);
-      this.world = makeTargets(this.size.x, this.size.y, q.msaa);
-      this.vm = makeTargets(this.size.x, this.size.y, q.msaa);
-      const u = this.composite.uniforms;
-      Object.assign(u.tWorld, { value: this.world.color.texture }); Object.assign(u.tWorldDepth, { value: this.world.color.depthTexture });
-      Object.assign(u.tWorldNormal, { value: this.world.normal.texture }); Object.assign(u.tVM, { value: this.vm.color.texture });
-      Object.assign(u.tVMDepth, { value: this.vm.color.depthTexture }); Object.assign(u.tVMNormal, { value: this.vm.normal.texture });
-    }
     if (prev.shadows !== q.shadows) { gl.shadowMap.enabled = q.shadows; this.recompile = true; }
     this.lightsFor = null; // re-apply shadow resolution on the next frame
     if (this.cssW) this.resize(this.cssW, this.cssH);
