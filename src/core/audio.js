@@ -231,6 +231,46 @@ export class AudioBank {
     if (head) burst(0.002, 0.009, 'highpass', 5200, 5200, 0.8, 0.7); // dry tick
   }
 
+  /**
+   * Armour shattering: a dry crack, a few narrow inharmonic rings (the plate splitting), a scatter of fine
+   * shards falling off and a short low thunk. Heavier tiers sit lower. volume < 1 for our own vest.
+   */
+  armourBreak(tier = 1, { volume = 1 } = {}) {
+    if (!this.ready) return;
+    const ctx = this.ctx, t = ctx.currentTime, k = [1, 1.08, 0.9, 0.74][tier] ?? 1;
+    const out = ctx.createGain();
+    out.gain.value = volume;
+    out.connect(this.#hitBus());
+    const burst = (at, dur, type, f0, f1, q, amp) => {
+      const src = ctx.createBufferSource();
+      src.buffer = this.noise;
+      const f = ctx.createBiquadFilter();
+      f.type = type;
+      f.Q.value = q;
+      f.frequency.setValueAtTime(f0, t + at);
+      f.frequency.exponentialRampToValueAtTime(f1, t + at + dur);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t + at);
+      g.gain.exponentialRampToValueAtTime(amp, t + at + 0.0015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + at + dur);
+      src.connect(f).connect(g).connect(out);
+      src.start(t + at, Math.random() * 1.5);
+      src.stop(t + at + dur + 0.02);
+    };
+    burst(0, 0.025, 'highpass', 3800 * k, 2600 * k, 0.7, 0.9);                          // crack
+    for (const [f, a] of [[2300, 0.5], [3450, 0.42], [5100, 0.3]]) burst(0.004, 0.16, 'bandpass', f * k, f * k * 0.93, 22, a); // plate rings
+    for (let i = 0; i < 7; i++) burst(0.03 + Math.random() * 0.2, 0.02, 'bandpass', (3200 + Math.random() * 4200) * k, 2400 * k, 6, 0.18 + Math.random() * 0.14); // shards
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.setValueAtTime(260 * k, t);
+    o.frequency.exponentialRampToValueAtTime(90 * k, t + 0.07);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.55, t + 0.003);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+    o.connect(g).connect(out);
+    o.start(t);
+    o.stop(t + 0.1);
+  }
+
   /** A fist landing: a slap on top, a low meaty thud and a sub drop under it. wall: harder, drier, no flesh. */
   punch({ wall = false } = {}) {
     if (!this.ready) return;
@@ -307,6 +347,81 @@ export class AudioBank {
     o.start(t);
     o.stop(t + 0.75);
     this.play('land', { volume: 0.5 * volume, rate: 0.55 });
+  }
+
+  /** Taking a hit (k 0..1 with the damage): a dull body thump under a short muffled smack. */
+  hurt(k = 0.5) {
+    if (!this.ready) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.setValueAtTime(110, t);
+    o.frequency.exponentialRampToValueAtTime(42, t + 0.16);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.35 + 0.45 * k, t + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+    o.connect(g).connect(this.master);
+    o.start(t);
+    o.stop(t + 0.22);
+    const src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), n = ctx.createGain();
+    src.buffer = this.noise;
+    f.type = 'lowpass';
+    f.frequency.setValueAtTime(1600, t);
+    f.frequency.exponentialRampToValueAtTime(200, t + 0.09);
+    n.gain.setValueAtTime(0.0001, t);
+    n.gain.exponentialRampToValueAtTime(0.3 + 0.3 * k, t + 0.002);
+    n.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
+    src.connect(f).connect(n).connect(this.master);
+    src.start(t, Math.random() * 1.5);
+    src.stop(t + 0.12);
+  }
+
+  /** Low health: lub-dub, k (0..1) louder as it gets worse. */
+  heartbeat(k = 0.5) {
+    if (!this.ready) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    for (const [at, amp] of [[0, 1], [0.17, 0.7]]) {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.setValueAtTime(68, t + at);
+      o.frequency.exponentialRampToValueAtTime(38, t + at + 0.12);
+      g.gain.setValueAtTime(0.0001, t + at);
+      g.gain.exponentialRampToValueAtTime((0.25 + 0.35 * k) * amp, t + at + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + at + 0.16);
+      o.connect(g).connect(this.master);
+      o.start(t + at);
+      o.stop(t + at + 0.18);
+    }
+  }
+
+  /** Smoke canister going off: a soft pop, then a long airy hiss that settles as the cloud fills out. */
+  smoke({ volume = 1, pan = 0 } = {}) {
+    if (!this.ready) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const out = ctx.createGain();
+    out.gain.value = volume;
+    let node = out;
+    if (pan) { const p = ctx.createStereoPanner(); p.pan.value = pan; out.connect(p); node = p; }
+    node.connect(this.master);
+    const burst = (at, dur, type, f0, f1, q, amp, attack) => {
+      const src = ctx.createBufferSource();
+      src.buffer = this.noise;
+      src.loop = true;
+      const f = ctx.createBiquadFilter();
+      f.type = type;
+      f.Q.value = q;
+      f.frequency.setValueAtTime(f0, t + at);
+      f.frequency.exponentialRampToValueAtTime(f1, t + at + dur);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t + at);
+      g.gain.exponentialRampToValueAtTime(amp, t + at + attack);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + at + dur);
+      src.connect(f).connect(g).connect(out);
+      src.start(t + at, Math.random() * 1.5);
+      src.stop(t + at + dur + 0.05);
+    };
+    burst(0, 0.08, 'lowpass', 1400, 300, 0.8, 0.5, 0.003);     // pop
+    burst(0.03, 2.6, 'bandpass', 5200, 2600, 0.6, 0.16, 0.12); // hiss
+    burst(0.05, 2.2, 'lowpass', 900, 200, 0.7, 0.12, 0.3);      // the rush of the cloud
+    this.play('click', { volume: 0.35 * volume, rate: 0.7 });
   }
 
   setVolume(v) {

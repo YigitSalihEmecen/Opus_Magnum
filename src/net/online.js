@@ -7,6 +7,7 @@ import { MatchHud } from '../ui/matchHud.js';
 import { WorldFX } from '../weapons/effects.js';
 import { WEAPONS } from '../weapons/weapons.js';
 import { Pickups } from '../items/pickups.js';
+import { soakArmour, armourTier } from '../items/items.js';
 
 /*
   Online match against other players through the match server (server/index.js). Same level interface as TDM:
@@ -73,6 +74,7 @@ class Remote extends Avatar {
     super({ team: info.team === net.team ? 'ally' : 'enemy', name: info.name, char: info.char });
     Object.assign(this, { world: net, id: info.id, bot: !!info.bot, buf: [], lastStep: 0, poseTarget: {}, off: null, rlWas: false });
     this.alive = info.alive;
+    this.armour = this.armourMax = 0; // what we last heard (struck / ar); our own hits take it down until the server answers
     this.root.visible = false; // until the first snapshot places it
   }
 
@@ -83,7 +85,8 @@ class Remote extends Avatar {
     h.dmg += amount;
     h.head ||= zone === 'head';
     h.w = weapon;
-    return { killed: false };
+    this.world.noteDealt(this.id, amount);
+    return { killed: false, armour: soakArmour(this, amount).armour };
   }
 
   flushHits() {
@@ -198,6 +201,7 @@ class Online {
     this.rtt = null;
     this.names = new Map([[this.id, 'You']]);
     this.stats = new Map(welcome.players.map((p) => [p.id, { kills: p.kills ?? 0, deaths: p.deaths ?? 0 }]));
+    this.ledger = new Map(); // this life: player id → { dealt, taken, hits }
     this.remotes = new Map();
     this.ui = new MatchHud({ ally: 'You', enemy: 'Them', limit: this.limit });
     this.mid = this.ui.root.querySelector('.mid .label');
@@ -252,13 +256,28 @@ class Online {
   }
 
   get playerAlive() { return this.alive; }
+  /** Who the camera follows while you're out: your killer, then (once they're down too) a teammate still up. */
+  get watch() {
+    if (this.alive) return null;
+    const k = this.killerRef;
+    return k?.alive ? k : this.#others().find((r) => r.alive && r.team === 'ally') ?? k ?? null;
+  }
+
+  /** Damage traded with player `id` this life: { dealt, taken, hits }. */
+  #trade(id, key, amount) {
+    const e = this.ledger.get(id) ?? { dealt: 0, taken: 0, hits: 0 };
+    e[key] += amount;
+    if (key === 'taken') e.hits++;
+    this.ledger.set(id, e);
+  }
+  noteDealt(id, amount) { this.#trade(id, 'dealt', amount); }
   /** Everyone doors open for on their own: bots, ours and the ones others run. */
   get bots() { return [...this.botList, ...[...this.remotes.values()].filter((r) => r.bot)]; }
   /** Gun-game: every round starts with the round's weapon; one more can be picked up off the map. */
   get loadout() { return { guns: [this.round?.weapon ?? 0], maxGuns: 2, mags: 3, items: {} }; }
 
   /** Our grenade left the hand: everyone else simulates the same throw. */
-  onThrow(g) { this.send({ t: 'nade', p: round(g.pos), v: round(g.vel), f: +g.fuse.toFixed(2) }); }
+  onThrow(g) { this.send({ t: 'nade', p: round(g.pos), v: round(g.vel), f: +g.fuse.toFixed(2), k: g.kind === 'smoke' ? 'smoke' : undefined }); }
 
   /** Our own grenade caught us: the server takes it off our health like any hit. */
   hurtSelf(dmg) { this.send({ t: 'hit', id: this.id, zone: 'blast', dmg, w: 'grenade' }); }
@@ -276,6 +295,7 @@ class Online {
     for (const r of this.remotes.values()) this.scene.remove(r.root);
     for (const b of this.botList) this.scene.remove(b.root);
     this.ui.root.remove();
+    this.ui.fx.remove();
   }
 
   /** Hold-Tab scoreboard rows (your side, then theirs). */
@@ -347,6 +367,7 @@ class Online {
       get bots() { return net.botList; },
       enemiesOf: (team) => (team === 'ally' ? this.foes : this.friends),
       los(from, to) {
+        if (net.grenades?.smoke.blocks(from, to)) return false;
         const d = from.distanceTo(to);
         _ray.origin.copy(from);
         _ray.direction.subVectors(to, from).divideScalar(d || 1);
@@ -356,7 +377,7 @@ class Online {
       gunshot: (bot, muzzle, dir) => this.#botShot(bot, muzzle, dir),
       onKill() {}, // the server decides who dies
       hitTarget: (target, dmg, zone, bot, weapon) => this.#queueHit(target === this.me ? this.id : target.id, dmg, zone, weapon, bot.id),
-      netHit: (bot, dmg, zone, weapon) => { this.#queueHit(bot.id, dmg, zone, weapon); return { killed: false }; },
+      netHit: (bot, dmg, zone, weapon) => { this.#queueHit(bot.id, dmg, zone, weapon); this.noteDealt(bot.id, dmg); return { killed: false }; },
     });
     w.tactics = new Tactics(nav, arena.octree, w);
     return w;
@@ -504,17 +525,23 @@ class Online {
         if (m.a === 'stop') r?.stopAct(); else r?.act(m.a, m.i);
         break;
       }
-      case 'struck': { const r = this.remotes.get(m.id) ?? this.brains.get(m.id); if (r?.alive) r.flash = 0.08; break; }
+      case 'struck': { const r = this.remotes.get(m.id) ?? this.brains.get(m.id); if (r?.alive) r.flash = 0.08; if (r && m.ar !== undefined) Object.assign(r, { armour: m.ar, armourMax: m.am }); break; }
+      case 'ar': { const r = this.remotes.get(m.id); if (r) Object.assign(r, { armour: m.ar, armourMax: m.am }); break; }
       case 'hurt': {
         const v = this.vitals;
-        const hit = m.dmg && m.hp + (m.ar ?? 0) < v.hp + v.armour;
+        const lost = m.dmg ? v.hp + v.armour - m.hp - (m.ar ?? 0) : 0;
+        const broke = lost > 0 && v.armour > 0 && !m.ar, tier = armourTier(v.armourMax);
         if (m.dmg) v.quiet = 0;
         v.set({ hp: m.hp, armour: m.ar, armourMax: m.am });
-        const by = this.remotes.get(m.by) ?? this.brains.get(m.by);
-        this.ui.hurt(v.hp / this.vitals.max, hit && by ? this.#bearing(by.pos) : null);
-        if (hit) {
-          this.audio.play('land', { volume: 0.25, rate: 1.5 });
-          this.rig.punch(-0.6 - Math.random() * 0.4, (Math.random() - 0.5) * 0.8, (Math.random() - 0.5) * 1.2);
+        const by = m.by !== this.id ? this.remotes.get(m.by) ?? this.brains.get(m.by) : null;
+        this.ui.hurt(v.hp / this.vitals.max, lost > 0 ? by : null, lost);
+        if (lost > 0) {
+          const k = Math.min(1, lost / 35);
+          if (by) this.#trade(m.by, 'taken', lost);
+          this.rig.flinch(k, by ? Math.sin(this.#bearing(by.pos)) : 0);
+          this.audio.hurt(k);
+          this.audio.play('land', { volume: 0.2, rate: 1.5 });
+          if (broke) this.audio.armourBreak(tier, { volume: 0.6 });
         }
         break;
       }
@@ -534,6 +561,9 @@ class Online {
           this.alive = false;
           this.vitals.set({ hp: 0 });
           this.killer = killer.name;
+          this.killerRef = m.k !== this.id ? this.remotes.get(m.k) ?? this.brains.get(m.k) ?? null : null;
+          const e = this.ledger.get(m.k);
+          this.ui.death(killer.name, 'Out until the round ends', m.k !== this.id ? { dealt: e?.dealt ?? 0, taken: e?.taken ?? 0, hits: e?.hits ?? 0 } : null);
           this.deathT = 0;
         } else {
           const r = this.remotes.get(m.v), b = this.brains.get(m.v), who = r ?? b;
@@ -560,6 +590,7 @@ class Online {
         this.score = m.score;
         this.#score();
         this.#respawn();
+        for (const r of this.remotes.values()) r.armour = r.armourMax = 0;
         // our bots: everyone's up again, at their base, with the round's gun
         for (const b of this.botList) { b.setWeapon(WEAPONS[m.weapon] ?? WEAPONS[0]); b.spawn(this.#botSpawn(b)); b.showMarker(); }
         this.ui.toast(`Round ${m.n} · ${WEAPONS[m.weapon]?.name ?? ''}`);
@@ -583,7 +614,7 @@ class Online {
       case 'back': this.pickups.restore(m.id); break;
       case 'door': this.doors.set(m.id, m.open, m.dir); break;
       case 'dropped': this.pickups.drop({ gun: m.w, ammo: m.ammo, reserve: m.reserve }, new THREE.Vector3(...m.p), m.id); break;
-      case 'nade': this.grenades?.spawn(new THREE.Vector3(...m.p), new THREE.Vector3(...m.v), { mine: false, fuse: m.f }); break;
+      case 'nade': this.grenades?.spawn(new THREE.Vector3(...m.p), new THREE.Vector3(...m.v), { mine: false, fuse: m.f, kind: m.k === 'smoke' ? 'smoke' : 'grenade' }); break;
       case 'pong': this.rtt = performance.now() - m.c; break;
     }
   }
@@ -655,6 +686,8 @@ class Online {
     this.pickups.reset();
     this.doors.reset();
     this.alive = true;
+    this.ledger.clear();
+    this.killerRef = null;
     this.ui.death(null);
     this.ui.hurt(1, null);
   }
@@ -759,7 +792,7 @@ class Online {
     this.#flushHits();
     if (this.ended) this.#voteClock();
     this.fx.update(dt, camera);
-    this.ui.update(dt, { ally: 0, enemy: 0 }, this.time);
+    this.ui.update(dt, { ally: 0, enemy: 0 }, this.time, (p) => this.#bearing(p));
     const wpn = WEAPONS[this.round?.weapon]?.name;
     this.mid.textContent = `${this.round ? `Round ${this.round.n}${wpn ? ` · ${wpn}` : ''} · ` : ''}First to ${this.limit}${this.rtt === null ? '' : ` · ${Math.round(this.rtt)} ms`}`;
   }

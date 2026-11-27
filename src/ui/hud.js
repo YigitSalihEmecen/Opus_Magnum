@@ -3,6 +3,22 @@ import * as THREE from 'three';
 const D2R = Math.PI / 180;
 const html = (s) => { const t = document.createElement('template'); t.innerHTML = s.trim(); return t.content.firstElementChild; };
 
+// hit marker arms on the diagonals: inner / outer radius and width (px). Every outline is drawn under every
+// fill, so the arms never cut across each other, and the kill ring sits clear outside the arms
+const ARMS = { hit: [5, 14, 2.5], head: [5, 15.5, 3], kill: [6.5, 18, 4] };
+const D = Math.SQRT1_2;
+const arms = ([a, b], cls) => [1, -1].flatMap((sx) => [1, -1].map((sy) => `<line class="${cls}" x1="${sx * a * D}" y1="${sy * a * D}" x2="${sx * b * D}" y2="${sy * b * D}"/>`)).join('');
+const markerSvg = (kind) => {
+  const [a, b, w] = ARMS[kind];
+  const ring = kind === 'kill' ? '<g class="ring"><circle r="24" class="ol" stroke-width="7"/><circle r="24" class="fill" stroke-width="3.5"/></g>' : '';
+  return `<svg viewBox="-32 -32 64 64" width="64" height="64">${ring}<g stroke-width="${w + 3}">${arms([a - 1.5, b + 1.5], 'ol')}</g><g stroke-width="${w}">${arms([a, b], 'fill')}</g></svg>`;
+};
+const MARKERS = { hit: markerSvg('hit'), head: markerSvg('head'), kill: markerSvg('kill') };
+export const ARMOUR_HUD = [null, '#c4bba8', '#4f9be6', '#a477e0']; // damage-number colour by armour tier
+const SHIELD = '<svg class="sh" viewBox="-11 -13 22 26"><path d="M0-12.5-9.5-9V-1c0 6.4 4.3 10.8 9.5 13 5.2-2.2 9.5-6.6 9.5-13V-9z"/></svg>';
+// a broken vest: the shield split down a jagged line, the halves fly apart
+const SHIELD_BROKEN = '<svg class="sh" viewBox="-11 -13 22 26"><path class="l" d="M0-12.5-9.5-9V-1c0 6.4 4.3 10.8 9.5 13l1.6-6.2-2.6-3.4 2.4-4.6-2-4.2z"/><path class="r" d="M0-12.5 9.5-9V-1C9.5 5.4 5.2 9.8 0 12l1.6-6.2-2.6-3.4 2.4-4.6-2-4.2z"/></svg>';
+
 /** In-game overlay. Pure DOM; reads state each frame, never mutates gameplay. */
 export class HUD {
   constructor(root) {
@@ -10,7 +26,7 @@ export class HUD {
     root.innerHTML = `
       <div class="fps card">— FPS</div>
       <div class="xhair"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><i class="o"></i><i class="d"></i></div>
-      <div class="hitmarker"><b></b><i></i><i></i><i></i><i></i></div>
+      <div class="hitmarker"></div>
       <div class="killflash"></div>
       <div class="dmgs"></div>
       <div class="weapon card">
@@ -78,6 +94,8 @@ export class HUD {
   /** kind: 'hit' | 'kill'; head colours it amber. Kills also pulse a tinted vignette. */
   hitmarker(kind, head = false) {
     const h = this.el.hit;
+    const shape = kind === 'kill' ? 'kill' : head ? 'head' : 'hit';
+    if (h.dataset.shape !== shape) { h.innerHTML = MARKERS[shape]; h.dataset.shape = shape; }
     h.className = `hitmarker ${kind}${head ? ' head' : ''}`;
     void h.offsetWidth;
     h.classList.add('on');
@@ -88,8 +106,11 @@ export class HUD {
     f.classList.add('on');
   }
 
-  damageNumber(point, amount, head) {
-    const el = html(`<div class="dmg${head ? ' head' : ''}">${amount}</div>`);
+  /** armour: { tier, broke } when the hit landed on armour — the number takes the tier's colour and a shield,
+   *  which splits apart when the hit broke it. */
+  damageNumber(point, amount, head, armour = null) {
+    const tier = armour?.tier ?? 0;
+    const el = html(`<div class="dmg${head ? ' head' : ''}${tier ? ' ar' : ''}${armour?.broke ? ' brk' : ''}"${tier ? ` style="--ar:${ARMOUR_HUD[tier]}"` : ''}>${tier ? (armour.broke ? SHIELD_BROKEN : SHIELD) : ''}${amount}</div>`);
     this.el.dmgs.appendChild(el);
     this.numbers.push({ el, pos: point.clone(), t: 0, dx: (Math.random() - 0.5) * 40 });
     if (this.numbers.length > 24) this.numbers.shift().el.remove();

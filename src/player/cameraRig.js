@@ -69,6 +69,16 @@ export class CameraRig {
     this.punchRoll.v += rollDeg * D2R * 18;
   }
 
+  /**
+   * Taking a hit: the view jolts back (harder for bigger hits, k 0..1), twists and rolls away from the side it
+   * came from (side: -1 left … 1 right), and the aim takes a small kick that settles back on its own.
+   */
+  flinch(k, side = 0) {
+    const s = side + (Math.random() - 0.5) * 0.4;
+    this.punch(-(1.4 + 3.6 * k), s * (1.2 + 2.8 * k), -s * (2.5 + 5 * k));
+    this.addRecoil(0.3 + 1.1 * k, (Math.random() - 0.5) * 0.8 * k);
+  }
+
   land(impact) { this.dip.v -= THREE.MathUtils.clamp(impact * 0.12, 0, 2.4); }
 
   update(dt, mv, { ads = 0, axes = { x: 0, y: 0 }, zoom = 1.32, lean = 0 } = {}) {

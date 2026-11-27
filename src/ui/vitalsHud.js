@@ -9,7 +9,7 @@ import './vitals.css';
   state each frame.
 */
 
-const CHIPS = [['bandage', 'Z'], ['medkit', 'Z'], ['charger', 'Z'], ['grenade', 'G']];
+const CHIPS = [['bandage', 'Z'], ['medkit', 'Z'], ['charger', 'Z'], ['grenade', 'G'], ['smoke', 'Z']];
 const hex = (c) => `#${c.toString(16).padStart(6, '0')}`;
 
 export class VitalsHud {

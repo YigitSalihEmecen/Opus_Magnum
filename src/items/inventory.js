@@ -3,7 +3,7 @@ import { ITEMS } from './items.js';
 /*
   What the player carries: guns (arsenal indices, up to maxGuns), consumables, spare ammo, and the action in
   progress (healing, charging armour, throwing a grenade). Keys:
-    Z item wheel (use(id): bandage, medkit, charger, grenade) · G throw a grenade
+    Z item wheel (use(id): bandage, medkit, charger, grenade, smoke) · G throw a grenade
     F pick up / swap the weapon or armour you're looking at · T drop the drawn weapon
   Consumables and ammo are picked up by walking over them; guns and armour upgrades take E.
   A mode hands out a loadout through reset(); main.js draws whatever gun the inventory says is held.
@@ -17,7 +17,7 @@ export class Inventory {
     Object.assign(this, { arsenal, vitals, audio, hud });
     this.guns = arsenal.map((_, i) => i);
     this.maxGuns = arsenal.length;
-    this.counts = { medkit: 0, bandage: 0, charger: 0, grenade: 0 };
+    this.counts = { medkit: 0, bandage: 0, charger: 0, grenade: 0, smoke: 0 };
     this.action = null; // { id, kind, t, time, done? }
     this.onThrow = () => {};
     this.onDrop = () => {};
@@ -146,9 +146,9 @@ export class Inventory {
     if (a.kind === 'throw') {
       if (prev < THROW.pin && a.t >= THROW.pin) this.audio.play('click', { volume: 0.6, rate: 1.4 });
       if (prev < THROW.release && a.t >= THROW.release) {
-        this.counts.grenade--;
+        this.counts[a.id]--;
         this.audio.play('cloth', { volume: 0.6, rate: 0.85 });
-        this.onThrow();
+        this.onThrow(a.id);
       }
     }
     if (a.t < a.time) return;

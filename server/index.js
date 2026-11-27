@@ -25,7 +25,7 @@ import { WebSocketServer } from 'ws';
                     sb { b: [[botId, q], …] }  (host only: its bots' poses; as: the bot a host's fire / hit is for)
                     s { q: [px, py, pz, vx, vy, vz, yaw, pitch, weapon, state, flags, lean (-1 left … 1 right), clientMs] }
                     hit { id, zone, dmg, w? }  (w: what did it — arsenal id, 'fist', 'grenade', 'fall')
-                    take { id } · drop { w, p, ammo, reserve } · vit { op: heal|wear|charge, v } · nade { p, v, f }
+                    take { id } · drop { w, p, ammo, reserve } · vit { op: heal|wear|charge, v } · nade { p, v, f, k? } (k: 'smoke')
                     door { id, open, dir } · vote { map } · ping { c }
                     act { a, i? }  what the free hand does, for the others to see (a: ACTS; i: the item used)
   server → client   welcome { v, id, team, host, mapId, map, players (bots: bot true), score, limit, time, round, items, vote? }
@@ -33,9 +33,10 @@ import { WebSocketServer } from 'ws';
                     join { player } · leave { id } · s { id, al, q } · fire { id, ... } · hurt { hp, ar, am, by?, dmg? }
                     kill { k, v, head, w, score } · took { id, by } · back { id } · dropped { id, w, p, ammo, reserve }
                     door { id, open, dir } (doors: welcome.doors [[id, open, dir]], all shut each round)
-                    nade { id, p, v, f } · round { n, weapon, score } · end { score, vote } · votes { tally }
+                    nade { id, p, v, f, k? } · round { n, weapon, score } · end { score, vote } · votes { tally }
                     restart { score, time, mapId } · pong { c } · error { msg }
-                    act { id, a, i? } · struck { id }  (someone else was hit: their body flinches)
+                    act { id, a, i? } · struck { id, ar, am }  (someone else was hit: their body flinches; their armour left)
+                    ar { id, ar, am }  (someone put on or charged armour)
 */
 
 export const PROTOCOL = 5;
@@ -148,7 +149,7 @@ function hit(sender, msg) {
   v.sentHp = v.hp;
   if (v.bot) send(room.players.get(room.host)?.ws, { t: 'bhurt', id: v.id, hp: Math.max(0, v.hp), by: p.id, dmg });
   else send(v.ws, { t: 'hurt', ...vitals(v), by: p.id, dmg });
-  broadcast(room, { t: 'struck', id: v.id }, v);
+  broadcast(room, { t: 'struck', id: v.id, ar: v.armour, am: v.armourMax }, v);
   if (v.hp > 0) return;
   v.alive = false;
   if (!self) p.kills++;
@@ -207,6 +208,7 @@ function vital(p, msg) {
   else if (msg.op === 'charge') p.armour = p.armourMax;
   else return;
   send(p.ws, { t: 'hurt', ...vitals(p) });
+  if (msg.op !== 'heal') broadcast(p.room, { t: 'ar', id: p.id, ar: p.armour, am: p.armourMax }, p);
 }
 
 /** A random weapon index, never the same twice in a row. */
@@ -349,7 +351,7 @@ wss.on('connection', (ws) => {
       case 'drop': drop(p, msg); break;
       case 'vit': vital(p, msg); break;
       case 'nade':
-        if (p.alive && vec(msg.p) && vec(msg.v)) broadcast(p.room, { t: 'nade', id: p.id, p: msg.p, v: msg.v, f: Math.min(5, Math.max(0, +msg.f || 2.4)) }, p);
+        if (p.alive && vec(msg.p) && vec(msg.v)) broadcast(p.room, { t: 'nade', id: p.id, p: msg.p, v: msg.v, f: Math.min(5, Math.max(0, +msg.f || 2.4)), k: msg.k === 'smoke' ? 'smoke' : undefined }, p);
         break;
       case 'act':
         if ((p.alive || msg.a === 'stop') && ACTS.has(msg.a)) broadcast(p.room, { t: 'act', id: p.id, a: msg.a, i: clean(msg.i, 12) || undefined }, p);

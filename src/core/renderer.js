@@ -59,7 +59,7 @@ uniform vec2 texel;
 uniform float near, far, vmNear, vmFar, fogNear, fogFar, lineWidth;
 uniform vec3 ink;
 uniform vec2 eyeCenter;
-uniform float eyeRadius, eyeShadow, aspect, focus;
+uniform float eyeRadius, eyeShadow, aspect, focus, hurt;
 uniform float worldScale; // the world target's resolution scale (dynamic resolution); the viewmodel's is 1
 
 float viewZ(float d, float n, float f) { return -perspectiveDepthToViewZ(d, n, f); }
@@ -128,6 +128,14 @@ void main() {
   // gentle vignette
   vec2 q = vUv - 0.5;
   col *= 1.0 - dot(q, q) * 0.28;
+
+  // hurt (low health, dead): colour washes out toward grey, the edges darken and go red
+  if (hurt > 0.001) {
+    float l = dot(col, vec3(0.299, 0.587, 0.114));
+    col = mix(col, vec3(l), hurt * 0.85);
+    float rim = smoothstep(0.18, 0.62, length(q * vec2(aspect, 1.0) / max(aspect, 1.0)) * 1.25);
+    col = mix(col, col * vec3(0.9, 0.32, 0.28), hurt * rim * 0.55);
+  }
 
   gl_FragColor = vec4(col, 1.0);
   #include <colorspace_fragment>
@@ -200,7 +208,7 @@ export class Renderer {
         ink: { value: new THREE.Color(PALETTE.ink) },
         eyeCenter: { value: new THREE.Vector2(0.5, 0.5) },
         eyeRadius: { value: 0.1 }, eyeShadow: { value: 0 },
-        aspect: { value: 1 }, focus: { value: 0 },
+        aspect: { value: 1 }, focus: { value: 0 }, hurt: { value: 0 },
         worldScale: { value: 1 },
       },
       depthTest: false,
@@ -395,9 +403,10 @@ export class Renderer {
     return done;
   }
 
-  /** opts.eyepiece: { x, y, r, shadow } in screen UV (or null); opts.focus: 0..1 inspect blur. */
-  render(world, worldCam, vm, vmCam, { eyepiece = null, focus = 0 } = {}) {
+  /** opts.eyepiece: { x, y, r, shadow } in screen UV (or null); opts.focus: 0..1 inspect blur; opts.hurt: 0..1 washout. */
+  render(world, worldCam, vm, vmCam, { eyepiece = null, focus = 0, hurt = 0 } = {}) {
     const u = this.composite.uniforms;
+    u.hurt.value = hurt;
     u.aspect.value = this.size.x / this.size.y;
     u.focus.value = focus;
     u.eyeShadow.value = eyepiece ? eyepiece.shadow : 0;

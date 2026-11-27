@@ -6,7 +6,7 @@ import { ITEMS } from '../items/items.js';
   mouse has moved since the wheel opened, past a dead zone.
 */
 
-const SLOTS = ['bandage', 'charger', 'medkit', 'grenade']; // clockwise from the top
+const SLOTS = ['bandage', 'charger', 'medkit', 'grenade', 'smoke']; // clockwise from the top
 const DEAD = 18, REACH = 90; // px of mouse travel
 const STEP = (Math.PI * 2) / SLOTS.length;
 
@@ -14,6 +14,7 @@ export class ItemWheel {
   constructor(parent, icons = {}) {
     const root = (this.root = document.createElement('div'));
     root.className = 'wheel';
+    root.style.setProperty('--span', `${360 / SLOTS.length}deg`);
     root.innerHTML = `<div class="wheel-dial"></div>${SLOTS.map((id, i) => `
       <div class="wheel-slot" data-id="${id}" style="--a:${i * STEP}rad">
         <span class="ic" style="${icons[id] ? `background-image:url(${icons[id]})` : ''}"></span><b>0</b>

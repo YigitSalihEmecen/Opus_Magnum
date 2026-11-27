@@ -96,15 +96,16 @@ const FIRE_FRAG = /* glsl */`
   }`;
 const FIRE_COLS = [0xfff2b0, 0xffd447, 0xff9b2f, 0xe4552a, 0x8e3b2b, 0xaaa59c, 0x7b766f].map((c) => new THREE.Color(c));
 
-function fireMaterial() {
+/** The blast's lobe shading; smoke screens (smoke.js) use it with grey colours and the heat held low. */
+export function fireMaterial(cols = FIRE_COLS) {
   return new THREE.ShaderMaterial({
     vertexShader: FIRE_VERT, fragmentShader: FIRE_FRAG,
-    uniforms: { uHeat: { value: 1 }, uTime: { value: 0 }, uSeed: { value: new THREE.Vector3() }, uCol: { value: FIRE_COLS } },
+    uniforms: { uHeat: { value: 1 }, uTime: { value: 0 }, uSeed: { value: new THREE.Vector3() }, uCol: { value: cols } },
   });
 }
 
-function lobeGeometry() {
-  const g = mergeVertices(new THREE.IcosahedronGeometry(1, DETAIL).deleteAttribute('normal').deleteAttribute('uv'));
+export function lobeGeometry(detail = DETAIL) {
+  const g = mergeVertices(new THREE.IcosahedronGeometry(1, detail).deleteAttribute('normal').deleteAttribute('uv'));
   g.userData.dirs = Float32Array.from(g.attributes.position.array);
   g.attributes.position.setUsage(THREE.DynamicDrawUsage);
   g.computeVertexNormals();
@@ -112,12 +113,12 @@ function lobeGeometry() {
 }
 
 /** Push a lobe's vertices out along their directions by boiling noise: lumpy, never spiky. */
-function deform(geo, seed, t) {
+export function deform(geo, seed, t, base = 0.7, amp = 0.62, freq = 2) {
   const dirs = geo.userData.dirs, pos = geo.attributes.position.array;
   const sx = seed.x, sy = seed.y - t * 0.9, sz = seed.z;
   for (let i = 0; i < dirs.length; i += 3) {
     const x = dirs[i], y = dirs[i + 1], z = dirs[i + 2];
-    const r = 0.7 + 0.62 * fbm(x * 2 + sx, y * 2 + sy, z * 2 + sz);
+    const r = base + amp * fbm(x * freq + sx, y * freq + sy, z * freq + sz);
     pos[i] = x * r; pos[i + 1] = y * r; pos[i + 2] = z * r;
   }
   geo.attributes.position.needsUpdate = true;

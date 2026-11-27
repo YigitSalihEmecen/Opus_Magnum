@@ -5,6 +5,7 @@ export { raySegment };
 import { characterById } from '../../character/characters.js';
 import { ZONE } from '../../weapons/weapons.js';
 import { findAttachment } from '../../weapons/attachments.js';
+import { soakArmour } from '../../items/items.js';
 
 /*
   TDM bot: an Avatar (character/avatar.js) driven by a layered brain, cheap enough for ten of them.
@@ -102,7 +103,9 @@ export class Bot extends Avatar {
   /** weapon: what did it (an arsenal id, 'fist', 'grenade'), for the kill feed. */
   takeDamage(dmg, zone, attacker, dir, weapon) {
     if (!this.alive) return false;
-    this.hp -= dmg;
+    const { lost, armour } = soakArmour(this, dmg);
+    this.lastArmour = armour;
+    this.hp -= lost;
     this.hurt(dmg, attacker);
     if (this.hp <= 0) {
       this.#die(attacker, zone === 'head', dir, weapon);
@@ -127,7 +130,10 @@ export class Bot extends Avatar {
   damage(amount, zone, point, dir, now, weapon) {
     if (!this.alive || this.team === 'ally') return null;
     if (this.world.netHit) return this.world.netHit(this, amount, zone, weapon);
-    return { killed: this.takeDamage(amount, zone, this.world.player, dir, weapon) };
+    const before = this.hp + this.armour;
+    const killed = this.takeDamage(amount, zone, this.world.player, dir, weapon);
+    this.world.noteDealt?.(this, before - Math.max(0, this.hp) - this.armour);
+    return { killed, armour: this.lastArmour };
   }
 
   // ── lifecycle ──
@@ -139,6 +145,7 @@ export class Bot extends Avatar {
     this.yaw = this.aimYaw = at.yaw;
     this.aimPitch = 0;
     this.hp = this.maxHp;
+    this.armourMax = this.armour = this.world.spawnArmour?.() ?? 0;
     this.alive = true;
     this.lastHurt = -99;
     this.pain = 0;

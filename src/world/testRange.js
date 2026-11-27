@@ -185,9 +185,9 @@ export class TestRange {
     this.block(0, 0, -40, 26, 9, 1.5, P.ink); // backstop
 
     this.dummySpots = [
-      { type: 'static', pos: [-4, 0, 26] },
-      { type: 'static', pos: [0, 0, 26] },
-      { type: 'static', pos: [4, 0, 26] },
+      { type: 'static', pos: [-4, 0, 26], armour: 25 },
+      { type: 'static', pos: [0, 0, 26], armour: 50 },
+      { type: 'static', pos: [4, 0, 26], armour: 75 },
       { type: 'strafe', pos: [0, 0, 16], range: 6, speed: 4.2 },
       { type: 'static', pos: [-6, 0, 1] },
       { type: 'strafe', pos: [2, 0, 1], range: 5, speed: 5.5, jitter: true },

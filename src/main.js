@@ -7,6 +7,7 @@ import { TestRange } from './world/testRange.js';
 import { Dummies } from './world/dummies.js';
 import { Movement, SPEED } from './player/movement.js';
 import { CameraRig } from './player/cameraRig.js';
+import { DeathCam } from './player/deathCam.js';
 import { PlayerBody } from './player/body.js';
 import { Viewmodel, addViewmodelLights } from './weapons/viewmodel.js';
 import { Gunplay, AIM } from './weapons/gunplay.js';
@@ -115,6 +116,7 @@ const vitalsHud = new VitalsHud(document.getElementById('hud'));
 const wheel = new ItemWheel(document.getElementById('hud'), vitalsHud.icons);
 let leanMode = 'toggle', leanLatch = 0;
 const rig = new CameraRig(camera);
+const deathCam = new DeathCam(camera);
 addViewmodelLights(vmScene);
 
 // one viewmodel + gunplay per weapon; only the active one updates and renders
@@ -369,12 +371,12 @@ function dropPoint() {
   return mv.feet.clone().addScaledVector(_fwd, 0.9);
 }
 
-/** G: the grenade leaves the hand a little right of the eye; online modes pass it on. */
-inv.onThrow = () => {
+/** G / the wheel: the grenade (frag or smoke) leaves the hand a little right of the eye; online modes pass it on. */
+inv.onThrow = (kind) => {
   camera.getWorldDirection(_fwd);
   _right.setFromMatrixColumn(camera.matrixWorld, 0);
   const origin = camera.position.clone().addScaledVector(_fwd, 0.35).addScaledVector(_right, 0.12);
-  const g = grenades.throw(origin, _fwd, mv.vel);
+  const g = grenades.throw(origin, _fwd, mv.vel, { kind });
   level.onThrow?.(g);
 };
 
@@ -388,7 +390,8 @@ function onBlast(pos, mine) {
     const res = h.target.damage(h.dmg, 'blast', h.point, h.dir, now, 'grenade');
     if (!res) continue;
     hud.hitmarker(res.killed ? 'kill' : 'hit');
-    hud.damageNumber(h.point, h.dmg, false);
+    hud.damageNumber(h.point, h.dmg, false, res.armour);
+    if (res.armour?.broke) audio.armourBreak(res.armour.tier);
     audio.hit(res.killed ? 'kill' : 'body');
   }
   if (d < BLAST.radius && (level.playerAlive ?? true) && grenades.clear(pos, chest)) {
@@ -412,6 +415,7 @@ const VM_FOV_HIP = 54;
 let now = 0;
 let wasAlive = true;
 let wasLowered = false;
+let beatT = 0;
 function tick(dt) {
   now += dt;
   if (loader.active) { input.endFrame(); return; } // the loading sheet covers the screen
@@ -429,11 +433,13 @@ function tick(dt) {
   // a mode can take the player out (TDM death): drop the gun, lower the arms, bring them back on respawn
   if (alive !== wasAlive) {
     wasAlive = alive;
+    hud.root.classList.toggle('dead', !alive);
     if (!alive) {
       inv.cancel();
       melee.cancel();
       level.pickups?.release({ gun: current, ammo: gun.ammo, reserve: gun.reserve === Infinity ? 2 * gun.magSize : gun.reserve }, mv.feet.clone());
-    }
+      deathCam.start(mv.feet);
+    } else deathCam.stop();
   }
   // the gun goes down while dead or while the hands are busy with an item
   const lowered = !alive || inv.busy || melee.busy;
@@ -494,6 +500,7 @@ function tick(dt) {
   else if (leanMode === 'toggle') for (const [k, s] of [['KeyQ', -1], ['KeyE', 1]]) { if (input.pressed(k)) leanLatch = leanLatch === s ? 0 : s; }
   const lean = !canLean ? 0 : leanMode === 'toggle' ? leanLatch : (input.down('KeyE') ? 1 : 0) - (input.down('KeyQ') ? 1 : 0);
   rig.update(dt, mv, { ads: gun.adsEased, axes, zoom: gun.zoom, lean });
+  if (!alive) deathCam.update(dt, { watch: level.watch ?? null, octree: mv.octree });
   const view = window.OM?.view; // dev free camera: OM.view = { pos: [x, y, z], yaw, pitch } (degrees)
   if (view) { camera.position.set(...view.pos); camera.rotation.set((view.pitch ?? 0) * Math.PI / 180, (view.yaw ?? 0) * Math.PI / 180, 0); }
   camera.updateMatrixWorld();
@@ -523,7 +530,11 @@ function tick(dt) {
     scrape: mv.state === 'slide' ? Math.min(1, mv.speed / SPEED / 10) : 0,
   });
 
-  renderer.render(scene, camera, vmScene, vmCamera, { eyepiece: vm.eyepieceInfo(), focus: vm.inspectEase });
+  // low health drains the colour out of the view (and a heartbeat starts under 30%); dead, it's nearly grey
+  const hpFrac = vitals.hp / vitals.max;
+  const hurt = alive ? THREE.MathUtils.smoothstep(0.55 - hpFrac, 0, 0.43) * 0.8 : Math.min(0.9, 0.5 + deathCam.t);
+  if (alive && level.playerAlive !== undefined && hpFrac < 0.3 && hpFrac > 0 && (beatT -= dt) <= 0) { beatT = 0.55 + hpFrac * 1.6; audio.heartbeat(1 - hpFrac * 2); }
+  renderer.render(scene, camera, vmScene, vmCamera, { eyepiece: vm.eyepieceInfo(), focus: vm.inspectEase, hurt });
   input.endFrame();
 }
 
@@ -549,7 +560,7 @@ drawWeapon(0);
 window.OM = {
   body, renderer,
   get vm() { return vm; }, get gun() { return gun; }, arsenal, switchWeapon, inv, vitals, get grenades() { return grenades; },
-  mv, rig, melee, handheld, wheel, get level() { return level; }, get lobby() { return lobby; }, scene, vmScene, input, gunsmith, setInspect, startMode,
+  mv, rig, deathCam, hud, melee, handheld, wheel, get level() { return level; }, get lobby() { return lobby; }, scene, vmScene, input, gunsmith, setInspect, startMode,
   step: (n = 1, dt = 1 / 60) => { for (let i = 0; i < n; i++) tick(dt); },
 };
 const params = new URLSearchParams(location.search);

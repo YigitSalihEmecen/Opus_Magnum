@@ -205,7 +205,8 @@ export class Gunplay {
     }
     for (const [, t] of tally) {
       this.hud.hitmarker(t.killed ? 'kill' : 'hit', t.head);
-      this.hud.damageNumber(t.point, Math.round(t.dmg), t.head);
+      this.hud.damageNumber(t.point, Math.round(t.dmg), t.head, t.armour);
+      if (t.armour?.broke) this.audio.armourBreak(t.armour.tier);
       this.audio.hit(t.killed ? 'kill' : 'body', t.head);
     }
 
@@ -256,6 +257,7 @@ export class Gunplay {
           t.dmg += dmg;
           t.head ||= head;
           t.killed ||= res.killed;
+          if (res.armour) t.armour = { tier: res.armour.tier, broke: t.armour?.broke || res.armour.broke };
           tally.set(dummy, t);
         }
         this.fx.impact(hit.point, normal, { flesh: true });

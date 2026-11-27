@@ -114,9 +114,18 @@ assert.equal((await b.next('hurt')).hp, 85); // fresh round: full health again (
 b.send({ t: 'vit', op: 'wear', v: 50 });
 h = await b.next('hurt');
 assert.deepEqual([h.ar, h.am], [50, 50]);
+h = await a.next('ar', (m) => m.id === wb.id); // the others hear about the vest (damage-number colours)
+assert.deepEqual([h.ar, h.am], [50, 50]);
+a.inbox.length = 0;
 a.send({ t: 'hit', id: wb.id, zone: 'body', dmg: 60 });
 h = await b.next('hurt');
 assert.deepEqual([h.ar, h.hp], [0, 75]);
+h = await a.next('struck', (m) => m.id === wb.id);
+assert.deepEqual([h.ar, h.am], [0, 50]);
+
+// a smoke grenade is relayed as one
+b.send({ t: 'nade', p: [0, 1, 0], v: [1, 2, 3], f: 1.4, k: 'smoke' });
+assert.equal((await a.next('nade')).k, 'smoke');
 b.send({ t: 'vit', op: 'heal', v: 999 }); // not an item: ignored
 b.send({ t: 'vit', op: 'heal', v: 40 });
 assert.equal((await b.next('hurt')).hp, 115);
