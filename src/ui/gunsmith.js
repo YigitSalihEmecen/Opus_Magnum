@@ -39,7 +39,7 @@ export class Gunsmith {
       <header class="smith-head card">
         <span class="eyebrow">Gunsmith</span>
         <span class="title">${gun.def.name}</span>
-        <span class="label">F close · Tab section · 1–N attachment</span>
+        <span class="label">H close · Tab section · 1–N attachment</span>
       </header>
       ${this.slots.map((s, i) => `
         <i class="dot" data-dot="${s}"></i>

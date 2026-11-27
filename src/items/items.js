@@ -7,7 +7,7 @@ import { buildGrenade } from './models/grenade.js';
 
 /*
   Item definitions. Everything that differs between items lives here:
-    kind     — heal (Q) · charge (X) · throw (G) · ammo (instant) · armour (worn)
+    kind     — heal · charge · throw (all on the Z wheel; G throws) · ammo (instant) · armour (worn)
     max      — how many you can carry (consumables)
     time     — seconds to use (heal / charge)
     show     — display scale on the floor, so small items still read at a distance

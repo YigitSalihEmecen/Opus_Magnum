@@ -34,7 +34,7 @@ export class PlayerBody {
   }
 
   /** mv: the movement controller; yaw: the view's; show: a level is being played (not the editor). */
-  update(dt, { mv, yaw, alive, show }) {
+  update(dt, { mv, yaw, lean = 0, alive, show }) {
     const a = this.avatar;
     if (!a) return;
     const on = show && alive;
@@ -45,6 +45,7 @@ export class PlayerBody {
     a.pos.copy(mv.feet).add(_back.set(-Math.sin(a.aimYaw) * BACK, 0, -Math.cos(a.aimYaw) * BACK));
     a.vel.copy(mv.vel);
     a.aimPitch = 0;
+    a.side = lean;
     const st = mv.state, p = (a.poseTarget ??= {});
     p.slide = st === 'slide' ? 1 : 0;
     p.crouch = mv.crouched && !p.slide ? 1 : 0;

@@ -4,6 +4,7 @@ import { FX_LAYER } from '../core/renderer.js';
 import { gripGun, bakeFlat } from './robot.js';
 import { buildCharacter } from './characters.js';
 import { WEAPONS } from '../weapons/weapons.js';
+import { findAttachment } from '../weapons/attachments.js';
 import { Motion, BONES } from './motion.js';
 import { Spring, Inertializer } from './smooth.js';
 import { HandActs } from './actions.js';
@@ -66,6 +67,48 @@ const LEGS = LOWER.slice(1);
 const _aim = new THREE.Quaternion(), _lean = new THREE.Quaternion(), _e = new THREE.Euler(), _v1 = new THREE.Vector3();
 const _pq = new THREE.Quaternion(), ONE = new THREE.Vector3(1, 1, 1), DOWN = new THREE.Vector3(0, -1, 0);
 const _ray = new THREE.Ray(), _f = new THREE.Vector3(), _l = new THREE.Vector3();
+const _root = new THREE.Vector3(), _hs = new THREE.Sphere(), _hv = new THREE.Vector3(), _sa = new THREE.Vector3(), _sb = new THREE.Vector3();
+const _rs1 = new THREE.Vector3(), _rs2 = new THREE.Vector3();
+
+/** Shortest distance between a ray and a segment [a, b]; returns { dist, t (along ray) }. */
+export function raySegment(ray, a, b) {
+  const u = ray.direction, v = _rs1.subVectors(b, a), w = _rs2.subVectors(ray.origin, a);
+  const A = u.dot(u), B = u.dot(v), C = v.dot(v), Dd = u.dot(w), E = v.dot(w);
+  const den = A * C - B * B;
+  let s = den > 1e-8 ? (B * E - C * Dd) / den : 0;
+  let t = den > 1e-8 ? (A * E - B * Dd) / den : E / C;
+  t = THREE.MathUtils.clamp(t, 0, 1);
+  s = Math.max(0, (B * t - Dd) / A);
+  const px = ray.origin.x + u.x * s - (a.x + v.x * t), py = ray.origin.y + u.y * s - (a.y + v.y * t), pz = ray.origin.z + u.z * s - (a.z + v.z * t);
+  return { dist: Math.hypot(px, py, pz), t: s };
+}
+
+/*
+  A reload's support hand, keyed on progress u (poses in the gun's frame: x y z, rotation deg, curl): to the
+  magazine, grab, strip it out and down, stow it at the belt (lhOff), take a fresh one, line it up under the
+  well, push it home, a slap, back to the grip.
+*/
+const RELOAD_KEYS = [
+  [0, 'rest'], [0.13, 'mag'], [0.2, 'mag'], [0.33, 'mag', [0, -0.15, 0.03, -10, 0, 15]], [0.42, 'off'],
+  [0.52, 'off'], [0.63, 'mag', [0, -0.11, 0.02, -8, 0, 10]], [0.7, 'mag'], [0.74, 'mag', [0, -0.02, 0, 0, 0, 0, -0.4]],
+  [0.86, 'rest'], [1, 'rest'],
+];
+const _ka = [0, 0, 0, 0, 0, 0, 0], _kb = [0, 0, 0, 0, 0, 0, 0];
+function keyPose(P, [, name, add], out) {
+  const base = name === 'rest' ? P.lhRest : name === 'mag' ? P.lhMag : P.lhOff ?? P.lhRest;
+  for (let i = 0; i < 7; i++) out[i] = base[i] + (add?.[i] ?? 0);
+  return out;
+}
+/** Support-hand pose at reload progress u, blended from the grip by weight w. */
+function reloadHand(u, P, out, w) {
+  let i = 0;
+  while (i < RELOAD_KEYS.length - 2 && RELOAD_KEYS[i + 1][0] <= u) i++;
+  const a = RELOAD_KEYS[i], b = RELOAD_KEYS[i + 1];
+  const t = THREE.MathUtils.smoothstep(u, a[0], b[0]);
+  keyPose(P, a, _ka); keyPose(P, b, _kb);
+  for (let k = 0; k < 7; k++) out[k] = P.lhRest[k] + (_ka[k] + (_kb[k] - _ka[k]) * t - P.lhRest[k]) * w;
+  return out;
+}
 
 export class Avatar {
   /** team: 'ally' | 'enemy' (allies wear a marker); weapon: id of the gun it starts holding. */
@@ -76,6 +119,7 @@ export class Avatar {
     this.alive = false;
     this.aimYaw = 0;
     this.aimPitch = 0;
+    this.side = 0; // lean: -1 left … 1 right
     this.hopY = 0;
     this.phase = 0;
     this.reloadT = 0;
@@ -86,6 +130,45 @@ export class Avatar {
 
   /** What shots and blasts check before hurting it. */
   get dead() { return !this.alive; }
+
+  // ── as a combatant (what the TDM bots see, aim at and shoot): facing · eye · aimPoint · hitTest ──
+
+  get facing() { return this.aimYaw; }
+
+  /** Eye: the head bone as last drawn (follows crouch, lean, slide, climbs), carried to the current feet. */
+  eye(out = new THREE.Vector3()) {
+    out.setFromMatrixPosition(this.robot.bones.head.matrixWorld);
+    _root.setFromMatrixPosition(this.root.matrixWorld);
+    const up = out.y - _root.y;
+    if (!this.live || up < 0.5 || up > 2.1 || Math.abs(out.x - _root.x) > 0.8 || Math.abs(out.z - _root.z) > 0.8) {
+      return out.copy(this.pos).setY(this.pos.y + 1.62 * (1 - 0.36 * (this.poseW?.crouch ?? 0)) + this.hopY);
+    }
+    return out.sub(_root).add(this.pos).setY(out.y + this.hopY + 0.06);
+  }
+
+  aimPoint(head, out = new THREE.Vector3()) {
+    this.eye(out);
+    if (head) return out.setY(out.y + 0.04);
+    // chest: between the feet and the head, two thirds up
+    return out.set((out.x + this.pos.x) / 2, this.pos.y + (out.y - this.pos.y) * 0.68, (out.z + this.pos.z) / 2);
+  }
+
+  /** Analytic hit volumes (head sphere + body capsule from the feet to the shoulders) for shots by bots. */
+  hitTest(ray) {
+    if (!this.alive) return null;
+    this.eye(_hs.center);
+    _hs.center.y += 0.06;
+    _hs.radius = 0.17;
+    const h = ray.intersectSphere(_hs, _hv);
+    if (h) return { dist: h.distanceTo(ray.origin), zone: 'head' };
+    const top = _hs.center.y - this.pos.y - 0.3;
+    _sa.copy(this.pos).setY(this.pos.y + 0.25 + this.hopY);
+    _sb.set((_hs.center.x + this.pos.x) / 2, this.pos.y + top, (_hs.center.z + this.pos.z) / 2);
+    const r = raySegment(ray, _sa, _sb);
+    if (r.dist >= 0.3) return null;
+    const y = ray.origin.y + ray.direction.y * r.t - this.pos.y - this.hopY;
+    return { dist: r.t, zone: y < top * 0.58 ? 'legs' : 'body' };
+  }
 
   #build(weaponId) {
     const r = (this.robot = buildCharacter(this.char, this.team));
@@ -103,7 +186,7 @@ export class Avatar {
     this.ledge = { L: { matrix: new THREE.Matrix4(), k: 0, curl: 0.75 }, R: { matrix: new THREE.Matrix4(), k: 0, curl: 0.75 }, found: false, two: false };
     r.root.updateWorldMatrix(true, true);
     this.footRest = b.foot_L.getWorldPosition(new THREE.Vector3()).y; // the foot bone's height standing
-    this.sm = Object.fromEntries(['yaw', 'pitch', 'speed', 'legYaw', 'leanX', 'leanY', 'hand', 'reload', 'swap', 'kick', 'stow', ...POSE_KEYS].map((k) => [k, new Spring()]));
+    this.sm = Object.fromEntries(['yaw', 'pitch', 'speed', 'legYaw', 'leanX', 'leanY', 'side', 'hand', 'reload', 'swap', 'kick', 'stow', ...POSE_KEYS].map((k) => [k, new Spring()]));
     this.hands = new HandActs(r.arms.L.hand);
     this.lastFlashT = 0;
     this.poseW = Object.fromEntries(POSE_KEYS.map((k) => [k, 0]));
@@ -159,6 +242,15 @@ export class Avatar {
       const { root, parts } = def.build();
       bakeFlat(root); // one draw call; its moving parts never move in third person
       root.userData.muzzle = parts.muzzleMount;
+      // the magazine stays its own piece: a reload takes it out and puts a fresh one in
+      const magDef = def.defaults?.mag && findAttachment('mag', def.defaults.mag);
+      const built = magDef?.build?.(), mag = built?.isObject3D ? built : built?.obj;
+      if (mag && parts.magSocket) {
+        bakeFlat(mag);
+        mag.traverse((c) => { if (c.isMesh) c.castShadow = true; });
+        parts.magSocket.add(mag);
+        root.userData.mag = mag;
+      }
       this.gunFrame.add(root);
       this.guns.set(def.id, (gun = root));
     }
@@ -175,7 +267,7 @@ export class Avatar {
       // (re)appearing: start from where it is, no easing in from the last life
       this.live = true;
       S.yaw.snap(this.aimYaw); S.pitch.snap(this.aimPitch); S.speed.snap(Math.hypot(this.vel.x, this.vel.z));
-      for (const k of ['legYaw', 'leanX', 'leanY', 'hand']) S[k].snap(0);
+      for (const k of ['legYaw', 'leanX', 'leanY', 'side', 'hand']) S[k].snap(0);
       for (const k of POSE_KEYS) S[k].snap(k === 'air' ? airTgt : tgt[k] ?? 0);
       this.lastVel.copy(this.vel);
       this.inert.reset();
@@ -299,6 +391,9 @@ export class Avatar {
       // one hand: the torso leans over to the planted left hand
       if (!this.ledge.two) { m.turn(UPPER, FWD, -0.3 * k); m.turn(['neck', 'head'], FWD, 0.25 * k); }
     }
+    // a lean (Q / E): the torso tips over the hips toward that side, the hips give a little the same way
+    const side = S.side.to(this.side, HL.aim, dt);
+    if (side) { m.turn(UPPER, FWD, side * 0.38); m.offset.x -= side * 0.063; }
     this.inert.apply(m.world, m.offset, dt);
     m.apply();
     this.vaultU = u;
@@ -354,10 +449,17 @@ export class Avatar {
     // reload: gun dips and rolls, the support hand goes to the magazine; sliding tips it up; swapping lowers it
     // out of sight; a shot kicks it up; a busy left hand (knife, grenade, heal) dips it out of the way
     const dt = this.dt ?? 1 / 60;
-    const rl = this.sm.reload.to(this.reloadT > 0 ? Math.sin(Math.min(1, this.reloadT / this.reloadTime) * Math.PI) : 0, HL.reload, dt);
+    // reload progress u (0 → 1) through this one; its weight eases it in, and lets go smoothly if it's cut short
+    if (this.reloadT > 0 && !(this.rlLast > 0)) this.rlDur = Math.max(this.reloadT, 0.4);
+    this.rlLast = this.reloadT;
+    const u = this.reloadT > 0 ? THREE.MathUtils.clamp(1 - this.reloadT / this.rlDur, 0, 1) : 1;
+    const rl = this.sm.reload.to(this.reloadT > 0 ? 1 : 0, HL.reload, dt);
+    // the gun rolls over and dips to bring the magazine well up to the hand, jolts as the new one seats
+    const tilt = rl * ss(u, 0, 0.14) * (1 - ss(u, 0.8, 0.97));
+    const seat = rl * Math.exp(-(((u - 0.71) / 0.03) ** 2));
     this.motion.bones.chest.getWorldPosition(_v1);
     const H = this.hands.update(dt, _v1, this.root.rotation.y), swap = this.sm.swap.x;
-    this.arms.quaternion.multiply(_aim.setFromEuler(_e.set(rl * 0.6 + w.slide * 0.3 + swap * 1.1 + H.dip - this.sm.kick.x, 0, rl * 0.5)));
+    this.arms.quaternion.multiply(_aim.setFromEuler(_e.set(tilt * 0.45 - seat * 0.1 + w.slide * 0.3 + swap * 1.1 + H.dip - this.sm.kick.x, tilt * 0.15, tilt * 0.65)));
     this.arms.position.y -= swap * 0.18;
     // climbing: the gun goes onto the back while both hands are on the ledge, and comes back after
     const tc = this.clipT.climb, climbing = tc < LEDGE_HOLD[2], two = this.ledge.two;
@@ -368,11 +470,35 @@ export class Avatar {
     }
     const ledge = this.ledge, lk = ledge.found ? ss(tc, 0, LEDGE_HOLD[0]) * (1 - ss(tc, LEDGE_HOLD[1], LEDGE_HOLD[2])) : 0;
     ledge.L.k = ledge.R.k = lk;
-    // the support hand travels between the grip and the magazine rather than jumping
-    const poses = this.weapon.poses, k = this.sm.hand.to(rl > 0.3 && poses.lhMag ? 1 : 0, HL.hand, dt);
-    for (let i = 0; i < 7; i++) _hand[i] = poses.lhRest[i] + ((poses.lhMag ?? poses.lhRest)[i] - poses.lhRest[i]) * k;
+    // the support hand works the magazine (reloadHand), and the magazine goes with it while it's held
+    const poses = this.weapon.poses;
+    if (poses.lhMag) reloadHand(u, poses, _hand, rl);
+    else _hand.splice(0, 7, ...poses.lhRest);
+    this.#moveMag(u, rl, poses);
     const leftTo = lk > 0 ? ledge.L : this.#plantHand() ?? (H.k > 0 ? H : null);
     gripGun(this.robot, this.gunFrame, poses, { left: _hand, leftTo, rightTo: lk > 0 && two ? ledge.R : null });
+  }
+
+  /**
+   * The magazine during a reload: in the hand from the grab until it's stowed at the belt (gone while the hand is
+   * down there), a fresh one in the hand from the pouch until it seats. It follows the hand's offset from where
+   * the hand holds a seated magazine (lhMag), carried from the gun's frame into the socket's.
+   */
+  #moveMag(u, rl, poses) {
+    const mag = this.guns.get(this.weapon.id)?.userData.mag;
+    if (!mag) return;
+    const held = rl > 0.5 && ((u > 0.2 && u < 0.4) || (u > 0.5 && u < 0.7));
+    mag.visible = !(rl > 0.5 && u >= 0.4 && u <= 0.5);
+    mag.position.set(0, 0, 0);
+    if (!held || !poses.lhMag) return;
+    const socket = mag.parent;
+    socket.getWorldPosition(_v1);
+    this.gunFrame.worldToLocal(_v1);
+    _v1.x += _hand[0] - poses.lhMag[0];
+    _v1.y += _hand[1] - poses.lhMag[1];
+    _v1.z += _hand[2] - poses.lhMag[2];
+    socket.worldToLocal(this.gunFrame.localToWorld(_v1));
+    mag.position.copy(_v1);
   }
 
   /** The free hand does something others should see: a knife swing ('slashLeft', 'slashRight', 'stab'), a

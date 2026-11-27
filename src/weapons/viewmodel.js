@@ -248,6 +248,7 @@ export class Viewmodel {
   /** Show/hide this weapon entirely (weapon switching). */
   setActive(on) {
     this.sway.visible = on;
+    this.leanWas = undefined; // a gun drawn while leaned starts from that lean, no catch-up swing
     this.rightArm.upper.visible = this.leftArm.upper.visible = on;
     if (!on) { for (const sh of this.shells) sh.visible = false; this.flashT = 0; this.flash.visible = false; this.muzzleLight.intensity = 0; }
   }
@@ -367,7 +368,7 @@ export class Viewmodel {
   }
 
   update(dt, ctx) {
-    const { mv, view, axes, mouseDX, mouseDY, ads, triggerHeld, cursor } = ctx;
+    const { mv, view, axes, mouseDX, mouseDY, ads, triggerHeld, cursor, lean = 0 } = ctx;
     this.time += dt;
     this.ads = ads;
     this.player.update(dt);
@@ -416,6 +417,11 @@ export class Viewmodel {
     const bobAmp = w.walk * free * (1 + w.sprint * 0.9);
     const breathe = (1 - ads * (o.shadow ? 1 : 0.8)) * (1 - w.walk);
 
+    // lean: going over, the gun trails the head (slides back toward the old side and rolls against the turn),
+    // then springs onto the new pose (hip only: aimed, the sight stays put)
+    const dl = (lean - (this.leanWas ?? lean)) * move;
+    this.leanWas = lean;
+    if (dl) { this.kickPos.kick(-dl * 0.5, -Math.abs(dl) * 0.25, 0); this.kickRot.kick(Math.abs(dl) * 0.8, -dl * 0.6, dl * 3.2); }
     const kp = this.kickPos.update(dt);
     const kr = this.kickRot.update(dt);
 
@@ -441,6 +447,9 @@ export class Viewmodel {
     p.x += 0.12 * stow;
     p.x += 0.06 * vault;
     p.z += sl * 0.02;
+    // leaned: the gun tucks in a little toward the middle and lower, canted into the lean (hip only)
+    p.x -= lean * 0.014 * move;
+    p.y -= Math.abs(lean) * 0.01 * move;
     p.add(kp);
 
     const hipK = 1 - ads;
@@ -452,7 +461,7 @@ export class Viewmodel {
     rx += sl * (Math.atan2(-(p.y + SLIDE_BORE_H), aimDist) - HIP_ROT.x * hipK);
     const ry = HIP_ROT.y * hipK + SPRINT_ROT.y * sprint + this.swayLag.y * free + sl * (Math.atan2(p.x, aimDist) - HIP_ROT.y * hipK);
     const rz = HIP_ROT.z * hipK + SPRINT_ROT.z * sprint + this.swayLag.y * 0.8 * free + Math.sin(ph) * 1.8 * D2R * bobAmp - w.strafe * 3 * D2R * move
-      + sl * 28 * D2R - 25 * D2R * stow + 34 * D2R * vault;
+      + sl * 28 * D2R - 25 * D2R * stow + 34 * D2R * vault - lean * 6 * D2R * move;
     // while inspecting, the gun leans toward the cursor
     const cx = cursor ? cursor.x : 0, cy = cursor ? cursor.y : 0;
     this.sway.rotation.set(

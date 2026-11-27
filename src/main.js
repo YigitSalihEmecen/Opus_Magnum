@@ -28,7 +28,8 @@ import { Handheld } from './items/handheld.js';
 import { Melee } from './weapons/melee.js';
 import { ITEM_IDS } from './items/items.js';
 import { VitalsHud } from './ui/vitalsHud.js';
-import { listMaps, getMap, hasSpawns } from './maps/storage.js';
+import { ItemWheel } from './ui/itemWheel.js';
+import { listMaps, getMap, hasSpawns, mapPreview } from './maps/storage.js';
 
 const canvas = document.getElementById('game');
 const renderer = new Renderer(canvas);
@@ -53,7 +54,7 @@ const vmCamera = new THREE.PerspectiveCamera(54, innerWidth / innerHeight, 0.01,
 const customWorld = async (mapId) => (await import('./maps/mapWorld.js')).buildMapWorld(scene, getMap(mapId));
 const MODES = [
   {
-    id: 'range', index: '01 / PRACTICE', title: 'Shooting Range', short: 'Warm up and tune', accent: '#8a9a7b', builtin: 'Test Range', blurb: 'Targets, vault blocks, mantle steps and a slide ramp. Tune your feel and your loadout.',
+    id: 'range', index: '01 / PRACTICE', title: 'Shooting Range', short: 'Warm up and tune', accent: '#8a9a7b', builtin: 'Test Range', preview: mapPreview('range'), blurb: 'Targets, vault blocks, mantle steps and a slide ramp. Tune your feel and your loadout.',
     load: async (mapId) => {
       if (mapId && getMap(mapId)) {
         const w = await customWorld(mapId);
@@ -71,7 +72,7 @@ const MODES = [
     },
   },
   {
-    id: 'tdm', index: '02 / MATCH', title: 'Team Deathmatch', short: '5 v 5 against bots', accent: '#d97757', builtin: 'Kiln', needsSpawns: hasSpawns,
+    id: 'tdm', index: '02 / MATCH', title: 'Team Deathmatch', short: '5 v 5 against bots', accent: '#d97757', builtin: 'Kiln', preview: mapPreview('kiln'), needsSpawns: hasSpawns,
     blurb: 'You and four allies against five enemy bots. First team to 40 eliminations wins.',
     load: async (mapId) => {
       const arena = mapId && getMap(mapId) ? await customWorld(mapId) : undefined;
@@ -79,7 +80,7 @@ const MODES = [
     },
   },
   {
-    id: 'online', index: '03 / ONLINE', title: 'Multiplayer', short: 'Play with friends', accent: '#6b6a4f',
+    id: 'online', index: '03 / ONLINE', title: 'Multiplayer', short: '2v2 · bots fill empty slots', accent: '#6b6a4f',
     lobby: { server: /^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? 'ws://localhost:8787' : 'wss://bitter-canavar.tailb7f1ff.ts.net:8443', map: 'builtin-duel' },
     load: async (mapId, opts) => (await import('./net/online.js')).createOnline({
       scene, camera, audio, hud, mv, rig, arsenal, inv, melee, vitals, getMap,
@@ -88,11 +89,11 @@ const MODES = [
     }),
   },
   {
-    id: 'editor', index: '04 / CREATE', title: 'Map Editor', short: 'Build your own map', accent: '#9fb4c7', lock: false, blurb: 'Lay out walls, containers, cars and fences on a grid. Saved maps show up here to play.',
+    id: 'editor', index: '03 / CREATE', title: 'Map Editor', short: 'Build your own map', accent: '#9fb4c7', lock: false, blurb: 'Lay out walls, containers, cars and fences on a grid. Saved maps show up here to play.',
     load: async () => (await import('./modes/editor/editor.js')).createEditor({ renderer, scene, canvas, onExit: () => { location.href = location.pathname; } }),
   },
   {
-    id: 'gallery', index: '05 / LAB', title: 'Animation Demo', short: 'Bots showing every move', accent: '#87867f',
+    id: 'gallery', index: '04 / LAB', title: 'Animation Demo', short: 'Bots showing every move', accent: '#87867f',
     blurb: 'Every captured clip and every in-game movement state on both robots, side by side. [ and ] change the speed.',
     load: async () => (await import('./modes/gallery/gallery.js')).createGallery({ scene, hud, buildWorld: async (map) => (await import('./maps/mapWorld.js')).buildMapWorld(scene, map) }),
   },
@@ -109,6 +110,8 @@ const fx = new WorldFX(scene);
 const mv = new Movement(new Octree(), { position: new THREE.Vector3(), yaw: 0 }); // real world arrives with the level
 const vitals = new Vitals();
 const vitalsHud = new VitalsHud(document.getElementById('hud'));
+const wheel = new ItemWheel(document.getElementById('hud'), vitalsHud.icons);
+let leanMode = 'toggle', leanLatch = 0;
 const rig = new CameraRig(camera);
 addViewmodelLights(vmScene);
 
@@ -224,6 +227,7 @@ const menu = new Menu(document.getElementById('menu'), {
     rig.sensitivity = s.sensitivity;
     rig.hFov = s.fov;
     audio.setVolume(s.volume);
+    leanMode = s.leanMode;
   },
   onTitle: () => { location.href = location.pathname; },
 });
@@ -407,7 +411,7 @@ function tick(dt) {
   }
 
   if (live) {
-    if (input.pressed('KeyF') || (vm.inspect && input.clicked(2))) setInspect(!vm.inspect);
+    if (input.pressed('KeyH') || (vm.inspect && input.clicked(2))) setInspect(!vm.inspect);
     // V: quick knife swing (the gun drops out of the way and comes back)
     if (input.pressed('KeyV') && !vm.inspect && !inv.busy && pendingSwitch === null && mv.state !== 'mantle' && mv.state !== 'vault') melee.start({ camera, targets, octree: mv.octree });
     if (!vm.inspect && !inv.busy && !melee.busy) {
@@ -416,39 +420,48 @@ function tick(dt) {
       if (input.wheel && n > 1) switchWeapon(inv.guns[(k + (input.wheel > 0 ? 1 : -1) + n) % n]);
       if (input.pressed('KeyT') && pendingSwitch === null && inv.drop(current)) switchWeapon(inv.guns[0]);
     }
-    inv.update(dt, { input, blocked: vm.inspect || melee.busy || pendingSwitch !== null || mv.state === 'mantle' || mv.state === 'vault' });
+    const handsBlocked = vm.inspect || melee.busy || pendingSwitch !== null || mv.state === 'mantle' || mv.state === 'vault';
+    // Z: the item wheel; the mouse picks while it's held, letting go uses the pick
+    const picked = wheel.update(input, { inv, can: !handsBlocked && !inv.busy });
+    if (picked) inv.use(picked);
+    inv.update(dt, { input, blocked: handsBlocked || wheel.open });
     vitals.update(dt);
     // pickups: walk over consumables, E for guns and armour upgrades
     const { touch, look } = level.pickups.nearby(mv.feet, camera);
     if (touch && inv.wants(touch) === 'auto') level.pickups.claim(touch);
     const target = [look, touch].find((p) => p && inv.wants(p) === 'prompt') ?? null;
     prompt = target ? inv.promptFor(target) : null;
-    if (target && input.pressed('KeyE') && !inv.busy && !melee.busy && pendingSwitch === null) level.pickups.claim(target);
+    if (target && input.pressed('KeyF') && !inv.busy && !melee.busy && pendingSwitch === null) level.pickups.claim(target);
     // E on a door when there's nothing to pick up: open or shut it
     const door = !target && level.doors?.facing(camera.position, camera.getWorldDirection(_doorDir));
     if (door) {
       prompt = door.open ? 'Close door' : 'Open door';
-      if (input.pressed('KeyE')) level.doors.toggle(door, mv.feet);
+      if (input.pressed('KeyF')) level.doors.toggle(door, mv.feet);
     }
     // zoom-matched: a mouse inch moves the target the same distance on screen at any magnification
-    if (!vm.inspect) rig.look(input, 1 / rig.zoom);
+    if (!vm.inspect && !wheel.open) rig.look(input, 1 / rig.zoom);
     mv.update(dt, input, rig.yaw);
   }
   const axes = live ? input.axes() : { x: 0, y: 0 };
-  rig.update(dt, mv, { ads: gun.adsEased, axes, zoom: gun.zoom });
+  // Q / E lean (held, or latched in toggle mode), only on foot; breaking into a sprint drops it
+  const canLean = live && mv.state === 'ground' && !mv.sprinting && !vm.inspect;
+  if (!canLean) leanLatch = 0;
+  else if (leanMode === 'toggle') for (const [k, s] of [['KeyQ', -1], ['KeyE', 1]]) { if (input.pressed(k)) leanLatch = leanLatch === s ? 0 : s; }
+  const lean = !canLean ? 0 : leanMode === 'toggle' ? leanLatch : (input.down('KeyE') ? 1 : 0) - (input.down('KeyQ') ? 1 : 0);
+  rig.update(dt, mv, { ads: gun.adsEased, axes, zoom: gun.zoom, lean });
   const view = window.OM?.view; // dev free camera: OM.view = { pos: [x, y, z], yaw, pitch } (degrees)
   if (view) { camera.position.set(...view.pos); camera.rotation.set((view.pitch ?? 0) * Math.PI / 180, (view.yaw ?? 0) * Math.PI / 180, 0); }
   camera.updateMatrixWorld();
-  if (!live) prompt = null;
-  if (live) gun.update(dt, { input, mv, camera, targets, octree: mv.octree, now, blocked: vm.inspect || vm.inspectEase > 0.25 || vm.swapping || pendingSwitch !== null || inv.busy || melee.busy || vm.holsterT > 0 || !inv.carries(current) });
+  if (!live) { prompt = null; wheel.close(); }
+  if (live) gun.update(dt, { input, mv, camera, targets, octree: mv.octree, now, blocked: vm.inspect || vm.inspectEase > 0.25 || vm.swapping || pendingSwitch !== null || inv.busy || melee.busy || wheel.open || vm.holsterT > 0 || !inv.carries(current) });
   if (live) gunsmith.update(dt, input, rig.sensitivity);
 
   const ads = gun.adsEased;
   const vmFov = THREE.MathUtils.lerp(VM_FOV_HIP, vm.optic.vmFov, ads);
   if (Math.abs(vmCamera.fov - vmFov) > 1e-3) { vmCamera.fov = vmFov; vmCamera.updateProjectionMatrix(); }
   const cursor = vm.inspect ? { x: gunsmith.cursor.x / innerWidth * 2 - 1, y: gunsmith.cursor.y / innerHeight * 2 - 1 } : null;
-  body.update(dt, { mv, yaw: rig.yaw, alive, show: !!level && !level.frame });
-  vm.update(dt, { mv, view: camera, axes, mouseDX: vm.inspect ? 0 : input.mouseDX, mouseDY: vm.inspect ? 0 : input.mouseDY, ads, triggerHeld: gun.triggerHeld, cursor });
+  body.update(dt, { mv, yaw: rig.yaw, lean: rig.lean, alive, show: !!level && !level.frame });
+  vm.update(dt, { mv, view: camera, axes, mouseDX: vm.inspect ? 0 : input.mouseDX, mouseDY: vm.inspect ? 0 : input.mouseDY, ads, triggerHeld: gun.triggerHeld, cursor, lean: rig.lean });
 
   melee.update(dt, { camera, targets, octree: mv.octree, now });
   handheld.update(dt, inv.action ?? melee.action, now);
@@ -491,7 +504,7 @@ drawWeapon(0);
 window.OM = {
   body, renderer,
   get vm() { return vm; }, get gun() { return gun; }, arsenal, switchWeapon, inv, vitals, get grenades() { return grenades; },
-  mv, rig, melee, handheld, get level() { return level; }, get lobby() { return lobby; }, scene, vmScene, input, gunsmith, setInspect, startMode,
+  mv, rig, melee, handheld, wheel, get level() { return level; }, get lobby() { return lobby; }, scene, vmScene, input, gunsmith, setInspect, startMode,
   step: (n = 1, dt = 1 / 60) => { for (let i = 0; i < n; i++) tick(dt); },
 };
 const params = new URLSearchParams(location.search);

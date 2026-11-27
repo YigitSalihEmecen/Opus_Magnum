@@ -4,8 +4,8 @@ import { MAX_HP } from '../player/vitals.js';
 /*
   What the player carries: guns (arsenal indices, up to maxGuns), consumables, spare ammo, and the action in
   progress (healing, charging armour, throwing a grenade). Keys:
-    Q heal (a bandage for small wounds, the medkit for big ones) · X charge armour · G throw a grenade
-    E pick up / swap the weapon or armour you're looking at · T drop the drawn weapon
+    Z item wheel (use(id): bandage, medkit, charger, grenade) · G throw a grenade
+    F pick up / swap the weapon or armour you're looking at · T drop the drawn weapon
   Consumables and ammo are picked up by walking over them; guns and armour upgrades take E.
   A mode hands out a loadout through reset(); main.js draws whatever gun the inventory says is held.
 */
@@ -115,13 +115,15 @@ export class Inventory {
     this.audio.play('cloth', { volume: 0.4, rate: 1.1 });
   }
 
-  /** Q: a bandage when it covers the wound (or there's no medkit), else the medkit. */
-  #healChoice() {
-    const missing = MAX_HP - this.vitals.hp;
-    const { medkit, bandage } = this.counts;
-    if (missing <= 0) return null;
-    if (bandage && (missing <= ITEMS.bandage.heal + 10 || !medkit)) return 'bandage';
-    return medkit ? 'medkit' : null;
+  /** Start using an item (from the wheel), or say why it can't be. */
+  use(id) {
+    if (this.action) return;
+    const it = ITEMS[id];
+    if (!this.counts[id]) this.hud.toast(`No ${it.name.toLowerCase()}`);
+    else if (it.kind === 'heal' && this.vitals.hp >= MAX_HP) this.hud.toast('Health full');
+    else if (it.kind === 'charge' && !this.vitals.armourMax) this.hud.toast('No armour');
+    else if (it.kind === 'charge' && !this.vitals.armourMissing) this.hud.toast('Armour full');
+    else this.#start(id);
   }
 
   cancel() {
@@ -136,21 +138,10 @@ export class Inventory {
   update(dt, { input, blocked }) {
     const a = this.action;
     if (!a) {
-      if (blocked) return;
-      if (input.pressed('KeyQ')) {
-        const id = this.#healChoice();
-        if (id) this.#start(id); else this.hud.toast(this.vitals.hurt ? 'No heals' : 'Health full');
-      } else if (input.pressed('KeyX')) {
-        if (!this.counts.charger) this.hud.toast('No chargers');
-        else if (!this.vitals.armourMax) this.hud.toast('No armour');
-        else if (!this.vitals.armourMissing) this.hud.toast('Armour full');
-        else this.#start('charger');
-      } else if (input.pressed('KeyG')) {
-        if (this.counts.grenade) this.#start('grenade'); else this.hud.toast('No grenades');
-      }
+      if (!blocked && input.pressed('KeyG')) this.use('grenade');
       return;
     }
-    if (a.kind !== 'throw' && (input.clicked(0) || input.clicked(2) || input.wheel || input.pressed('KeyQ') || input.pressed('KeyX'))) { this.cancel(); return; }
+    if (a.kind !== 'throw' && (input.clicked(0) || input.clicked(2) || input.wheel || input.pressed('KeyZ'))) { this.cancel(); return; }
     const prev = a.t;
     a.t += dt;
     if (a.kind === 'throw') {

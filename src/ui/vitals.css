@@ -44,3 +44,22 @@
   .vitals .num { font-size: 26px; }
   .items { bottom: 140px; }
 }
+
+/* Z item wheel */
+.wheel { --r: 112px; position: absolute; left: 50%; top: 50%; width: 320px; height: 320px; margin: -160px 0 0 -160px; opacity: 0; transform: scale(0.82) rotate(-8deg);
+  transition: opacity 0.12s ease-out, transform 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.25); }
+.wheel.on { opacity: 1; transform: none; }
+.wheel-dial { position: absolute; inset: 0; border-radius: 50%; border: 2.5px solid var(--ink); box-shadow: 5px 5px 0 var(--ink);
+  background: radial-gradient(circle, transparent 0 25%, var(--ink) 25% calc(25% + 2.5px), transparent calc(25% + 2.5px)), color-mix(in srgb, var(--ivory) 88%, transparent); }
+.wheel-dial::after { content: ''; position: absolute; inset: 0; border-radius: 50%; opacity: 0; transition: opacity 0.1s;
+  background: conic-gradient(from calc(var(--sel, 0rad) - 45deg), var(--clay) 0 90deg, transparent 0);
+  -webkit-mask: radial-gradient(circle, transparent 0 calc(25% + 2.5px), #000 calc(25% + 3px)); mask: radial-gradient(circle, transparent 0 calc(25% + 2.5px), #000 calc(25% + 3px)); }
+.wheel.picked .wheel-dial::after { opacity: 0.9; }
+.wheel-slot { position: absolute; left: 50%; top: 50%; display: grid; justify-items: center; gap: 2px;
+  transform: translate(-50%, -50%) translate(calc(sin(var(--a)) * var(--r)), calc(cos(var(--a)) * var(--r) * -1)); transition: transform 0.12s; }
+.wheel-slot .ic { width: 52px; height: 52px; background: center / contain no-repeat;
+  filter: drop-shadow(1px 0 0 var(--ink)) drop-shadow(-1px 0 0 var(--ink)) drop-shadow(0 1px 0 var(--ink)) drop-shadow(0 -1px 0 var(--ink)); }
+.wheel-slot b { font: 800 14px/1 var(--mono); padding: 3px 6px 2px; background: var(--ink); color: var(--ivory); }
+.wheel-slot.sel { transform: translate(-50%, -50%) translate(calc(sin(var(--a)) * var(--r)), calc(cos(var(--a)) * var(--r) * -1)) scale(1.18); }
+.wheel-slot.empty { opacity: 0.35; }
+.wheel-name { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 70px; text-align: center; font: 700 10px/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }

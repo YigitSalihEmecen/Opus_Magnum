@@ -10,7 +10,7 @@ import './vitals.css';
   state each frame.
 */
 
-const CHIPS = [['bandage', 'Q'], ['medkit', 'Q'], ['charger', 'X'], ['grenade', 'G']];
+const CHIPS = [['bandage', 'Z'], ['medkit', 'Z'], ['charger', 'Z'], ['grenade', 'G']];
 const hex = (c) => `#${c.toString(16).padStart(6, '0')}`;
 
 export class VitalsHud {
@@ -27,7 +27,7 @@ export class VitalsHud {
           <div class="bar ar"><b></b></div>
         </div>
       </div>
-      <div class="prompt card" hidden><kbd>E</kbd><span></span></div>
+      <div class="prompt card" hidden><kbd>F</kbd><span></span></div>
       <div class="use" hidden><div class="ring"></div><span class="label"></span></div>`;
     parent.appendChild(root);
     const $ = (s) => root.querySelector(s);
@@ -39,6 +39,7 @@ export class VitalsHud {
     this.ghost = 1;
     this.last = {};
     const icons = itemIcons(CHIPS.map(([id]) => id));
+    this.icons = Object.fromEntries(CHIPS.map(([id], i) => [id, icons[i]]));
     CHIPS.forEach(([id], i) => { if (icons[i]) this.el.chips[id].querySelector('.ic').style.backgroundImage = `url(${icons[i]})`; });
   }
 

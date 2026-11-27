@@ -3,6 +3,11 @@ import { SPEED } from './movement.js';
 
 const D2R = Math.PI / 180;
 const damp = (a, b, rate, dt) => a + (b - a) * (1 - Math.exp(-rate * dt));
+// recoil the player hasn't pulled against returns to where they aimed, starting this long after the last shot
+const RECOVER = { delay: 0.12, rate: 9 };
+// lean (Q / E): the eye swings out this far (m) and drops a little, the view rolls; a wall stops it pad short
+const LEAN = { side: 0.414, drop: 0.072, roll: 12.6 * D2R, rate: 12, pad: 0.24 };
+const _ray = new THREE.Ray();
 
 /** Damped spring on a scalar. */
 class Spring {
@@ -31,6 +36,9 @@ export class CameraRig {
     this.fovKick = 0;
     this.zoom = 1;
     this.pendingRecoil = new THREE.Vector2();
+    this.recoilDebt = new THREE.Vector2(); // aim moved by recoil and not yet countered by the mouse (rad)
+    this.sinceRecoil = 9;
+    this.lean = 0; // -1 left … 1 right, after walls
     this.punchPitch = new Spring(220, 18);
     this.punchYaw = new Spring(220, 18);
     this.punchRoll = new Spring(180, 14);
@@ -42,12 +50,17 @@ export class CameraRig {
 
   look(input, sensMult = 1) {
     const k = 0.0022 * this.sensitivity * sensMult;
-    this.yaw -= input.mouseDX * k;
-    this.pitch = THREE.MathUtils.clamp(this.pitch - input.mouseDY * k, -89 * D2R, 89 * D2R);
+    const dy = -input.mouseDX * k, dp = -input.mouseDY * k;
+    this.yaw += dy;
+    this.pitch = THREE.MathUtils.clamp(this.pitch + dp, -89 * D2R, 89 * D2R);
+    // pulling against the kick settles that much of it: recovery only returns what wasn't countered
+    const d = this.recoilDebt;
+    if (d.x * dp < 0) d.x -= Math.sign(d.x) * Math.min(Math.abs(d.x), Math.abs(dp));
+    if (d.y * dy < 0) d.y -= Math.sign(d.y) * Math.min(Math.abs(d.y), Math.abs(dy));
   }
 
   /** Permanent aim displacement (degrees), applied over a few frames for smoothness. */
-  addRecoil(pitchDeg, yawDeg) { this.pendingRecoil.x += pitchDeg * D2R; this.pendingRecoil.y += yawDeg * D2R; }
+  addRecoil(pitchDeg, yawDeg) { this.pendingRecoil.x += pitchDeg * D2R; this.pendingRecoil.y += yawDeg * D2R; this.sinceRecoil = 0; }
 
   /** Visual-only kick that springs back (degrees). */
   punch(pitchDeg, yawDeg = 0, rollDeg = 0) {
@@ -58,11 +71,16 @@ export class CameraRig {
 
   land(impact) { this.dip.v -= THREE.MathUtils.clamp(impact * 0.12, 0, 2.4); }
 
-  update(dt, mv, { ads = 0, axes = { x: 0, y: 0 }, zoom = 1.32 } = {}) {
-    // recoil drains into aim
+  update(dt, mv, { ads = 0, axes = { x: 0, y: 0 }, zoom = 1.32, lean = 0 } = {}) {
+    // recoil drains into aim, then (once the shooting stops) back out to where the player was aiming
     const r = 1 - Math.exp(-dt * 38);
-    this.pitch = THREE.MathUtils.clamp(this.pitch + this.pendingRecoil.x * r, -89 * D2R, 89 * D2R);
-    this.yaw += this.pendingRecoil.y * r;
+    const d = this.recoilDebt;
+    d.addScaledVector(this.pendingRecoil, r);
+    this.sinceRecoil += dt;
+    const back = this.sinceRecoil > RECOVER.delay ? 1 - Math.exp(-dt * RECOVER.rate) : 0;
+    this.pitch = THREE.MathUtils.clamp(this.pitch + this.pendingRecoil.x * r - d.x * back, -89 * D2R, 89 * D2R);
+    this.yaw += this.pendingRecoil.y * r - d.y * back;
+    d.multiplyScalar(1 - back);
     this.pendingRecoil.multiplyScalar(1 - r);
 
     // eye height
@@ -118,6 +136,18 @@ export class CameraRig {
     cam.position.copy(mv.feet);
     cam.position.y += this.eye + (this.bob.y + dipY * 0.08) * zk + this.stepY;
     cam.position.addScaledVector(right, this.bob.x * zk);
-    cam.rotation.set(this.pitch + (pp + mantlePitch - vaultK * 3 * D2R + dipY * 0.02) * zk, this.yaw + py * zk, this.roll * zk + (pr + mantleRoll + vaultK * 4 * D2R) * zk);
+    // lean: as far toward the asked side as the wall there allows
+    let reach = 1;
+    if (lean && mv.octree) {
+      _ray.origin.copy(cam.position);
+      _ray.direction.copy(right).multiplyScalar(Math.sign(lean));
+      const hit = mv.octree.rayIntersect(_ray);
+      if (hit) reach = THREE.MathUtils.clamp((hit.distance - LEAN.pad) / LEAN.side, 0, 1);
+    }
+    this.lean = damp(this.lean, lean * reach, LEAN.rate, dt);
+    if (Math.abs(this.lean) < 1e-4) this.lean = 0;
+    cam.position.addScaledVector(right, this.lean * LEAN.side);
+    cam.position.y -= Math.abs(this.lean) * LEAN.drop;
+    cam.rotation.set(this.pitch + (pp + mantlePitch - vaultK * 3 * D2R + dipY * 0.02) * zk, this.yaw + py * zk, (this.roll - this.lean * LEAN.roll) * zk + (pr + mantleRoll + vaultK * 4 * D2R) * zk);
   }
 }
