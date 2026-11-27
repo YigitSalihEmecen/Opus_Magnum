@@ -483,13 +483,14 @@ function hitProxies(root, bones) {
 // ───────────────────────────── holding a gun ─────────────────────────────
 
 const _hm = new THREE.Matrix4(), _hp = new THREE.Object3D(), _pole = new THREE.Vector3();
+const _ga = new THREE.Vector3(), _gb = new THREE.Vector3(), _gs = new THREE.Vector3(), _gq = new THREE.Quaternion(), _gr = new THREE.Quaternion();
 const D2R = Math.PI / 180;
 
 /**
  * Put both hands on a gun using its first-person grip poses (gun space, same hand frame):
  * `frame` is the gun's frame (the gun model sits inside it), `poses` the weapon def's poses.
  */
-export function gripGun(robot, frame, poses, { left = poses.lhRest, trigger = poses.triggerCurl } = {}) {
+export function gripGun(robot, frame, poses, { left = poses.lhRest, trigger = poses.triggerCurl, leftTo = null } = {}) {
   frame.updateWorldMatrix(true, false);
   for (const [side, pose] of [['R', poses.rightHand], ['L', left]]) {
     if (!pose) continue;
@@ -498,10 +499,18 @@ export function gripGun(robot, frame, poses, { left = poses.lhRest, trigger = po
     _hp.rotation.set(pose[3] * D2R, pose[4] * D2R, pose[5] * D2R, 'YXZ');
     _hp.updateMatrix();
     _hm.multiplyMatrices(frame.matrixWorld, _hp.matrix);
+    let curl = pose[6];
+    // leftTo { matrix (world), k 0..1, curl }: the support hand leaves the gun for somewhere else (a vault's plant)
+    if (side === 'L' && leftTo?.k > 0) {
+      _hm.decompose(_ga, _gq, _gs);
+      leftTo.matrix.decompose(_gb, _gr, _gs);
+      _hm.compose(_ga.lerp(_gb, leftTo.k), _gq.slerp(_gr, leftTo.k), _gs.set(1, 1, 1));
+      curl += ((leftTo.curl ?? curl) - curl) * leftTo.k;
+    }
     // elbows down and out, a little back
     arm.shoulder.localToWorld(_pole.set(side === 'L' ? 0.35 : -0.35, -0.6, -0.25));
     reachArm(arm, _hm, _pole);
-    arm.hand.userData.setCurl(pose[6]);
+    arm.hand.userData.setCurl(curl);
   }
   if (trigger !== undefined) robot.arms.R.hand.userData.setIndex(trigger);
   robot.update();
