@@ -3,6 +3,7 @@ import { Octree } from 'three/examples/jsm/math/Octree.js';
 import { PALETTE as P, toon, textTexture } from '../../core/toon.js';
 import { NavGrid } from './nav.js';
 import { applySky } from '../../world/sky.js';
+import { markStatic } from '../../core/renderer.js';
 
 /*
   "Kiln" — a compact 5v5 arena, point-symmetric about the origin so both teams get the same map.
@@ -45,6 +46,7 @@ export class Arena {
     this.#centre();
     for (const side of [1, -1]) this.#half(side);
     this.#backdrop();
+    markStatic(this.group);
 
     this.colliders.updateMatrixWorld(true);
     this.octree = new Octree().fromGraphNode(this.colliders);
@@ -137,7 +139,7 @@ export class Arena {
     sun.position.set(-40, 90, 30);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
-    sun.userData.shadowFollow = 40; // the renderer keeps the shadow box on the player (±40 m)
+    sun.userData.shadowFollow = 16; // near shadows: a sharp box on the player (±16 m); the far map covers the rest
     const c = sun.shadow.camera;
     c.near = 10;
     c.far = 220;

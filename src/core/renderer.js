@@ -1,8 +1,14 @@
 import * as THREE from 'three';
-import { PALETTE } from './toon.js';
+import { PALETTE, SUN_SHADOW } from './toon.js';
 
 /** Objects on this layer (tracers, flashes, sprites): tags for effects, which are all transparent and so leave no normals. */
 export const FX_LAYER = 1;
+/** Scenery that never moves (markStatic): drawn once into the level's far shadow map. */
+export const STATIC_LAYER = 3;
+/** Tag a level's fixed scenery: its shadow casters go into the far shadow map, drawn once per level. */
+export function markStatic(root) {
+  root.traverse((o) => { if (o.isMesh && o.castShadow) o.layers.enable(STATIC_LAYER); });
+}
 
 /*
   Every built-in material also writes its view-space normal to a second colour attachment (MRT), so the outline's
@@ -154,13 +160,14 @@ function makeTarget(w, h) {
  *   minScale     how far the world alone may drop below that when the GPU runs over budget (dynamic resolution;
  *                flat toon colour upscales cleanly). A fast machine stays at full scale on every preset.
  *   fixed        the world's scale where the GPU can't be timed (Safari)
- *   shadows      on/off; shadowScale × the map size each level asks for; shadowEvery: refresh every n frames
+ *   shadows      on/off; shadowScale × the near map size each level asks for; shadowEvery: refresh every n frames;
+ *                farShadow: size of the level's static far map (drawn once)
  *   lod          × the distances characters switch to their coarser models at
  */
 export const QUALITY = {
-  high: { ratio: 2, minScale: 0.85, fixed: 1, shadows: true, shadowScale: 1, shadowEvery: 1, lod: 1 },
-  medium: { ratio: 2, minScale: 0.7, fixed: 0.85, shadows: true, shadowScale: 0.5, shadowEvery: 2, lod: 0.6 },
-  low: { ratio: 1, minScale: 0.6, fixed: 0.75, shadows: false, shadowScale: 0.5, shadowEvery: 4, lod: 0.4 },
+  high: { ratio: 2, minScale: 0.85, fixed: 1, shadows: true, shadowScale: 1, farShadow: 4096, shadowEvery: 1, lod: 1 },
+  medium: { ratio: 2, minScale: 0.7, fixed: 0.85, shadows: true, shadowScale: 0.5, farShadow: 2048, shadowEvery: 2, lod: 0.6 },
+  low: { ratio: 1, minScale: 0.6, fixed: 0.75, shadows: false, shadowScale: 0.5, farShadow: 0, shadowEvery: 4, lod: 0.4 },
 };
 const GPU_BUDGET = 8.5; // ms a frame the GPU may take: room for 100 fps with the CPU's share overlapped
 const ADAPT_EVERY = 250; // ms between dynamic resolution steps (STEP of the world's scale)
@@ -244,7 +251,9 @@ export class Renderer {
     // re-run when the scene's content changes (a level, a player or the lobby was added) or the preset changed
     if (this.lightsFor === scene && this.lightsN === scene.children.length && !this.recompile) return;
     this.followers = [];
+    let statics = 0;
     scene.traverse((o) => {
+      if (o.isMesh && o.castShadow && o.layers.isEnabled(STATIC_LAYER)) statics++;
       if (this.recompile && o.material) for (const m of [].concat(o.material)) m.needsUpdate = true;
       if (o.isLOD) for (const l of o.levels) l.distance = (l.object.userData.lodFrom ??= l.distance) * this.q.lod;
       if (!o.isLight || !o.shadow) return;
@@ -256,6 +265,58 @@ export class Renderer {
     this.lightsFor = scene;
     this.lightsN = scene.children.length;
     this.recompile = false;
+    const key = `${statics}|${this.q.shadows && this.q.farShadow}|${this.followers.length}`;
+    if (key !== this.farKey) { this.farKey = key; this.#drawFarShadow(scene, statics); }
+  }
+
+  /**
+   * The far shadow layer: every static caster of the level, seen from the sun, drawn once into one big map that
+   * covers them all (the sun never moves). Toon materials read it wherever the near map doesn't reach.
+   */
+  #drawFarShadow(scene, statics) {
+    const sun = this.followers[0], size = this.q.shadows ? this.q.farShadow : 0;
+    SUN_SHADOW.omFarOn.value = 0;
+    if (!sun || !size || !statics) { this.farTarget?.dispose(); this.farTarget = null; return; }
+    const cam = (this.farCam ??= new THREE.OrthographicCamera());
+    const offset = (sun.userData.sunOffset ??= sun.position.clone().sub(sun.target.position));
+    cam.position.set(0, 0, 0);
+    cam.lookAt(_v.copy(offset).negate());
+    cam.updateMatrixWorld();
+    // the casters' extent in the sun's view: across it the map's width, along it its depth
+    const lo = _lo.set(Infinity, Infinity, Infinity), hi = _hi.set(-Infinity, -Infinity, -Infinity);
+    scene.traverse((o) => {
+      if (!o.isMesh || !o.castShadow || !o.layers.isEnabled(STATIC_LAYER)) return;
+      if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+      const b = o.geometry.boundingBox;
+      for (let i = 0; i < 8; i++) {
+        _v.set(i & 1 ? b.max.x : b.min.x, i & 2 ? b.max.y : b.min.y, i & 4 ? b.max.z : b.min.z).applyMatrix4(o.matrixWorld).applyMatrix4(cam.matrixWorldInverse);
+        lo.min(_v); hi.max(_v);
+      }
+    });
+    Object.assign(cam, { left: lo.x - 1, right: hi.x + 1, bottom: lo.y - 1, top: hi.y + 1, near: -hi.z - 1, far: -lo.z + 200 });
+    cam.updateProjectionMatrix();
+    if (this.farTarget?.width !== size) {
+      this.farTarget?.dispose();
+      this.farTarget = new THREE.WebGLRenderTarget(size, size, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+    }
+    this.farDepth ??= new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, side: THREE.BackSide });
+    const gl = this.gl, bg = scene.background, needs = gl.shadowMap.needsUpdate;
+    cam.layers.set(STATIC_LAYER);
+    scene.background = null;
+    scene.overrideMaterial = this.farDepth;
+    gl.shadowMap.needsUpdate = false;
+    gl.setRenderTarget(this.farTarget);
+    gl.setClearColor(0xffffff, 1);
+    gl.clear();
+    gl.render(scene, cam);
+    gl.setRenderTarget(null);
+    scene.overrideMaterial = null;
+    scene.background = bg;
+    gl.shadowMap.needsUpdate = needs;
+    SUN_SHADOW.omFarMatrix.value.set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1).multiply(cam.projectionMatrix).multiply(cam.matrixWorldInverse);
+    SUN_SHADOW.omFarMap.value = this.farTarget.texture;
+    SUN_SHADOW.omFarSize.value.set(size, size);
+    SUN_SHADOW.omFarOn.value = 1;
   }
 
   resize(w, h) {
@@ -371,6 +432,7 @@ export class Renderer {
 }
 
 const ZERO4 = [0, 0, 0, 0];
+const _v = new THREE.Vector3(), _lo = new THREE.Vector3(), _hi = new THREE.Vector3();
 
 const _c = new THREE.Vector3(), _f = new THREE.Vector3(), _lx = new THREE.Vector3(), _ly = new THREE.Vector3(), _lz = new THREE.Vector3();
 /**

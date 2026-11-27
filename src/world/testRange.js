@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Octree } from 'three/examples/jsm/math/Octree.js';
 import { PALETTE as P, toon, textTexture } from '../core/toon.js';
 import { applySky } from './sky.js';
+import { markStatic } from '../core/renderer.js';
 
 /*
   Layout (metres). Player spawns at z = +40 looking toward -Z.
@@ -39,6 +40,7 @@ export class TestRange {
     this.#slideRamp();
     this.#pillars();
     this.#backdrop();
+    markStatic(this.group);
 
     this.colliders.updateMatrixWorld(true);
     this.octree = new Octree().fromGraphNode(this.colliders);
@@ -119,7 +121,7 @@ export class TestRange {
     sun.position.set(-45, 90, 35);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
-    sun.userData.shadowFollow = 40; // the renderer keeps the shadow box on the player (±40 m)
+    sun.userData.shadowFollow = 16; // near shadows: a sharp box on the player (±16 m); the far map covers the rest
     const c = sun.shadow.camera;
     c.near = 10;
     c.far = 260;

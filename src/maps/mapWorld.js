@@ -5,6 +5,7 @@ import { PALETTE as P, toon } from '../core/toon.js';
 import { buildPiece, buildJoints, makeContext } from './assets.js';
 import { terrainMesh, setHeights, heightsOf, heightAt, LIMIT, terrainMaterial, tintGround } from './terrain.js';
 import { applySky } from '../world/sky.js';
+import { markStatic } from '../core/renderer.js';
 import { Doors } from './doors.js';
 import { pickupSpec } from '../items/items.js';
 import { WEAPONS } from '../weapons/weapons.js';
@@ -101,6 +102,7 @@ export function buildMapWorld(scene, map) {
   const { visual, proxies } = batch(world);
   const collide = new THREE.Group();
   collide.add(...proxies);
+  for (const m of visual) markStatic(m);
   group.add(...visual, collide);
   collide.updateMatrixWorld(true);
   const octree = new MapOctree().fromGraphNode(collide);
@@ -331,7 +333,7 @@ function atmosphere(scene, group, half) {
   sun.position.set(-45, 90, 35);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
-  sun.userData.shadowFollow = 40; // the renderer keeps the shadow box on the player (±40 m): 3.9 cm texels on any map size
+  sun.userData.shadowFollow = 16; // near shadows: a sharp box on the player (±16 m); the far map covers the rest
   const c = sun.shadow.camera;
   c.near = 10;
   c.far = 260;
