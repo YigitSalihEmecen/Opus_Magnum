@@ -39,16 +39,6 @@ if (!PATCHED) {
   );
   if (!THREE.ShaderChunk.lights_fragment_begin.includes('SUN_FACING')) console.warn('sun-facing shadows: three.js chunk changed');
 
-  // Slope-scaled depth offset for shadow casters: each one is written into the shadow map pushed back by its own
-  // depth change across two shadow texels (the PCF reach). A face steep to the sun, like the hidden end of a wall
-  // block where it meets the next one, moves far and stops drawing a dark line on the lit face beside it; a face
-  // square to the sun, like the underside of a ledge, barely moves, so the shade under it stays shut.
-  THREE.ShaderLib.depth.fragmentShader = THREE.ShaderLib.depth.fragmentShader.replace(
-    'float fragCoordZ = 0.5 * vHighPrecisionZW[0] / vHighPrecisionZW[1] + 0.5;',
-    'float fragCoordZ = 0.5 * vHighPrecisionZW[0] / vHighPrecisionZW[1] + 0.5;\n\tfragCoordZ += 2.0 * max( abs( dFdx( fragCoordZ ) ), abs( dFdy( fragCoordZ ) ) );',
-  );
-  if (!THREE.ShaderLib.depth.fragmentShader.includes('dFdx( fragCoordZ )')) console.warn('shadow slope offset: three.js depth shader changed');
-
   for (const k of ['background', 'backgroundCube']) {
     const sh = THREE.ShaderLib[k];
     sh.fragmentShader = sh.fragmentShader.replace('void main() {', `${NORMAL_OUT_DECL}\nvoid main() {\n\tgNormal = vec4( 0.0 );`);

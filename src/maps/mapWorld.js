@@ -221,10 +221,75 @@ export function fuseBoxes(boxes) {
   return list;
 }
 
-function boxGeometry({ min, max }) {
-  const g = new THREE.BoxGeometry(max[0] - min[0], max[1] - min[1], max[2] - min[2]).toNonIndexed();
-  g.translate((min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2);
-  return g;
+/*
+  Hidden faces. Where a block face is pressed against a facing block face (a wall against the next wall, a
+  sill-height block against a full-height one, a slab on a wall), both lie inside the solid: never seen, but the
+  shadow map still sees them, right at the depth of the lit surface beside them, and draws a seam line there.
+  Every block face is cut down to the parts not covered by a facing block (any material); what's left is the
+  outer shell of the whole box-built level.
+*/
+const TOUCH = 0.002; // faces this close count as pressed together
+
+/** groups: [[box…] per bucket] → [BufferGeometry | null per bucket]: each box's faces minus their hidden parts. */
+export function boxShells(groups) {
+  const faces = [];
+  groups.forEach((boxes, g) => {
+    for (const b of boxes) for (let a = 0; a < 3; a++) {
+      const [u, v] = a === 0 ? [1, 2] : a === 1 ? [2, 0] : [0, 1];
+      for (const s of [-1, 1]) faces.push({ g, a, s, u, v, c: s > 0 ? b.max[a] : b.min[a], r: [b.min[u], b.max[u], b.min[v], b.max[v]] });
+    }
+  });
+  // faces by plane: axis, facing, position (to 1 mm), with the neighbouring millimetres for rounding
+  const planes = new Map();
+  const pk = (a, s, c) => `${a}${s}${Math.round(c / 0.001)}`;
+  for (const f of faces) { const k = pk(f.a, f.s, f.c); if (!planes.has(k)) planes.set(k, []); planes.get(k).push(f); }
+  const out = groups.map(() => []);
+  for (const f of faces) {
+    const covers = [];
+    for (const d of [-1, 0, 1]) for (const o of planes.get(pk(f.a, -f.s, f.c + d * 0.001)) ?? []) {
+      if (Math.abs(o.c - f.c) > TOUCH) continue;
+      const r = [Math.max(f.r[0], o.r[0]), Math.min(f.r[1], o.r[1]), Math.max(f.r[2], o.r[2]), Math.min(f.r[3], o.r[3])];
+      if (r[1] - r[0] > 1e-4 && r[3] - r[2] > 1e-4) covers.push(r);
+    }
+    for (const r of subtract(f.r, covers)) quad(out[f.g], f, r);
+  }
+  return out.map((p) => {
+    if (!p.length) return null;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
+    g.computeVertexNormals();
+    g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array((p.length / 3) * 2), 2));
+    return g;
+  });
+}
+
+/** rect [u0, u1, v0, v1] minus the union of `holes`, as rects (grid cut, then cells joined along u). */
+function subtract(rect, holes) {
+  if (!holes.length) return [rect];
+  const us = [...new Set([rect[0], rect[1], ...holes.flatMap((h) => [h[0], h[1]])])].sort((a, b) => a - b);
+  const vs = [...new Set([rect[2], rect[3], ...holes.flatMap((h) => [h[2], h[3]])])].sort((a, b) => a - b);
+  const out = [];
+  for (let j = 0; j < vs.length - 1; j++) {
+    const cv = (vs[j] + vs[j + 1]) / 2;
+    let run = null;
+    for (let i = 0; i < us.length - 1; i++) {
+      const cu = (us[i] + us[i + 1]) / 2;
+      const hidden = holes.some((h) => cu > h[0] && cu < h[1] && cv > h[2] && cv < h[3]);
+      if (!hidden && run && run[1] === us[i]) run[1] = us[i + 1];
+      else if (!hidden) { if (run) out.push(run); run = [us[i], us[i + 1], vs[j], vs[j + 1]]; } else if (run) { out.push(run); run = null; }
+    }
+    if (run) out.push(run);
+  }
+  return out;
+}
+
+/** Two triangles for face f over rect r, wound to face outward. */
+function quad(p, f, r) {
+  const pt = (uu, vv) => { const q = [0, 0, 0]; q[f.a] = f.c; q[f.u] = uu; q[f.v] = vv; return q; };
+  const A = pt(r[0], r[2]), B = pt(r[1], r[2]), C = pt(r[1], r[3]), D = pt(r[0], r[3]);
+  // (u, v, axis) is right-handed for every axis above, so A→B→C faces +axis
+  if (f.s > 0) p.push(...A, ...B, ...C, ...A, ...C, ...D);
+  else p.push(...A, ...C, ...B, ...A, ...D, ...C);
 }
 
 /**
@@ -282,8 +347,11 @@ function batch(root) {
     chunks.get(key).push(pos);
   }
   const visual = [];
-  for (const b of buckets.values()) {
-    for (const f of fuseBoxes(b.boxes)) b.geos.push(boxGeometry(f));
+  const all = [...buckets.values()];
+  const shells = boxShells(all.map((b) => fuseBoxes(b.boxes)));
+  all.forEach((b, i) => { if (shells[i]) b.geos.push(shells[i]); });
+  for (const b of all) {
+    if (!b.geos.length) continue;
     const m = new THREE.Mesh(mergeGeometries(b.geos), b.material);
     m.castShadow = b.cast;
     m.receiveShadow = true;

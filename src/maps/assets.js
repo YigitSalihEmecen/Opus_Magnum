@@ -39,6 +39,12 @@ const gbox = (g, w, h, d, x, y, z, color) => add(g, new THREE.BoxGeometry(w, h, 
 /** Plain sharp box: caps, kicks and strips that must butt seamlessly against their neighbours. */
 const sbox = (g, w, h, d, x, y, z, material) => add(g, new THREE.BoxGeometry(w, h, d), material, x, y, z);
 /** Rounded block for stand-alone forms. */
+/**
+ * A trim that sits on a wall face and stands only a few cm proud of it (caps, sills, kicks, frames). It casts no
+ * shadow: its shadow would be a band a few cm wide on the wall right beside it, where the sun usually grazes, and
+ * a shadow map draws that as a lit gap and a row of teeth. The ink of the trim itself already marks the edge.
+ */
+const trim = (m) => { m.castShadow = false; return m; };
 const rbox = (g, w, h, d, x, y, z, material, r = 0.04) => add(g, new RoundedBoxGeometry(w, h, d, 2, Math.min(r, w / 2, h / 2, d / 2)), material, x, y, z);
 const cyl = (r, h, seg = 20, r2 = r) => new THREE.CylinderGeometry(r2, r, h, seg);
 const ico = (r, detail = 1) => new THREE.IcosahedronGeometry(r, detail);
@@ -98,10 +104,10 @@ function wall(color, ctx, { len = 4, h = WALL_H, t = WALL_T, holes = [], drop = 
   for (const o of holes) {
     // a window's sill sits proud of the wall below (top SILL above the opening's base), and the frame stands on it
     const base = o.y0 > 0 ? o.y0 + SILL : o.y0, hh = o.y1 - base;
-    rbox(g, F, hh, fd, o.x0 + F / 2, (base + o.y1) / 2, 0, frame, 0.02);
-    rbox(g, F, hh, fd, o.x1 - F / 2, (base + o.y1) / 2, 0, frame, 0.02);
-    rbox(g, o.x1 - o.x0 - 2 * F, F, fd, (o.x0 + o.x1) / 2, o.y1 - F / 2, 0, frame, 0.02);
-    if (o.y0 > 0) sbox(g, o.x1 - o.x0 + 0.2, 0.09, t + 0.2, (o.x0 + o.x1) / 2, o.y0 + SILL - 0.045, 0, mat(P.ink));
+    trim(rbox(g, F, hh, fd, o.x0 + F / 2, (base + o.y1) / 2, 0, frame, 0.02));
+    trim(rbox(g, F, hh, fd, o.x1 - F / 2, (base + o.y1) / 2, 0, frame, 0.02));
+    trim(rbox(g, o.x1 - o.x0 - 2 * F, F, fd, (o.x0 + o.x1) / 2, o.y1 - F / 2, 0, frame, 0.02));
+    if (o.y0 > 0) trim(sbox(g, o.x1 - o.x0 + 0.2, 0.09, t + 0.2, (o.x0 + o.x1) / 2, o.y0 + SILL - 0.045, 0, mat(P.ink)));
   }
   // door-sized openings at the wall's foot: the clear gap inside the frame, where play hangs a door (maps/doors.js)
   const doorways = holes.filter((o) => o.y0 === 0 && [1, 2].some((k) => Math.abs(o.x1 - o.x0 - k * DOOR.w) < 0.02));
@@ -111,12 +117,12 @@ function wall(color, ctx, { len = 4, h = WALL_H, t = WALL_T, holes = [], drop = 
   else if (drop || ctx?.slabUnderWall?.()) piece(-L, L, -(drop || SLAB), 0);
   // cap and kick stop a few mm short of the wall's ends, jambs and underside, so no face lies on a wall face
   const E = 0.004;
-  sbox(g, len - 2 * E, 0.12, t + 0.08, 0, h + 0.06 - E, 0, mat(P.ink)); // just below a ceiling slab's underside
+  trim(sbox(g, len - 2 * E, 0.12, t + 0.08, 0, h + 0.06 - E, 0, mat(P.ink))); // just below a ceiling slab's underside
   if (h > 1) {
     // kick strip along the foot of the wall, broken at doorways (no sill to trip on)
     let x = -L;
     for (const o of [...holes.filter((o) => o.y0 === 0), { x0: L, x1: L }].sort((a, b) => a.x0 - b.x0)) {
-      if (o.x0 - x > 0.02) sbox(g, o.x0 - x - 2 * E, 0.16, t + 0.05, (x + o.x0) / 2, 0.08 + E, 0, mat(P.slate));
+      if (o.x0 - x > 0.02) trim(sbox(g, o.x0 - x - 2 * E, 0.16, t + 0.05, (x + o.x0) / 2, 0.08 + E, 0, mat(P.slate)));
       x = Math.max(x, o.x1);
     }
   }
@@ -135,8 +141,8 @@ function pillar(color, ctx) {
   const g = new THREE.Group();
   gbox(g, 0.6, WALL_H, 0.6, 0, WALL_H / 2, 0, color);
   if (ctx?.ground) gbox(g, 0.6, FOUND, 0.6, 0, -FOUND / 2, 0, color);
-  sbox(g, 0.68, 0.14, 0.68, 0, WALL_H + 0.066, 0, mat(P.ink)); // dips under a slab resting on it
-  sbox(g, 0.64, 0.18, 0.64, 0, 0.094, 0, mat(P.slate));
+  trim(sbox(g, 0.68, 0.14, 0.68, 0, WALL_H + 0.066, 0, mat(P.ink))); // dips under a slab resting on it
+  trim(sbox(g, 0.64, 0.18, 0.64, 0, 0.094, 0, mat(P.slate)));
   return g;
 }
 
@@ -227,7 +233,7 @@ function roofSlope(color) {
   panel.position.set(0, rise / 2 - (over / run) * rise / 2 + 0.12 + t / 2, over / 2);
   const ridge = sbox(g, 4, 0.16, 0.36, 0, rise + 0.14 + t, -2.02, mat(P.ink));
   ridge.userData.noCollide = true;
-  sbox(g, 4, 0.1, 0.1, 0, 0.1, 2 + over - 0.02, mat(P.ink)); // eave fascia
+  trim(sbox(g, 4, 0.1, 0.1, 0, 0.1, 2 + over - 0.02, mat(P.ink))); // eave fascia
   return g;
 }
 
@@ -991,7 +997,7 @@ function seawall(color) {
   const H = SEA_DEEP + STOREY, t = 0.7;
   gbox(g, 4, H, t, 0, H / 2 - SEA_DEEP, 0, color);
   gbox(g, 4, 0.22, t + 0.24, 0, STOREY + 0.11, 0, P.oat); // coping
-  sbox(g, 4.02, 0.06, t + 0.28, 0, STOREY + 0.24, 0, mat(P.ink));
+  trim(sbox(g, 4.02, 0.06, t + 0.28, 0, STOREY + 0.24, 0, mat(P.ink)));
   for (const s of [-1, 1]) {
     deco(sbox(g, 0.05, H - 0.4, 0.04, 0, H / 2 - SEA_DEEP - 0.2, s * (t / 2 + 0.024), mat(P.cloud))); // pour joint, over the band
     deco(sbox(g, 3.98, 0.5, 0.04, 0, -1.15, s * (t / 2 + 0.01), mat(P.olive))); // waterline weed band
