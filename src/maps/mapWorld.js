@@ -259,13 +259,12 @@ function atmosphere(scene, group, half) {
   const sun = new THREE.DirectionalLight(0xfff4e6, 2.4);
   sun.position.set(-45, 90, 35);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(half > 60 ? 4096 : 2048, half > 60 ? 4096 : 2048);
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.userData.shadowFollow = 40; // the renderer keeps the shadow box on the player (±40 m): 3.9 cm texels on any map size
   const c = sun.shadow.camera;
-  c.left = c.bottom = -half - 10;
-  c.right = c.top = half + 10;
   c.near = 10;
   c.far = 260;
   sun.shadow.bias = -0.0004;
-  sun.shadow.normalBias = 0.09; // ~2 texels of the 4k map: no acne stripes on walls lit at grazing angles
+  sun.shadow.normalBias = 0.09; // ~2 texels: no acne stripes on walls lit at grazing angles
   group.add(sun, sun.target);
 }

@@ -119,9 +119,8 @@ export class TestRange {
     sun.position.set(-45, 90, 35);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
+    sun.userData.shadowFollow = 40; // the renderer keeps the shadow box on the player (±40 m)
     const c = sun.shadow.camera;
-    c.left = c.bottom = -85;
-    c.right = c.top = 85;
     c.near = 10;
     c.far = 260;
     sun.shadow.bias = -0.0004;

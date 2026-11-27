@@ -203,9 +203,11 @@ export class Renderer {
   #applyShadows(scene) {
     // re-run when the scene's content changes (a level or the lobby was added) or the preset changed
     if (this.lightsFor === scene && this.lightsN === scene.children.length && !this.recompile) return;
+    this.followers = [];
     scene.traverse((o) => {
       if (this.recompile && o.material) for (const m of [].concat(o.material)) m.needsUpdate = true;
       if (!o.isLight || !o.shadow) return;
+      if (o.userData.shadowFollow) this.followers.push(o);
       const base = (o.userData.baseShadow ??= o.shadow.mapSize.x);
       const size = Math.max(512, base * this.q.shadowScale);
       if (o.shadow.mapSize.x !== size) { o.shadow.mapSize.set(size, size); o.shadow.map?.dispose(); o.shadow.map = null; }
@@ -252,6 +254,7 @@ export class Renderer {
     if (world.fog) { u.fogNear.value = world.fog.near; u.fogFar.value = world.fog.far; }
 
     this.#applyShadows(world);
+    for (const l of this.followers) followShadow(l, worldCam);
     this.gl.shadowMap.needsUpdate = this.frameN++ % this.q.shadowEvery === 0;
     this.#pass(world, worldCam, this.world, 1);
     this.#pass(vm, vmCam, this.vm, 0);
@@ -261,3 +264,27 @@ export class Renderer {
 }
 
 const ZERO4 = [0, 0, 0, 0];
+
+const _c = new THREE.Vector3(), _f = new THREE.Vector3(), _lx = new THREE.Vector3(), _ly = new THREE.Vector3(), _lz = new THREE.Vector3();
+/**
+ * A sun with userData.shadowFollow = r keeps its shadow box (±r m) on the view instead of on the whole map, so
+ * the same map size gives sharp shadows on any level. The box sits a little ahead of the view and moves in
+ * whole shadow texels, so standing shadows don't shimmer as you walk.
+ */
+function followShadow(light, cam) {
+  const r = light.userData.shadowFollow, c = light.shadow.camera;
+  const offset = (light.userData.sunOffset ??= light.position.clone().sub(light.target.position));
+  if (c.right !== r) { c.left = c.bottom = -r; c.right = c.top = r; c.updateProjectionMatrix(); }
+  cam.getWorldDirection(_f).setY(0).normalize();
+  _c.setFromMatrixPosition(cam.matrixWorld).addScaledVector(_f, r * 0.35);
+  _lz.copy(offset).normalize();
+  _lx.set(0, 1, 0).cross(_lz).normalize();
+  _ly.crossVectors(_lz, _lx);
+  const texel = (2 * r) / light.shadow.mapSize.x;
+  const x = Math.round(_c.dot(_lx) / texel) * texel, y = Math.round(_c.dot(_ly) / texel) * texel, z = _c.dot(_lz);
+  _c.set(0, 0, 0).addScaledVector(_lx, x).addScaledVector(_ly, y).addScaledVector(_lz, z);
+  light.target.position.copy(_c);
+  light.position.copy(_c).add(offset);
+  light.target.updateMatrixWorld();
+  light.updateMatrixWorld();
+}

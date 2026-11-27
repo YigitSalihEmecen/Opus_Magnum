@@ -137,9 +137,8 @@ export class Arena {
     sun.position.set(-40, 90, 30);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
+    sun.userData.shadowFollow = 40; // the renderer keeps the shadow box on the player (±40 m)
     const c = sun.shadow.camera;
-    c.left = c.bottom = -60;
-    c.right = c.top = 60;
     c.near = 10;
     c.far = 220;
     sun.shadow.bias = -0.0004;

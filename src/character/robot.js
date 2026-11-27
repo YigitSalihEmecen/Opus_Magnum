@@ -453,21 +453,27 @@ function skinParts(root) {
 /**
  * Distance levels for a skinned character: levels [[geometry, from distance (m)], …], each skinned onto the
  * same skeleton (geometry built by the same builder at less detail). three.js picks the level per frame from
- * the camera distance; shadows use the same level.
+ * the camera distance. Shadows always come from the coarsest level.
  */
 export function addLods(skin, levels) {
   const lod = new THREE.LOD();
   skin.parent.add(lod);
-  lod.addLevel(skin, 0, LOD_HYSTERESIS);
-  for (const [geometry, distance] of levels) {
-    const m = new THREE.SkinnedMesh(geometry, skin.material);
-    m.castShadow = true;
+  const skinned = (geometry, material) => {
+    const m = new THREE.SkinnedMesh(geometry, material);
     m.boundingSphere = skin.boundingSphere;
     m.bind(skin.skeleton, skin.bindMatrix);
-    lod.addLevel(m, distance, LOD_HYSTERESIS);
-  }
+    return m;
+  };
+  lod.addLevel(skin, 0, LOD_HYSTERESIS);
+  for (const [geometry, distance] of levels) lod.addLevel(skinned(geometry, skin.material), distance, LOD_HYSTERESIS);
+  // the shadow is cast by the coarsest level at every distance: an invisible copy that only the shadow map sees
+  for (const l of lod.levels) l.object.castShadow = false;
+  const caster = skinned(levels.at(-1)[0], SHADOW_ONLY);
+  caster.castShadow = true;
+  lod.parent.add(caster);
   return lod;
 }
+const SHADOW_ONLY = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
 const LOD_HYSTERESIS = 0.1; // switch back this much (fraction) closer, so a body at the edge doesn't flicker
 
 const NO_GEOMETRY = new THREE.BufferGeometry(); // a skinned part's own copy is only dead weight
