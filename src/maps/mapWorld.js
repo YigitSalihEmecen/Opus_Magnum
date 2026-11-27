@@ -160,6 +160,71 @@ function thicken(w, h, d) {
 
 const EXACT = new Set(['BoxGeometry', 'ExtrudeGeometry', 'PlaneGeometry', 'ShapeGeometry']);
 
+/*
+  Joining pieces. The kit is built on one set of measurements (assets.js: 4 m grid, storey, wall thickness), so
+  walls, caps, kick strips and slabs from neighbouring pieces line up exactly; each piece keeps its trims a few
+  mm short of its own ends so no two faces ever lie on each other. Before rendering, every plain block (a real
+  12-triangle box, square to the world axes) is fused with any block of the same material and the same cross
+  section that it touches or nearly touches end to end (gap up to JOIN). A run of wall pieces becomes one wall,
+  its cap one unbroken cap: no slit of sky between two caps, and no hidden end faces inside the wall to draw
+  seam lines in the shadows. Collision still uses the pieces as they are.
+*/
+const JOIN = 0.012; // ends this close count as touching (the trims' 2 × 4 mm inset)
+const SAME = 0.001; // cross sections equal to 1 mm
+const _bm = new THREE.Matrix4(), _bb = new THREE.Box3();
+
+/** The world box of a plain box mesh square to the axes, or null. */
+function plainBox(o) {
+  const g = o.geometry;
+  if (g.type !== 'BoxGeometry' || !g.parameters || (g.index ? g.index.count : g.attributes.position.count) !== 36) return null;
+  if (o.material.vertexColors || Object.keys(g.morphAttributes).length) return null;
+  const e = o.matrixWorld.elements;
+  // every basis column a unit axis (any quarter turn, no scale or shear)
+  for (const c of [0, 4, 8]) {
+    const v = [Math.abs(e[c]), Math.abs(e[c + 1]), Math.abs(e[c + 2])].sort((a, b) => b - a);
+    if (Math.abs(v[0] - 1) > 1e-4 || v[1] > 1e-4) return null;
+  }
+  if (!g.boundingBox) g.computeBoundingBox();
+  const b = _bb.copy(g.boundingBox).applyMatrix4(o.matrixWorld);
+  return { min: b.min.toArray(), max: b.max.toArray() };
+}
+
+/** Fuse boxes that share a cross section and touch end to end, until nothing more joins. */
+export function fuseBoxes(boxes) {
+  let list = boxes.map((b) => ({ min: [...b.min], max: [...b.max] }));
+  for (let changed = true; changed;) {
+    changed = false;
+    for (let axis = 0; axis < 3; axis++) {
+      const [u, v] = [0, 1, 2].filter((a) => a !== axis);
+      // same cross section on the other two axes → same row key; sort each row along the axis and sweep
+      const rows = new Map();
+      for (const b of list) {
+        const k = [b.min[u], b.max[u], b.min[v], b.max[v]].map((x) => Math.round(x / SAME)).join(',');
+        if (!rows.has(k)) rows.set(k, []);
+        rows.get(k).push(b);
+      }
+      const next = [];
+      for (const row of rows.values()) {
+        row.sort((a, b) => a.min[axis] - b.min[axis]);
+        let cur = row[0];
+        for (let i = 1; i < row.length; i++) {
+          const b = row[i];
+          if (b.min[axis] <= cur.max[axis] + JOIN) { cur.max[axis] = Math.max(cur.max[axis], b.max[axis]); changed = true; } else { next.push(cur); cur = b; }
+        }
+        next.push(cur);
+      }
+      list = next;
+    }
+  }
+  return list;
+}
+
+function boxGeometry({ min, max }) {
+  const g = new THREE.BoxGeometry(max[0] - min[0], max[1] - min[1], max[2] - min[2]).toNonIndexed();
+  g.translate((min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2);
+  return g;
+}
+
 /**
  * Render batches: every mesh merged by material (a few dozen draw calls instead of thousands).
  * Collision proxy: one invisible mesh for the octree and bullets — boxes, ramps and terrain stay exact,
@@ -176,7 +241,9 @@ function batch(root) {
     if (!o.userData.collider) {
       const key = `${o.material.uuid}|${o.castShadow}`;
       let b = buckets.get(key);
-      if (!b) buckets.set(key, (b = { material: o.material, cast: o.castShadow, geos: [] }));
+      if (!b) buckets.set(key, (b = { material: o.material, cast: o.castShadow, geos: [], boxes: [] }));
+      const box = plainBox(o);
+      if (box) { b.boxes.push(box); return collide(o, geo); }
       const g = geo.index ? geo.toNonIndexed() : geo.clone();
       const keep = ['position', 'normal', 'uv', ...(o.material.vertexColors ? ['color'] : [])];
       for (const name of Object.keys(g.attributes)) if (!keep.includes(name)) g.deleteAttribute(name);
@@ -187,6 +254,9 @@ function batch(root) {
       g.applyMatrix4(o.matrixWorld);
       b.geos.push(g);
     }
+    collide(o, geo);
+  });
+  function collide(o, geo) {
     if (o.userData.noCollide || o.userData.paint) return;
     let p;
     const tris = (geo.index ? geo.index.count : geo.attributes.position.count) / 3;
@@ -208,9 +278,10 @@ function batch(root) {
     const key = o.userData.terrain ? 'terrain' : `${Math.floor(_c.x / 16)},${Math.floor(_c.z / 16)}`;
     if (!chunks.has(key)) chunks.set(key, []);
     chunks.get(key).push(pos);
-  });
+  }
   const visual = [];
   for (const b of buckets.values()) {
+    for (const f of fuseBoxes(b.boxes)) b.geos.push(boxGeometry(f));
     const m = new THREE.Mesh(mergeGeometries(b.geos), b.material);
     m.castShadow = b.cast;
     m.receiveShadow = true;
