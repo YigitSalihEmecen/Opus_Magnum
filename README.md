@@ -52,6 +52,7 @@ src/
     movement.js           ★ character controller — all tuning in MOVE
     cameraRig.js          look, recoil drain, FOV, bob, roll, landing/mantle feedback
     vitals.js             health + armour (soak, heal, regen); the server owns them online
+    body.js               your own body in first person: the robot from the hips down, same animation as others
   character/
     characters.js         playable robots (Rivet, Kite): build, first-person arms
     robot.js, kite.js     robot bodies, skeleton, arm IK, baking, box hit volumes per body segment

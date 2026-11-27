@@ -7,6 +7,7 @@ import { TestRange } from './world/testRange.js';
 import { Dummies } from './world/dummies.js';
 import { Movement, SPEED } from './player/movement.js';
 import { CameraRig } from './player/cameraRig.js';
+import { PlayerBody } from './player/body.js';
 import { Viewmodel, addViewmodelLights } from './weapons/viewmodel.js';
 import { Gunplay } from './weapons/gunplay.js';
 import { WEAPONS } from './weapons/weapons.js';
@@ -123,6 +124,7 @@ let pendingSwitch = null;
 let { vm, gun } = arsenal[current];
 const inv = new Inventory({ arsenal, vitals, audio, hud });
 const handheld = new Handheld(vmScene);
+const body = new PlayerBody(scene); // your own legs and hips under the first-person view
 const melee = new Melee({ audio, hud, fx, rig });
 let grenades = null;
 let prompt = null;
@@ -248,6 +250,7 @@ async function startMode(id, mapId = null, opts) {
   bindWorld();
   level.onMap = bindWorld; // online: the map vote swapped the world under us
   handheld.setCharacter(selectedCharacter());
+  body.setCharacter(selectedCharacter());
   vitals.reset();
   inv.reset(level.loadout);
   if (!inv.carries(current)) { vm.setActive(false); drawWeapon(inv.guns[0]); }
@@ -443,6 +446,7 @@ function tick(dt) {
   const vmFov = THREE.MathUtils.lerp(VM_FOV_HIP, vm.optic.vmFov, ads);
   if (Math.abs(vmCamera.fov - vmFov) > 1e-3) { vmCamera.fov = vmFov; vmCamera.updateProjectionMatrix(); }
   const cursor = vm.inspect ? { x: gunsmith.cursor.x / innerWidth * 2 - 1, y: gunsmith.cursor.y / innerHeight * 2 - 1 } : null;
+  body.update(dt, { mv, yaw: rig.yaw, alive, show: !!level && !level.frame });
   vm.update(dt, { mv, view: camera, axes, mouseDX: vm.inspect ? 0 : input.mouseDX, mouseDY: vm.inspect ? 0 : input.mouseDY, ads, triggerHeld: gun.triggerHeld, cursor });
 
   melee.update(dt, { camera, targets, octree: mv.octree, now });
@@ -484,6 +488,7 @@ requestAnimationFrame(frame);
 drawWeapon(0);
 
 window.OM = {
+  body,
   get vm() { return vm; }, get gun() { return gun; }, arsenal, switchWeapon, inv, vitals, get grenades() { return grenades; },
   mv, rig, melee, handheld, get level() { return level; }, get lobby() { return lobby; }, scene, vmScene, input, gunsmith, setInspect, startMode,
   step: (n = 1, dt = 1 / 60) => { for (let i = 0; i < n; i++) tick(dt); },
