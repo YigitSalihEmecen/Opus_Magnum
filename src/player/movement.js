@@ -418,7 +418,9 @@ export class Movement {
     seg[2] = Math.max(seg[2], 0.12);
     const prev = this.state;
     this.state = 'vault';
-    this.vault = { t: 0, T: seg[0] + seg[1] + seg[2], seg, keys, dir, side, lateral, from: this.feet.clone(), v, air: landY === null };
+    // where the free (left) hand grabs the top: just past the near edge, beside the line of travel
+    const grab = this.feet.clone().addScaledVector(dir, sFace + 0.1).addScaledVector(side, lateral - 0.22).setY(top);
+    this.vault = { t: 0, T: seg[0] + seg[1] + seg[2], seg, keys, dir, side, lateral, from: this.feet.clone(), v, air: landY === null, grab };
     this.jumpBufferT = 0;
     this.vaultWindowT = 0;
     this.grounded = false;

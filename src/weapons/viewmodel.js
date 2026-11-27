@@ -39,6 +39,10 @@ const _pv = new THREE.Vector3();
 // free-hand running fist in camera space [x, y, z, rx, ry, rz] — lower left, knuckles forward, palm in
 const RUN_ARM = [-0.15, -0.175, -0.3, 25, 12, 90];
 const _run = new THREE.Object3D(), _runM = new THREE.Matrix4(), _runQ = new THREE.Quaternion(), _runS = new THREE.Vector3();
+// the vault grab: the hand frame (fingers along −z, palm −y) flat on the top, fingers forward and a little inward
+const _grabShoulder = new THREE.Vector3(-0.3, -0.95, 0.05);
+const _grabInv = new THREE.Matrix4(), _grabQ = new THREE.Quaternion(), _yAxis = new THREE.Vector3(0, 1, 0);
+const _grabHand = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -0.35, 0, 'YXZ'));
 const MAX_BEND = 42 * D2R;
 const _tk = new THREE.Vector3(), _tt = new THREE.Vector3();
 // shell-local thumb targets (shell axis +z points back at the shooter; brass head at z +0.03)
@@ -359,7 +363,7 @@ export class Viewmodel {
   }
 
   update(dt, ctx) {
-    const { mv, axes, mouseDX, mouseDY, ads, triggerHeld, cursor } = ctx;
+    const { mv, view, axes, mouseDX, mouseDY, ads, triggerHeld, cursor } = ctx;
     this.time += dt;
     this.ads = ads;
     this.player.update(dt);
@@ -381,7 +385,7 @@ export class Viewmodel {
     w.crouch = damp(w.crouch, mv.crouched ? 1 : 0, 10, dt);
     w.strafe = damp(w.strafe, axes.x, 8, dt);
     const mantle = mv.state === 'mantle' ? Math.sin(mv.mantleProgress * Math.PI) : 0;
-    // vault: the gun swings down and across while the free hand plants on the top
+    // vault: the gun goes to the right hand alone, swung down and out, while the free hand grabs the top
     const vault = mv.state === 'vault' ? Math.sin(mv.mantleProgress * Math.PI) : 0;
     const sprint = w.sprint * (1 - ads) * (1 - ie);
     // magnified optics sit ~0.1 m from the eye, where a millimetre of sway throws the reticle off the
@@ -422,8 +426,8 @@ export class Viewmodel {
     // slide: cant the gun inward on its side, pulled toward the centre and down (eased in and out)
     const sl = w.slide * w.slide * (3 - 2 * w.slide) * move;
     p.x -= sl * 0.03;
-    p.y += -0.13 * mantle - sl * 0.024 - 0.09 * vault;
-    p.x -= 0.05 * vault;
+    p.y += -0.13 * mantle - sl * 0.024 - 0.1 * vault;
+    p.x += 0.06 * vault;
     p.z += sl * 0.02;
     p.add(kp);
 
@@ -495,8 +499,11 @@ export class Viewmodel {
       this.leftHand.quaternion.slerp(_runQ, run);
       this.leftHand.userData.setCurl(THREE.MathUtils.lerp(lh[6], 1.75, run), 0.9);
     }
+    // vaulting: the free hand leaves the gun, grabs the top and stays there (fixed in the world) while the body
+    // passes over it, so it slides back and down out of view, then returns to the gun
+    const grab = this.#vaultGrab(mv, view);
     // one-handed guns park the support hand out of frame; hide it there so sprint tilts can't swing it into view
-    const parked = this.def.vm.oneHand && this.twoHand < 0.02 && run < 0.05;
+    const parked = this.def.vm.oneHand && this.twoHand < 0.02 && run < 0.05 && grab < 0.05;
     this.leftHand.visible = ie < 0.5 && !parked;
     this.leftArm.upper.visible = ie < 0.5 && !parked;
 
@@ -551,7 +558,8 @@ export class Viewmodel {
     // arms follow the hands toward fixed shoulder anchors (off-screen); thumbs aim once the hands are placed
     this.scene.updateMatrixWorld();
     this.#arm(this.rightHand, this.rightArm, _anchor.set(0.26, -0.42, 0.18));
-    this.#arm(this.leftHand, this.leftArm, _anchor.set(-0.2, -0.5, 0.1));
+    // reaching down for a vault's grab, the shoulder drops with it (keeping the arm out of the lens)
+    this.#arm(this.leftHand, this.leftArm, _anchor.set(-0.2, -0.5, 0.1).lerp(_grabShoulder, grab));
     if (this.poses.thumbAim && !this.player.get('rh', null)) this.#aimThumb(this.rightHand, this.poses.thumbAim);
     // shell loading: the left thumb sits behind the shell's brass head and drives it forward out of the fingers
     const push = this.handShell && this.player.get('lthumb', null);
@@ -561,6 +569,33 @@ export class Viewmodel {
       this.handShell.updateWorldMatrix(true, false);
       this.leftHand.userData.aimThumb(this.handShell.localToWorld(_tk.set(...THUMB_KNUCKLE)), this.handShell.localToWorld(_tt.set(...THUMB_TIP)));
     }
+  }
+
+  /** The left hand onto the vault's grab point (world) through the world camera; returns how far it's there. */
+  #vaultGrab(mv, view) {
+    const V = mv.state === 'vault' && mv.vault;
+    if (!V?.grab || !view) return 0;
+    const u = mv.mantleProgress;
+    const k = THREE.MathUtils.smoothstep(u, 0, 0.18) * (1 - THREE.MathUtils.smoothstep(u, 0.62, 0.9));
+    if (k <= 0) return 0;
+    // the grab in camera space (both cameras share it), palm down on the top with the fingers ahead
+    view.updateMatrixWorld();
+    _grabInv.copy(view.matrixWorld).invert();
+    _run.position.copy(V.grab).applyMatrix4(_grabInv);
+    // the gun's camera has a narrower lens than the world's: scale the point across by r (at its true depth) so
+    // it lands on the same spot on screen
+    const r = Math.tan((this.camera.fov * Math.PI) / 360) / Math.tan((view.fov * Math.PI) / 360);
+    _run.position.multiply(_pv.set(r, r, 1));
+    _grabInv.decompose(_pv, _grabQ, _runS); // the camera's turn, undone
+    _run.quaternion.setFromAxisAngle(_yAxis, Math.atan2(V.dir.x, V.dir.z) + Math.PI).premultiply(_grabQ).multiply(_grabHand);
+    _run.updateMatrix();
+    this.anim.updateWorldMatrix(true, false);
+    _runM.copy(this.anim.matrixWorld).invert().multiply(this.camera.matrixWorld).multiply(_run.matrix);
+    _runM.decompose(_pv, _runQ, _runS);
+    this.leftHand.position.lerp(_pv, k);
+    this.leftHand.quaternion.slerp(_runQ, k);
+    this.leftHand.userData.setCurl(THREE.MathUtils.lerp(this.lhRest[6], 0.5, k));
+    return k;
   }
 
   // ───────────────────────── attachments ─────────────────────────
