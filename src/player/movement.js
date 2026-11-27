@@ -43,6 +43,7 @@ export const MOVE = {
   mantleRisePerMetre: 0.09,
   mantleForwardTime: 0.14,
   mantleExitSpeed: 4.2 * SPEED,
+  mantleOneHand: 1.6, // ledges up to this high (over the floor jumped from) are pulled onto with one hand, higher ones with two
 
   vaultMinHeight: 0.45,
   vaultMaxHeight: 1.35, // cover, rails, half walls, window sills
@@ -177,6 +178,7 @@ export class Movement {
   #updateGround(dt, c) {
     this.coyote = MOVE.coyoteTime;
     this.airTime = 0;
+    this.groundY = this.feet.y; // the floor we last stood on (a ledge's height counts from it)
 
     if (this.state === 'slide') return this.#updateSlide(dt, c);
 
@@ -299,10 +301,13 @@ export class Movement {
     }
 
     // where the hands grab: the ledge's edge, a shoulder's width apart (kept after the climb, so the hands can
-    // let go of it smoothly)
+    // let go of it smoothly). A low ledge reached on the way up takes one hand, the gun stays in the other, like
+    // a vault; a high one, or one caught while falling, takes both and the gun goes away
     const edge = wall.position.clone().addScaledVector(n, -0.08).setY(ledge.position.y);
     const side = _v.set(-n.z, 0, n.x).multiplyScalar(-0.27); // to the right, facing the wall
-    this.ledgeGrab = { L: edge.clone().sub(side), R: edge.clone().add(side), dir: n.clone().negate() };
+    // (caught mid-air: falling fast, or long in the air; a jump up to a ledge is short and only just past its top)
+    const two = ledge.position.y - (this.groundY ?? this.feet.y) > MOVE.mantleOneHand || this.vel.y < -6 || this.airTime > 0.8;
+    this.ledgeGrab = { L: edge.clone().sub(side), R: edge.clone().add(side), dir: n.clone().negate(), two };
 
     const prev = this.state;
     this.state = 'mantle';

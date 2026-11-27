@@ -45,8 +45,11 @@ const PLANT_ROT = new THREE.Euler(Math.PI / 2, 0, 0, 'YXZ');
 // the hand reaches out as the vault starts, holds still from u = HOLD[0] until the body has passed over it
 // (HOLD[1]), then returns to the gun by HOLD[2] (u: vault progress 0..1)
 const HOLD = [0.3, 0.5, 0.64];
-// a climb: the gun goes onto the back (BACK_POS / BACK_ROT in the chest's frame, barrel up over the left shoulder)
-// and both hands grab the ledge (LEDGE_HOLD: on from t = 0 by [0], let go between [1] and [2] s into the climb)
+// a climb: a low ledge reached on the way up is pulled onto with the left hand, the gun in the right like a vault;
+// a high one (over ONE_HAND above the floor it left) or one caught falling puts the gun onto the back (BACK_POS / BACK_ROT
+// in the chest's frame, barrel up over the left shoulder) and takes both hands (LEDGE_HOLD: on from t = 0 by [0],
+// let go between [1] and [2] s into the climb)
+const ONE_HAND = 1.6;
 const BACK_POS = new THREE.Vector3(0.02, 0.05, -0.22), BACK_ROT = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2 - 0.55, 0, 0.8, 'YXZ'));
 const LEDGE_HOLD = [0.07, 0.24, 0.4];
 // gaits: the speed (m/s) at which each loop plays alone; between them they cross-fade on one stride phase.
@@ -97,7 +100,7 @@ export class Avatar {
     Object.assign(this, { cycle: 0, idleT: 0, lastVel: new THREE.Vector3(), heading: 0, turnRate: 0, live: false });
     this.clipT = { air: 0, slide: 0, climb: 9, land: 9, hit: 9, vault: 9 };
     this.plant = { matrix: new THREE.Matrix4(), k: 0, curl: 0.55, fixed: false };
-    this.ledge = { L: { matrix: new THREE.Matrix4(), k: 0, curl: 0.75 }, R: { matrix: new THREE.Matrix4(), k: 0, curl: 0.75 }, found: false };
+    this.ledge = { L: { matrix: new THREE.Matrix4(), k: 0, curl: 0.75 }, R: { matrix: new THREE.Matrix4(), k: 0, curl: 0.75 }, found: false, two: false };
     r.root.updateWorldMatrix(true, true);
     this.footRest = b.foot_L.getWorldPosition(new THREE.Vector3()).y; // the foot bone's height standing
     this.sm = Object.fromEntries(['yaw', 'pitch', 'speed', 'legYaw', 'leanX', 'leanY', 'hand', 'reload', 'swap', 'kick', 'stow', ...POSE_KEYS].map((k) => [k, new Spring()]));
@@ -193,6 +196,7 @@ export class Avatar {
     if (this.airWas && !airTgt) T.land = 0; // touched down
     if (!this.mantleWas && tgt.mantle) { T.climb = 0; this.ledge.found = this.#ledgeGrips(); }
     if (!this.vaultWas && tgt.vault) { T.vault = 0; this.plant.fixed = this.#grabPoint(); }
+    if (!airTgt && !tgt.mantle && !tgt.vault) this.groundY = this.pos.y; // the floor it last stood on
     this.airWas = airTgt > 0.5;
     this.mantleWas = !!tgt.mantle;
     this.vaultWas = !!tgt.vault;
@@ -292,6 +296,8 @@ export class Avatar {
       const k = w.mantle * (1 - ss(T.climb, 0.12, 0.42));
       m.turn(UPPER, RIGHT, 0.6 * k);
       m.turn(['neck', 'head'], RIGHT, -0.45 * k);
+      // one hand: the torso leans over to the planted left hand
+      if (!this.ledge.two) { m.turn(UPPER, FWD, -0.3 * k); m.turn(['neck', 'head'], FWD, 0.25 * k); }
     }
     this.inert.apply(m.world, m.offset, dt);
     m.apply();
@@ -354,8 +360,8 @@ export class Avatar {
     this.arms.quaternion.multiply(_aim.setFromEuler(_e.set(rl * 0.6 + w.slide * 0.3 + swap * 1.1 + H.dip - this.sm.kick.x, 0, rl * 0.5)));
     this.arms.position.y -= swap * 0.18;
     // climbing: the gun goes onto the back while both hands are on the ledge, and comes back after
-    const tc = this.clipT.climb, climbing = tc < LEDGE_HOLD[2];
-    const stow = this.sm.stow.to(climbing ? 1 : 0, climbing ? HL.stow : HL.unstow, dt);
+    const tc = this.clipT.climb, climbing = tc < LEDGE_HOLD[2], two = this.ledge.two;
+    const stow = this.sm.stow.to(climbing && two ? 1 : 0, climbing ? HL.stow : HL.unstow, dt);
     if (stow > 0.001) {
       this.arms.position.lerp(BACK_POS, stow);
       this.arms.quaternion.slerp(BACK_ROT, stow);
@@ -366,7 +372,7 @@ export class Avatar {
     const poses = this.weapon.poses, k = this.sm.hand.to(rl > 0.3 && poses.lhMag ? 1 : 0, HL.hand, dt);
     for (let i = 0; i < 7; i++) _hand[i] = poses.lhRest[i] + ((poses.lhMag ?? poses.lhRest)[i] - poses.lhRest[i]) * k;
     const leftTo = lk > 0 ? ledge.L : this.#plantHand() ?? (H.k > 0 ? H : null);
-    gripGun(this.robot, this.gunFrame, poses, { left: _hand, leftTo, rightTo: lk > 0 ? ledge.R : null });
+    gripGun(this.robot, this.gunFrame, poses, { left: _hand, leftTo, rightTo: lk > 0 && two ? ledge.R : null });
   }
 
   /** The free hand does something others should see: a knife swing ('slashLeft', 'slashRight', 'stab'), a
@@ -387,10 +393,11 @@ export class Avatar {
     return true;
   }
 
-  /** A climb starts: both hands on the ledge's edge, a shoulder's width apart. */
+  /** A climb starts: the left hand (or both, a shoulder's width apart) on the ledge's edge. */
   #ledgeGrips() {
     const t = this.#findTop(1.9);
     if (!t) return false;
+    this.ledge.two = t.top - (this.groundY ?? this.pos.y) > ONE_HAND || this.vel.y < -6;
     this.#grip(this.ledge.L.matrix, t, 0.06, 0.24);
     this.#grip(this.ledge.R.matrix, t, 0.06, -0.24);
     return true;

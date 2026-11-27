@@ -225,6 +225,7 @@ export class Viewmodel {
     this.twoHand = 0;
     this.stowW = 0;
     this.ledgeW = 0;
+    this.ledgeTwo = false;
   }
 
   /** Swap the arm chains for another character's (same hand frame, so every grip pose still fits). */
@@ -387,14 +388,16 @@ export class Viewmodel {
     w.air = damp(w.air, mv.state === 'air' ? THREE.MathUtils.clamp(mv.vel.y / 8, -1, 1) : 0, 8, dt);
     w.crouch = damp(w.crouch, mv.crouched ? 1 : 0, 10, dt);
     w.strafe = damp(w.strafe, axes.x, 8, dt);
-    // climbing a ledge: the gun goes away (down and over the shoulder) while both hands grab the edge, and
-    // comes back up once the climb is done
-    const climbing = mv.state === 'mantle';
-    this.stowW = damp(this.stowW, climbing ? 1 : 0, climbing ? 16 : 6, dt);
+    // climbing a ledge: a high one (or one caught falling) puts the gun away (down and over the shoulder) while
+    // both hands grab the edge, and brings it back once the climb is done; a low one is pulled onto like a vault,
+    // the gun in the right hand and the left on the edge
+    const climbing = mv.state === 'mantle', two = !!mv.ledgeGrab?.two;
+    if (climbing) this.ledgeTwo = two;
+    this.stowW = damp(this.stowW, climbing && two ? 1 : 0, climbing ? 16 : 6, dt);
     this.ledgeW = damp(this.ledgeW, climbing && mv.mantleProgress < 0.8 ? 1 : 0, 22, dt);
     const stow = this.stowW * this.stowW * (3 - 2 * this.stowW);
     // vault: the gun goes to the right hand alone, swung down and out, while the free hand grabs the top
-    const vault = mv.state === 'vault' ? Math.sin(mv.mantleProgress * Math.PI) : 0;
+    const vault = mv.state === 'vault' || (climbing && !two) ? Math.sin(mv.mantleProgress * Math.PI) : 0;
     const sprint = w.sprint * (1 - ads) * (1 - ie);
     // magnified optics sit ~0.1 m from the eye, where a millimetre of sway throws the reticle off the
     // bullets' line: aimed through one, bob, mouse lag and breathing switch off entirely
@@ -566,7 +569,7 @@ export class Viewmodel {
 
     // arms follow the hands toward fixed shoulder anchors (off-screen); thumbs aim once the hands are placed
     this.scene.updateMatrixWorld();
-    this.#arm(this.rightHand, this.rightArm, _anchor.set(0.26, -0.42, 0.18).lerp(_grabShoulderR, this.ledgeW));
+    this.#arm(this.rightHand, this.rightArm, _anchor.set(0.26, -0.42, 0.18).lerp(_grabShoulderR, this.ledgeTwo ? this.ledgeW : 0));
     // reaching down for a vault's grab, the shoulder drops with it (keeping the arm out of the lens)
     this.#arm(this.leftHand, this.leftArm, _anchor.set(-0.2, -0.5, 0.1).lerp(_grabShoulder, grab));
     if (this.poses.thumbAim && !this.player.get('rh', null)) this.#aimThumb(this.rightHand, this.poses.thumbAim);
@@ -592,14 +595,16 @@ export class Viewmodel {
     return k;
   }
 
-  /** Climbing a ledge: both hands on its edge (fixed in the world while the body rises), then back. */
+  /** Climbing a ledge: the left hand, or both, on its edge (fixed in the world while the body rises), then back. */
   #ledgeGrab(mv, view) {
     const G = mv.ledgeGrab, k = this.ledgeW;
     if (!G || !view || k < 0.002) return 0;
     this.#handTo(this.leftHand, G.L, G.dir, k, _grabHand, view, true);
-    this.#handTo(this.rightHand, G.R, G.dir, k, _grabHandR, view, true);
     this.leftHand.userData.setCurl(THREE.MathUtils.lerp(this.lhRest[6], 0.75, k));
-    this.rightHand.userData.setCurl(THREE.MathUtils.lerp(this.poses.rightHand[6], 0.75, k));
+    if (this.ledgeTwo) {
+      this.#handTo(this.rightHand, G.R, G.dir, k, _grabHandR, view, true);
+      this.rightHand.userData.setCurl(THREE.MathUtils.lerp(this.poses.rightHand[6], 0.75, k));
+    }
     return k;
   }
 
