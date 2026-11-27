@@ -5,6 +5,15 @@ const MANIFEST = {
   smgFire: range('weapon/smg_fire', 4),
   shotgunFire: range('weapon/shotgun_fire', 4),
   pistolFire: range('weapon/pistol_fire', 4),
+  dmrFire: range('weapon/dmr_fire', 4),
+  hornetFire: range('weapon/hornet_fire', 4),
+  revolverFire: range('weapon/revolver_fire', 4),
+  doubleFire: range('weapon/double_fire', 4),
+  scoutFire: range('weapon/scout_fire', 4),
+  shellIn: range('weapon/shell_in', 2),
+  breakOpen: ['weapon/break_open'],
+  breakClose: ['weapon/break_close'],
+  latch: ['weapon/latch'],
   pumpBack: ['weapon/pump_back'],
   pumpForward: ['weapon/pump_forward'],
   magOut: range('weapon/mag_out', 2),
@@ -94,11 +103,12 @@ export class AudioBank {
   }
 
   /** Gunshot: recorded report + synthesized sub thump + mechanical tick. Suppressed = muffled, mostly mechanism. */
-  fire({ ads = false, suppressed = false, sample = 'fire' } = {}) {
+  /** brass: the gun throws a case on every shot (not pumps, bolts or revolvers): a tinkle sometimes follows. */
+  fire({ ads = false, suppressed = false, sample = 'fire', brass = true } = {}) {
     if (!this.ready) return;
     const ctx = this.ctx;
     const t = ctx.currentTime;
-    const v = suppressed ? this.#muffled(sample, 0.2, 1100) : this.play(sample, { volume: { fire: 0.55, shotgunFire: 0.6 }[sample] ?? 0.42, jitter: 0.035 });
+    const v = suppressed ? this.#muffled(sample, 0.2, 1100) : this.play(sample, { volume: { fire: 0.55, shotgunFire: 0.6, doubleFire: 0.62, dmrFire: 0.56, scoutFire: 0.58, revolverFire: 0.52 }[sample] ?? 0.42, jitter: 0.035 });
     if (v) {
       this.fireVoices.push(v);
       if (this.fireVoices.length > 8) {
@@ -111,13 +121,13 @@ export class AudioBank {
     const g = ctx.createGain();
     osc.frequency.setValueAtTime(140, t);
     osc.frequency.exponentialRampToValueAtTime(42, t + 0.11);
-    g.gain.setValueAtTime((ads ? 0.55 : 0.45) * (suppressed ? 0.4 : 1) * (sample === 'shotgunFire' ? 1.6 : 1), t);
+    g.gain.setValueAtTime((ads ? 0.55 : 0.45) * (suppressed ? 0.4 : 1) * ({ shotgunFire: 1.6, doubleFire: 1.7, revolverFire: 1.3, scoutFire: 1.3, dmrFire: 1.2 }[sample] ?? 1), t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
     osc.connect(g).connect(this.master);
     osc.start(t);
     osc.stop(t + 0.15);
     this.play('click', { volume: suppressed ? 0.3 : 0.12, rate: 1.6, jitter: 0.1 });
-    if (sample !== 'shotgunFire' && Math.random() < 0.35) this.brass(0.32 + Math.random() * 0.15);
+    if (brass && Math.random() < 0.35) this.brass(0.32 + Math.random() * 0.15);
   }
 
   #muffled(name, volume, cutoff) {

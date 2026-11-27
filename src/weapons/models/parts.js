@@ -20,6 +20,11 @@ export const MATS = {
   red: toon(0xc23a2e, { rim: 0.28, rimColor: 0xfff3e8 }), // Grizzly accent + shotgun shells
   blue: toon(0x3f8ad6, { rim: 0.3, rimColor: 0xfff3e8 }), // Kestrel accent
   slate: toon(0x4f5964, { rim: 0.3, rimColor: 0xfff3e8 }),
+  sage: toon(P.sage, { rim: 0.3, rimColor: 0xfff3e8 }), // Osprey accent
+  amber: toon(0xe3a83a, { rim: 0.35, rimColor: 0xfff3e8 }), // Hornet accent
+  greige: toon(0xb1a796, { rim: 0.18, rimColor: 0xfff3e8 }), // Jackal grip
+  gunmetal: toon(0x74777e, { rim: 0.45, rimColor: 0xfff3e8 }), // bright machined steel (revolver cylinder)
+  tan: toon(0xb89a72, { rim: 0.22, rimColor: 0xfff3e8 }), // Coyote stock (flat dark earth)
 };
 
 export const f2z = (f) => -f;
@@ -44,6 +49,42 @@ export function profile(points, width, { bevel = 0.003, segments = 2, holes = []
   geo.rotateY(Math.PI / 2);
   geo.translate(-(width - bevel * 2) / 2, 0, 0);
   return geo;
+}
+
+/**
+ * An oval tube swept along a curve in the gun's side plane (grips that bend and flare): points [[f, y], …],
+ * half-widths rx(t) across the gun and rz(t) along it at t 0…1. Optional t0/t1 and v0/v1 (angle from the front,
+ * around toward +x) cut a band out of it for inlays; closed tubes get flat end caps.
+ */
+export function ovalSweep(points, { rx, rz, t0 = 0, t1 = 1, v0 = 0, v1 = Math.PI * 2, rings = 18, seg = 28 } = {}) {
+  const curve = new THREE.CatmullRomCurve3(points.map(([f, y]) => new THREE.Vector3(0, y, f2z(f))));
+  const closed = v1 - v0 >= Math.PI * 2 - 1e-6;
+  const pos = [], idx = [], X = new THREE.Vector3(1, 0, 0), T = new THREE.Vector3(), Z = new THREE.Vector3(), P = new THREE.Vector3();
+  for (let i = 0; i <= rings; i++) {
+    const t = t0 + ((t1 - t0) * i) / rings;
+    curve.getPointAt(t, P);
+    curve.getTangentAt(t, T);
+    Z.crossVectors(X, T).normalize().negate(); // in the side plane, square to the curve, facing forward
+    for (let j = 0; j <= seg; j++) {
+      const v = v0 + ((v1 - v0) * j) / seg;
+      pos.push(P.x + Math.sin(v) * rx(t), P.y + Math.cos(v) * rz(t) * Z.y, P.z + Math.cos(v) * rz(t) * Z.z);
+    }
+  }
+  for (let i = 0; i < rings; i++) for (let j = 0; j < seg; j++) {
+    const a = i * (seg + 1) + j, b = a + seg + 1;
+    idx.push(a, b, a + 1, b, b + 1, a + 1);
+  }
+  if (closed) for (const [ring, flip] of [[0, true], [rings, false]]) {
+    const c = pos.length / 3;
+    curve.getPointAt(t0 + ((t1 - t0) * ring) / rings, P);
+    pos.push(P.x, P.y, P.z);
+    for (let j = 0; j < seg; j++) { const a = ring * (seg + 1) + j; idx.push(...(flip ? [c, a + 1, a] : [c, a, a + 1])); }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
 }
 
 export function rbox(w, h, d, r = 0.002) { return new RoundedBoxGeometry(w, h, d, 2, Math.min(r, w / 2, h / 2, d / 2)); }

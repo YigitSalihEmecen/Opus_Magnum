@@ -175,7 +175,7 @@ export class Gunplay {
   }
 
   /** Pellet ring radius (deg) right now; 0 for bullets. ADS tightens it (to pelletAds × hip). */
-  get pelletSpread() { return (this.S.pelletSpread ?? 0) * (1 - (1 - (this.S.pelletAds ?? 0.8)) * this.adsEased); }
+  get pelletSpread() { return (this.S.pelletSpread ?? 0) * this.stats.choke * (1 - (1 - (this.S.pelletAds ?? 0.8)) * this.adsEased); }
 
   #fire(mv, camera, targets, now) {
     this.ammo--;
@@ -224,10 +224,11 @@ export class Gunplay {
     this.bloom = Math.min(this.S.bloom.max, this.bloom + this.S.bloom.perShot);
 
     this.vm.fire(aimed, rp, ry);
-    this.audio.fire({ ads: this.adsEased > 0.5, suppressed: this.stats.suppressed, sample: this.def.sound });
+    const v = this.def.vm;
+    this.audio.fire({ ads: this.adsEased > 0.5, suppressed: this.stats.suppressed, sample: this.def.sound, brass: !v.pump && !v.bolt && !v.hinge });
     if (this.ammo === 0) this.vm.boltLocked = !this.pump && !this.bolt;
     else if (this.pump) this.vm.playPump();
-    else if (this.bolt) this.vm.playClip('bolt');
+    else if (this.bolt) this.vm.playClip('bolt', this.S.cycleRate ?? 1);
     this.hud.recoilPulse();
   }
 
@@ -309,9 +310,18 @@ export class Gunplay {
       case 'cloth': a.play('cloth', { volume: 0.35 }); break;
       case 'shellGrab': a.play('click', { volume: 0.2, rate: 1.6 }); break;
       case 'shellIn':
-        a.play('magIn', { volume: 0.55, rate: 1.45 });
+        if (this.def.vm.hinge) a.play('shellIn', { volume: 0.8 });
+        else a.play('magIn', { volume: 0.55, rate: 1.45 });
         this.#refill(1);
         break;
+      case 'latch': a.play('latch', { volume: 0.7 }); break;
+      case 'breakOpen': a.play('breakOpen', { volume: 0.9 }); break;
+      case 'breakClose': a.play('breakClose', { volume: 1.0 }); break;
+      case 'cylOpen': a.play('latch', { volume: 0.55, rate: 1.5 }); a.play('click', { volume: 0.5, rate: 0.8, delay: 0.05 }); break;
+      case 'cylClose': a.play('breakClose', { volume: 0.75, rate: 1.55 }); break;
+      case 'ejectAll': a.play('magDrop', { volume: 0.35, rate: 1.6 }); if (a.ready) { a.brass(0.25); a.brass(0.32); } break;
+      case 'loaderGrab': a.play('cloth', { volume: 0.3, rate: 1.2 }); break;
+      case 'speedload': a.play('magIn', { volume: 0.7, rate: 1.3 }); a.play('click', { volume: 0.5, rate: 1.1, delay: 0.06 }); this.#refill(this.magSize - this.ammo); break;
       case 'clipEnd': if (this.loading) this.#nextLoadStep(data); break;
       case 'pumpBack': a.play('pumpBack', { volume: 0.9 }); break;
       case 'pumpForward': a.play('pumpForward', { volume: 0.9 }); break;

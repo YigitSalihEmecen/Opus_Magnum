@@ -39,7 +39,7 @@ import { WebSocketServer } from 'ws';
                     ar { id, ar, am }  (someone put on or charged armour)
 */
 
-export const PROTOCOL = 5;
+export const PROTOCOL = 6;
 const ACTS = new Set(['cross', 'hook', 'throw', 'use', 'stop']);
 
 const PORT = Number(process.env.PORT ?? 8787);

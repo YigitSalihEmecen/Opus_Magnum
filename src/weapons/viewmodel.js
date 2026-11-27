@@ -185,13 +185,31 @@ export class Viewmodel {
       setPose(handAtPort, this.poses.lhPort);
       handAtPort.updateMatrix();
       this.handShell = shotShell();
-      const [sx, sy, sf] = this.poses.shellAt ?? [0, -0.03, 0.1];
-      handAtPort.matrix.clone().invert().multiply(new THREE.Matrix4().makeTranslation(sx, sy, f2z(sf)))
+      const [sx, sy, sf, srx = 0] = this.poses.shellAt ?? [0, -0.03, 0.1];
+      handAtPort.matrix.clone().invert().multiply(new THREE.Matrix4().makeTranslation(sx, sy, f2z(sf)).multiply(new THREE.Matrix4().makeRotationX(srx * D2R)))
         .decompose(this.handShell.position, this.handShell.quaternion, this.handShell.scale);
       this.handShellRest = this.handShell.position.clone();
       this.handShell.visible = false;
       this.leftHand.add(this.handShell);
     }
+
+    // revolver: the speedloader rides in the left hand, set so it sits square behind the open cylinder at lhLoad
+    if (parts.loader) {
+      const h = v.hinge;
+      parts.hinge.rotation[h.axis] = h.angle;
+      root.updateMatrixWorld(true);
+      const seat = root.matrixWorld.clone().invert().multiply(parts.loadPoint.matrixWorld);
+      parts.hinge.rotation[h.axis] = 0;
+      const handAtLoad = new THREE.Object3D();
+      setPose(handAtLoad, this.poses.lhLoad);
+      handAtLoad.updateMatrix();
+      handAtLoad.matrix.invert().multiply(seat).decompose(parts.loader.position, parts.loader.quaternion, parts.loader.scale);
+      parts.loader.visible = false;
+      this.leftHand.add(parts.loader);
+    }
+    this.cylTurns = 0;
+    this.cylAngle = 0;
+    this.sinceFire = 9;
 
     this.#buildFlash();
     this.#buildPools();
@@ -268,6 +286,8 @@ export class Viewmodel {
     }
     if (mag) mag.visible = true;
     if (this.handShell) this.handShell.visible = false;
+    if (this.parts.loader) this.parts.loader.visible = false;
+    if (this.parts.rounds) this.parts.rounds.visible = true;
     this.parts.chargingHandle.position.z = this.chRest;
   }
 
@@ -282,7 +302,11 @@ export class Viewmodel {
   get cycling() { return this.player.playing && this.player.clip.name === 'bolt'; }
   get reloading() { return this.player.playing && this.player.clip.name.startsWith('reload'); }
   /** The magazine is out of the gun (in the hand, or dropped) partway through a reload. */
-  get magOut() { const { mag, magSocket } = this.parts; return !!mag && (mag.parent !== magSocket || !mag.visible); }
+  get magOut() {
+    if (this.def.vm.hinge) return this.reloading; // a broken-open gun or a swung-out cylinder can't fire
+    const { mag, magSocket } = this.parts;
+    return !!mag && (mag.parent !== magSocket || !mag.visible);
+  }
   get swapping() { return Object.keys(this.swaps).length > 0; }
 
   playEquip() { this.player.play(this.clips.equip); }
@@ -326,13 +350,16 @@ export class Viewmodel {
     this.kickRot.kick(0.9 * pitch * s * hip, -yaw * 0.5 * s * hip, -yaw * 0.6 * s * hip);
     this.boltCycle = 0;
     this.trigger = 1;
+    this.cylTurns++;
+    this.sinceFire = 0;
     if (this.flashScale > 0.01) {
       this.flashT = 0.045;
       this.flash.rotation.z = Math.random() * Math.PI;
       const sc = (0.8 + Math.random() * 0.5) * this.flashScale;
       this.flash.scale.set(sc, sc, sc * (0.8 + Math.random() * 0.6));
     }
-    if (!this.def.vm.pump && !this.def.vm.bolt) this.#ejectShell();
+    const v = this.def.vm;
+    if (!v.pump && !v.bolt && !v.hinge) this.#ejectShell(); // the rest keep their cases until they're cycled or opened
   }
 
   /** Approximate world-space muzzle position (for tracers), mapping viewmodel space through both cameras. */
@@ -552,6 +579,16 @@ export class Viewmodel {
       // charging handle rides the bolt on every shot (and locks back with it); reload clips can pull it further
       this.parts.chargingHandle.position.z = this.chRest + Math.max(ch, boltOpen * 0.6) * this.def.vm.chTravel;
     }
+    // hinged actions (break-open barrels, a swing-out cylinder) follow the clip's hinge track
+    const hv = this.def.vm.hinge;
+    if (hv) this.parts.hinge.rotation[hv.axis] = this.player.get('hinge', [0])[0] * hv.angle;
+    // revolver: the cylinder turns a sixth per shot; the hammer falls on the shot and comes back cocked
+    this.sinceFire += dt;
+    if (this.parts.cylinder) {
+      this.cylAngle = damp(this.cylAngle, (this.cylTurns * Math.PI) / 3, 28, dt);
+      this.parts.cylinder.rotation.z = this.cylAngle;
+    }
+    if (this.parts.hammer) this.parts.hammer.rotation.x = 0.55 * THREE.MathUtils.smoothstep(this.sinceFire, 0.04, 0.22);
     this.trigger = damp(this.trigger, triggerHeld ? 1 : 0, 30, dt);
     this.parts.trigger.rotation.x = -0.32 * this.trigger;
     this.selectorAngle = damp(this.selectorAngle, this.targetSelector ?? this.selectorAngle, 20, dt);
@@ -773,7 +810,13 @@ export class Viewmodel {
         mag.visible = true;
         break;
       case 'boltForward': this.boltLocked = false; break;
-      case 'eject': this.#ejectShell(); break;
+      case 'eject': this.#ejectShell(data); break;
+      case 'ejectAll': if (this.parts.rounds) this.parts.rounds.visible = false; this.#ejectShell({ ...data, drop: true }); break;
+      case 'loaderGrab': if (this.parts.loader) this.parts.loader.visible = true; break;
+      case 'speedload':
+        if (this.parts.loader) this.parts.loader.visible = false;
+        if (this.parts.rounds) this.parts.rounds.visible = true;
+        break;
       case 'shellGrab': if (this.handShell) this.handShell.visible = true; break;
       case 'shellIn': if (this.handShell) this.handShell.visible = false; break;
       case 'clipEnd': this.player.rate = 1; break;
@@ -795,10 +838,10 @@ export class Viewmodel {
   }
 
   #buildPools() {
-    const pump = this.def.vm.pump;
-    const shellGeo = (pump ? new THREE.CylinderGeometry(0.0092, 0.0092, 0.05, 12) : new THREE.CylinderGeometry(0.0055, 0.0055, 0.03, 10)).rotateX(Math.PI / 2);
+    const shot = !!this.def.stats.pellets;
+    const shellGeo = (shot ? new THREE.CylinderGeometry(0.0092, 0.0092, 0.05, 12) : new THREE.CylinderGeometry(0.0055, 0.0055, 0.03, 10)).rotateX(Math.PI / 2);
     this.shells = Array.from({ length: 14 }, () => {
-      const m = new THREE.Mesh(shellGeo, pump ? MATS.red : MATS.brass);
+      const m = new THREE.Mesh(shellGeo, shot ? MATS.red : MATS.brass);
       m.visible = false;
       m.userData = { v: new THREE.Vector3(), w: new THREE.Vector3(), life: 0 };
       this.scene.add(m);
@@ -808,14 +851,21 @@ export class Viewmodel {
     this.drops = [];
   }
 
-  #ejectShell() {
-    const sh = this.shells[this.shellIndex++ % this.shells.length];
-    this.parts.ejectPort.getWorldPosition(sh.position);
-    this.parts.ejectPort.getWorldQuaternion(sh.quaternion);
-    sh.userData.v.set(1.6 + Math.random() * 0.8, 1.1 + Math.random() * 0.6, 0.5 + Math.random() * 0.4);
-    sh.userData.w.set(rand(20), 25 + Math.random() * 15, rand(12));
-    sh.userData.life = 0.6;
-    sh.visible = true;
+  /** Spent cases: n of them, out of the port to the right (default), back over the shoulder (back: a
+   *  break-action's extractors), or tipped out to fall (drop: a revolver's ejector). */
+  #ejectShell({ n = 1, back = false, drop = false } = {}) {
+    for (let i = 0; i < n; i++) {
+      const sh = this.shells[this.shellIndex++ % this.shells.length];
+      this.parts.ejectPort.getWorldPosition(sh.position);
+      this.parts.ejectPort.getWorldQuaternion(sh.quaternion);
+      if (n > 1) sh.position.add(_pv.set(rand(0.008), rand(0.008), rand(0.004)));
+      if (back) sh.userData.v.set(rand(0.3), 1.2 + Math.random() * 0.5, 1.4 + Math.random() * 0.5);
+      else if (drop) sh.userData.v.set(rand(0.25), -0.2 - Math.random() * 0.4, 0.35 + Math.random() * 0.3);
+      else sh.userData.v.set(1.6 + Math.random() * 0.8, 1.1 + Math.random() * 0.6, 0.5 + Math.random() * 0.4);
+      sh.userData.w.set(rand(20), (drop ? 6 : 25) + Math.random() * 15, rand(12));
+      sh.userData.life = drop ? 0.9 : 0.6;
+      sh.visible = true;
+    }
   }
 
   #dropMag() {

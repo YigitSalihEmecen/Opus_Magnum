@@ -55,20 +55,26 @@ const vmCamera = new THREE.PerspectiveCamera(54, innerWidth / innerHeight, 0.01,
   (src/maps/) are shared by all of them.
 */
 const customWorld = async (mapId) => (await import('./maps/mapWorld.js')).buildMapWorld(scene, getMap(mapId));
+// the range hands out the carbine and the pistol; every other gun waits on the rack in front of the spawn
+const RANGE_LOADOUT = { guns: ['panther', 'lynx'].map((id) => WEAPONS.findIndex((w) => w.id === id)), maxGuns: 2 };
 const MODES = [
   {
     id: 'range', index: '01 / PRACTICE', title: 'Shooting Range', accent: '#8a9a7b', builtin: 'Test Range', preview: mapPreview('range'), blurb: 'Targets, vault blocks, mantle steps and a slide ramp. Tune your feel and your loadout.',
     load: async (mapId) => {
       if (mapId && getMap(mapId)) {
         const w = await customWorld(mapId);
-        return { octree: w.octree, spawn: w.spawn, targets: w.raycastTargets, doors: w.doors, pickups: new Pickups(scene, { octree: w.octree, spots: w.pickups, respawn: 20 }), update: () => {} };
+        return { octree: w.octree, spawn: w.spawn, targets: w.raycastTargets, doors: w.doors, loadout: RANGE_LOADOUT, pickups: new Pickups(scene, { octree: w.octree, spots: w.pickups, respawn: 20 }), update: () => {} };
       }
       const range = new TestRange(scene);
       const dummies = new Dummies(scene, range.dummySpots);
-      // every item on a line in front of the spawn, back a few seconds after you take it
-      const spots = ITEM_IDS.map((type, i) => ({ type, position: new THREE.Vector3((i - (ITEM_IDS.length - 1) / 2) * 1.7, 0, 34) }));
+      // every item on a line in front of the spawn and every gun on a line behind it, back a few seconds after you take it
+      const row = (n, i, z) => new THREE.Vector3((i - (n - 1) / 2) * 1.7, 0, z);
+      const spots = [
+        ...ITEM_IDS.map((type, i) => ({ type, position: row(ITEM_IDS.length, i, 34) })),
+        ...WEAPONS.map((_, gun) => ({ type: 'gun', gun, position: row(WEAPONS.length, gun, 30.5) })),
+      ];
       return {
-        range, dummies, octree: range.octree, spawn: range.spawn, targets: [...range.raycastTargets, ...dummies.hitboxes],
+        range, dummies, octree: range.octree, spawn: range.spawn, targets: [...range.raycastTargets, ...dummies.hitboxes], loadout: RANGE_LOADOUT,
         pickups: new Pickups(scene, { octree: range.octree, spots, respawn: 3 }),
         update: (dt, c) => dummies.update(dt, c.camera, c.now),
       };

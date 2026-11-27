@@ -27,7 +27,7 @@ import { soakArmour, armourTier } from '../items/items.js';
   Delete src/net/ and its MODES entry in main.js to remove multiplayer (it uses the TDM bot, not the reverse).
 */
 
-export const PROTOCOL = 5; // server/index.js PROTOCOL
+export const PROTOCOL = 6; // server/index.js PROTOCOL
 const SEND_HZ = 30;
 const INTERP = 80;
 const COAST = 120; // ms of extrapolation past the newest pose

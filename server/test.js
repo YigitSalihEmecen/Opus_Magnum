@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import WebSocket from 'ws';
 
 const PORT = 8899;
-const V = 5;
+const V = 6;
 const srv = spawn('node', ['index.js'], { cwd: import.meta.dirname, env: { ...process.env, PORT, LIMIT: 3, END_PAUSE: 1 } });
 await new Promise((r) => srv.stdout.once('data', r));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));

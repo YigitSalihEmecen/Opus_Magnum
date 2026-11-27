@@ -50,6 +50,9 @@ const KIND = {
   Pistol: { burst: [2, 4], range: [4, 18], spread: 1.5, reload: 1.6 },
   Shotgun: { burst: [1, 1], range: [2, 9], spread: 0.6, reload: 3 },
   Sniper: { burst: [1, 1], range: [15, 60], spread: 0.3, reload: 2.8 },
+  Scout: { burst: [1, 1], range: [12, 45], spread: 0.4, reload: 2.4 },
+  Marksman: { burst: [1, 3], range: [12, 45], spread: 0.6, reload: 2.4 },
+  Revolver: { burst: [1, 2], range: [4, 20], spread: 1.2, reload: 2.2 },
 };
 
 /** A bot's gun from an arsenal weapon (online, every round hands out a different one). */
