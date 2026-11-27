@@ -283,10 +283,15 @@ function subtract(rect, holes) {
   return out;
 }
 
-/** Two triangles for face f over rect r, wound to face outward. */
+/**
+ * Two triangles for face f over rect r, wound to face outward. Each face is grown by SEAL in its own plane:
+ * neighbouring faces that meet at a T (a short step's side against a tall one's) leave hairline cracks when
+ * rasterised, and with the hidden faces gone the far background shows through them; the overlap closes them.
+ */
+const SEAL = 0.0006;
 function quad(p, f, r) {
   const pt = (uu, vv) => { const q = [0, 0, 0]; q[f.a] = f.c; q[f.u] = uu; q[f.v] = vv; return q; };
-  const A = pt(r[0], r[2]), B = pt(r[1], r[2]), C = pt(r[1], r[3]), D = pt(r[0], r[3]);
+  const A = pt(r[0] - SEAL, r[2] - SEAL), B = pt(r[1] + SEAL, r[2] - SEAL), C = pt(r[1] + SEAL, r[3] + SEAL), D = pt(r[0] - SEAL, r[3] + SEAL);
   // (u, v, axis) is right-handed for every axis above, so A→B→C faces +axis
   if (f.s > 0) p.push(...A, ...B, ...C, ...A, ...C, ...D);
   else p.push(...A, ...C, ...B, ...A, ...D, ...C);

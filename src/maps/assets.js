@@ -190,16 +190,14 @@ function stairs(color, ctx, { rise = 3.5, run = 6, w = 2, rail = true } = {}) {
   const g = new THREE.Group();
   const n = Math.round(rise / STEP_RISE);
   const tread = run / n, stepH = rise / n;
-  const geos = [];
+  // each step a plain block (map batching joins them into one solid flight, no faces hidden between steps)
   for (let i = 0; i < n; i++) {
     const top = stepH * (i + 1);
-    geos.push(new THREE.BoxGeometry(w, top, tread).translate(0, top / 2, run / 2 - tread * (i + 0.5)));
+    gbox(g, w, top, tread, 0, top / 2, run / 2 - tread * (i + 0.5), color).userData.noCollide = true;
   }
-  const steps = add(g, mergeGeometries(geos), mat(color));
-  steps.userData.noCollide = true;
   const noses = [];
   for (let i = 0; i < n; i++) noses.push(new THREE.BoxGeometry(w + 0.01, 0.04, 0.06).translate(0, stepH * (i + 1) + 0.005, run / 2 - tread * i - 0.025));
-  add(g, mergeGeometries(noses), mat(P.ink)).userData.noCollide = true;
+  trim(add(g, mergeGeometries(noses), mat(P.ink))).userData.noCollide = true;
   // solid wedge under the whole flight: its slope (from just below the first step's toe to the top
   // landing edge) is what you walk on, and its sides and back block you like the steps look like they do
   const z0 = run / 2 + 0.3, z1 = -run / 2; // prism() maps the profile's first axis to -Z
