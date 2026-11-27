@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Arena } from './arena.js';
 import { NavGrid } from './nav.js';
 import { Bot, raySegment } from './bot.js';
+import { Tactics } from './tactics.js';
 import { MAX_HP } from '../../player/vitals.js';
 import { WorldFX } from '../../weapons/effects.js';
 import { WEAPONS } from '../../weapons/weapons.js';
@@ -62,7 +63,6 @@ class TDM {
     this.time = MATCH_TIME;
     this.score = { ally: 0, enemy: 0 };
     this.ended = false;
-    this.intelByTeam = { ally: null, enemy: null };
     this.respawns = [];
     this.soundsThisFrame = 0;
 
@@ -75,6 +75,10 @@ class TDM {
         this.bots.push(b);
       }
     }
+    // built after the bots: position scoring reads them
+    this.tactics = new Tactics(this.nav, this.octree, this);
+    this.pathBudget = 0;
+    this.stepT = 0;
     this.allies = this.bots.filter((b) => b.team === 'ally');
     this.enemies = this.bots.filter((b) => b.team === 'enemy');
     // stagger the opening spawns so the teams don't move as one blob
@@ -157,9 +161,6 @@ class TDM {
     return !hit || hit.distance >= d - 0.25;
   }
 
-  share(team, pos, now) { this.intelByTeam[team] = { pos: pos.clone(), t: now }; }
-  intel(team) { const i = this.intelByTeam[team]; return i && this.now - i.t < 8 ? i.pos : null; }
-
   /** A bot fired: play it in 3D-ish and let nearby enemies hear it. */
   gunshot(bot, muzzle) {
     this.#noise(muzzle, 42, bot);
@@ -215,6 +216,7 @@ class TDM {
       get hp() { return tdm.vitals.hp; },
       get pos() { return mv.feet; },
       get vel() { return mv.vel; },
+      get facing() { return tdm.rig.yaw + Math.PI; }, // the camera looks down -z
       eye(out = new THREE.Vector3()) { return out.copy(tdm.camera.position); },
       aimPoint(head, out = new THREE.Vector3()) { return out.copy(mv.feet).setY(mv.feet.y + (head ? mv.height - 0.17 : mv.height * 0.62)); },
       hitTest(ray) {
@@ -240,6 +242,7 @@ class TDM {
           this.alive = false;
           this.deathT = 0;
           this.killer = attacker;
+          tdm.tactics.died('ally', mv.feet);
           tdm.onKill(attacker, this, zone === 'head', weapon);
           tdm.ui.death(attacker.name, RESPAWN_PLAYER);
           return true;
@@ -304,6 +307,15 @@ class TDM {
 
     // player fired → enemies nearby hear it (much less when suppressed)
     if (gun && gun.sinceShot === 0 && this.player.alive) this.#noise(this.camera.position, gun.stats.suppressed ? 12 : 48, this.player);
+    // and footsteps: a sprint carries, a run a little, walking and crouching are silent
+    this.stepT -= dt;
+    const mv = this.mv, speed = Math.hypot(mv.vel.x, mv.vel.z);
+    if (this.player.alive && mv.grounded && this.stepT <= 0 && speed > 3.2 && !mv.crouched) {
+      this.stepT = 0.35;
+      this.#noise(mv.feet, mv.sprinting ? 15 : 8, this.player);
+    }
+    this.pathBudget = 4;
+    this.tactics.update(dt, this.now);
 
     const p = this.player;
     if (p.alive) {

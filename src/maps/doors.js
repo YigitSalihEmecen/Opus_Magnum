@@ -149,7 +149,8 @@ export class Doors {
       d.update(dt);
       if (d.open) continue;
       for (const a of actors) {
-        if (!a.alive || a.pos.distanceToSquared(_v.copy(d.centre).setY(a.pos.y)) > 1.6) continue;
+        // pushed from ~2.3 m out: a door takes ~0.35 s to swing, a running bot shouldn't reach it still closed
+        if (!a.alive || a.pos.distanceToSquared(_v.copy(d.centre).setY(a.pos.y)) > 5.3) continue;
         d.set(true, d.dirFrom(a.pos));
         this.#sound(d, true);
         break;
