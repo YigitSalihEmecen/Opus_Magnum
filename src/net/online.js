@@ -1,5 +1,8 @@
 import * as THREE from 'three';
-import { Avatar } from '../character/avatar.js';
+import { Avatar, raySegment } from '../character/avatar.js';
+import { Bot } from '../modes/tdm/bot.js';
+import { NavGrid } from '../modes/tdm/nav.js';
+import { Tactics } from '../modes/tdm/tactics.js';
 import { MAX_HP } from '../player/vitals.js';
 import { MatchHud } from '../ui/matchHud.js';
 import { WorldFX } from '../weapons/effects.js';
@@ -17,10 +20,14 @@ import { Pickups } from '../items/pickups.js';
   replayed on the sender's own even timeline, INTERP ms behind, instead of on bunched-up arrival times; when
   the stream stalls it coasts on the last velocity for a moment rather than freezing.
   After a match the server runs a map vote; a new map is swapped in place (onMap lets main.js rebind).
-  Delete src/net/ and its MODES entry in main.js to remove multiplayer.
+  2v2 with bots: the server fills empty slots with bots. One client, the host, runs their brains (the TDM bot,
+  src/modes/tdm/, on a nav grid it builds for the map): it sends their poses in batches, their shots and hits
+  (as the bot), and the server tells it how they're hurt. Everyone else sees them as Remotes like any player.
+  If the host leaves the server names another, which takes the bots over where they stand.
+  Delete src/net/ and its MODES entry in main.js to remove multiplayer (it uses the TDM bot, not the reverse).
 */
 
-export const PROTOCOL = 4; // server/index.js PROTOCOL
+export const PROTOCOL = 5; // server/index.js PROTOCOL
 const SEND_HZ = 30;
 const INTERP = 80;
 const COAST = 120; // ms of extrapolation past the newest pose
@@ -65,7 +72,7 @@ export async function createOnline({ opts, getMap, buildWorld, ...ctx }) {
 class Remote extends Avatar {
   constructor(net, info) {
     super({ team: info.team === net.team ? 'ally' : 'enemy', name: info.name, char: info.char });
-    Object.assign(this, { world: net, id: info.id, buf: [], lastStep: 0, poseTarget: {}, off: null, rlWas: false });
+    Object.assign(this, { world: net, id: info.id, bot: !!info.bot, buf: [], lastStep: 0, poseTarget: {}, off: null, rlWas: false });
     this.alive = info.alive;
     this.root.visible = false; // until the first snapshot places it
   }
@@ -93,7 +100,7 @@ class Remote extends Avatar {
     if (last && t <= last.t) return; // late or repeated
     const off = arrival - t;
     if (this.off === null || off < this.off) this.off = off;
-    this.buf.push({ t, p: new THREE.Vector3(q[0], q[1], q[2]), v: new THREE.Vector3(q[3], q[4], q[5]), y: q[6], pi: q[7], w: q[8], st: STATES[q[9]] ?? 'ground', cr: q[10] & 1, ads: (q[10] >> 1) & 1, rl: (q[10] >> 2) & 1, ws: q[11] });
+    this.buf.push({ t, p: new THREE.Vector3(q[0], q[1], q[2]), v: new THREE.Vector3(q[3], q[4], q[5]), y: q[6], pi: q[7], w: q[8], st: STATES[q[9]] ?? 'ground', cr: q[10] & 1, ads: (q[10] >> 1) & 1, rl: (q[10] >> 2) & 1, side: q[11] });
     if (this.buf.length > 40) this.buf.shift();
     this.root.visible ||= this.alive;
   }
@@ -134,6 +141,7 @@ class Remote extends Avatar {
       }
       this.aimYaw = lerpAngle(a.y, b.y, k);
       this.aimPitch = a.pi + (b.pi - a.pi) * k;
+      this.side = a.side + (b.side - a.side) * k;
       if (WEAPONS[b.w]) this.holdWeapon(WEAPONS[b.w]);
       // mirror the movement state: the body poses (and so the hitboxes) follow what the player is doing
       const p = this.poseTarget;
@@ -172,6 +180,11 @@ class Online {
     for (const [id, open, dir] of welcome.doors ?? []) this.doors.set(id, open, dir, true);
     this.id = welcome.id;
     this.team = welcome.team;
+    this.host = welcome.host === this.id;
+    this.brains = new Map(); // bots this client runs (host only), by id
+    this.botList = [];
+    this.infos = new Map();
+    this.hits = new Map();
     this.foe = this.team === 'a' ? 'b' : 'a';
     this.fx = new WorldFX(scene);
     this.limit = welcome.limit;
@@ -228,6 +241,8 @@ class Online {
       this.doors.dispose();
       this.#setArena(await this.buildWorld(map), mapId);
       this.pickups.onGrant = onGrant;
+      // our bots move to the new map's nav grid (they're placed when the next round starts)
+      if (this.bw) { this.bw = null; const w = this.#brains(); for (const b of this.botList) { b.world = w; b.alive = false; b.root.visible = false; } }
       for (const r of this.remotes.values()) r.buf.length = 0;
       this.#refreshTargets();
       this.onMap();
@@ -238,6 +253,8 @@ class Online {
   }
 
   get playerAlive() { return this.alive; }
+  /** Everyone doors open for on their own: bots, ours and the ones others run. */
+  get bots() { return [...this.botList, ...[...this.remotes.values()].filter((r) => r.bot)]; }
   /** Gun-game: every round starts with the round's weapon; one more can be picked up off the map. */
   get loadout() { return { guns: [this.round?.weapon ?? 0], maxGuns: 2, mags: 3, items: {} }; }
 
@@ -258,6 +275,7 @@ class Online {
     this.vitals.serverOwned = false;
     this.vitals.sync = null;
     for (const r of this.remotes.values()) this.scene.remove(r.root);
+    for (const b of this.botList) this.scene.remove(b.root);
     this.ui.root.remove();
   }
 
@@ -265,7 +283,7 @@ class Online {
   scoreRows() {
     const st = (id) => this.stats.get(id) ?? { kills: 0, deaths: 0 };
     const me = { name: 'You', ...st(this.id), you: true, dead: !this.alive };
-    const rows = (enemy) => [...this.remotes.values()].filter((r) => (r.team === 'enemy') === enemy).map((r) => ({ name: r.name, ...st(r.id), dead: !r.alive }));
+    const rows = (enemy) => this.#others().filter((r) => (r.team === 'enemy') === enemy).map((r) => ({ name: r.name, ...st(r.id), dead: !r.alive }));
     const wpn = WEAPONS[this.round?.weapon]?.name;
     return {
       title: `Multiplayer · ${this.mapName}${this.round ? ` · Round ${this.round.n}${wpn ? ` · ${wpn}` : ''}` : ''}`,
@@ -276,24 +294,178 @@ class Online {
     };
   }
 
+  /** Everyone else in the match: remote players (and remote bots), and the bots we run. */
+  #others() { return [...this.remotes.values(), ...this.botList]; }
+
   #add(info) {
     this.stats.set(info.id, { kills: info.kills ?? 0, deaths: info.deaths ?? 0 });
+    this.infos.set(info.id, info);
+    this.names.set(info.id, info.name);
+    if (info.bot && this.host) { this.#addBot(info); return; }
     const r = new Remote(this, info);
     this.remotes.set(info.id, r);
-    this.names.set(info.id, info.name);
     this.scene.add(r.root);
+  }
+
+  // ── the bots we run (host) ──
+
+  /** The bots' world: the map's nav grid and tactics, built the first time we host on this map. */
+  #brains() {
+    if (this.bw) return this.bw;
+    const arena = this.arena, net = this, mv = this.mv;
+    const nav = (arena.nav ??= new NavGrid(arena.octree, arena.bounds));
+    if (!arena.hotspots) {
+      arena.hotspots = [];
+      for (let i = 0; i < 14; i++) { const p = nav.randomPoint(); if (p) arena.hotspots.push(p); }
+    }
+    const mine = this.team === 'a' ? 'ally' : 'enemy', theirs = mine === 'ally' ? 'enemy' : 'ally';
+    // us, as the bots see us (the same shape as the TDM player proxy)
+    this.me ??= {
+      id: this.id, team: 'ally', name: 'You',
+      get alive() { return net.alive && !net.ended; },
+      get pos() { return mv.feet; },
+      get vel() { return mv.vel; },
+      get hp() { return net.vitals.hp; },
+      get facing() { return net.rig.yaw + Math.PI; },
+      eye(out = new THREE.Vector3()) { return out.copy(net.camera.position); },
+      aimPoint(head, out = new THREE.Vector3()) { return out.copy(mv.feet).setY(mv.feet.y + (head ? mv.height - 0.17 : mv.height * 0.62)); },
+      hitTest(ray) {
+        if (!this.alive) return null;
+        const sph = new THREE.Sphere(_c.copy(mv.feet).setY(mv.feet.y + mv.height - 0.17), 0.18);
+        const h = ray.intersectSphere(sph, _b);
+        if (h) return { dist: h.distanceTo(ray.origin), zone: 'head' };
+        const r = raySegment(ray, _a.copy(mv.feet).setY(mv.feet.y + 0.3), _b.copy(mv.feet).setY(mv.feet.y + mv.height - 0.4));
+        if (r.dist >= 0.34) return null;
+        return { dist: r.t, zone: ray.origin.y + ray.direction.y * r.t - mv.feet.y < mv.height * 0.47 ? 'legs' : 'body' };
+      },
+    };
+    this.foes = [];
+    this.friends = [];
+    const w = (this.bw = {
+      now: 0, nav, octree: arena.octree, fx: this.fx, pathBudget: 0, player: this.me,
+      arena: { hotspots: arena.hotspots, spawns: { ally: arena.spawns[mine], enemy: arena.spawns[theirs] } },
+      get bots() { return net.botList; },
+      enemiesOf: (team) => (team === 'ally' ? this.foes : this.friends),
+      los(from, to) {
+        const d = from.distanceTo(to);
+        _ray.origin.copy(from);
+        _ray.direction.subVectors(to, from).divideScalar(d || 1);
+        const hit = arena.octree.rayIntersect(_ray);
+        return !hit || hit.distance >= d - 0.25;
+      },
+      gunshot: (bot, muzzle, dir) => this.#botShot(bot, muzzle, dir),
+      onKill() {}, // the server decides who dies
+      hitTarget: (target, dmg, zone, bot, weapon) => this.#queueHit(target === this.me ? this.id : target.id, dmg, zone, weapon, bot.id),
+      netHit: (bot, dmg, zone, weapon) => { this.#queueHit(bot.id, dmg, zone, weapon); return { killed: false }; },
+    });
+    w.tactics = new Tactics(nav, arena.octree, w);
+    return w;
+  }
+
+  /** A bot we'll run; `from` (a Remote) when taking one over mid-round: it carries on from there. */
+  #addBot(info, from) {
+    const world = this.#brains();
+    const b = new Bot(world, { team: info.team === this.team ? 'ally' : 'enemy', name: info.name, weapon: WEAPONS[this.round?.weapon ?? 0] ?? WEAPONS[0], skill: 0.4 + Math.random() * 0.25, char: info.char });
+    b.id = info.id;
+    this.brains.set(b.id, b);
+    this.botList.push(b);
+    this.scene.add(b.root);
+    if (info.alive) {
+      b.spawn(this.#botSpawn(b));
+      if (from) { b.pos.copy(from.pos); b.aimYaw = b.yaw = from.aimYaw; }
+      b.showMarker();
+    }
+  }
+
+  #dropBot(id) {
+    const b = this.brains.get(id);
+    if (!b) return false;
+    this.scene.remove(b.root);
+    this.brains.delete(id);
+    this.botList.splice(this.botList.indexOf(b), 1);
+    return true;
+  }
+
+  #botSpawn(b) {
+    const list = this.bw.arena.spawns[b.team];
+    return list[(Math.random() * list.length) | 0];
+  }
+
+  /** The server made us host: the bots others ran become ours, where they stand. */
+  #takeOver() {
+    this.host = true;
+    for (const r of [...this.remotes.values()]) {
+      if (!r.bot) continue;
+      this.scene.remove(r.root);
+      this.remotes.delete(r.id);
+      this.#addBot({ ...this.infos.get(r.id), alive: r.alive }, r);
+    }
+    this.#refreshTargets();
+  }
+
+  /** Hits add up per shooter and target over a frame (pellets) and go out as one message each. */
+  #queueHit(id, dmg, zone, w, as) {
+    const k = `${as ?? ''}>${id}`;
+    const h = this.hits.get(k) ?? { id, as, dmg: 0, head: false, legs: true, w };
+    h.dmg += dmg;
+    h.head ||= zone === 'head';
+    h.legs &&= zone === 'legs';
+    this.hits.set(k, h);
+  }
+
+  #flushHits() {
+    for (const h of this.hits.values()) this.send({ t: 'hit', id: h.id, as: h.as, zone: h.head ? 'head' : h.legs ? 'legs' : 'body', dmg: Math.round(h.dmg * 10) / 10, w: h.w });
+    this.hits.clear();
+  }
+
+  /** One of our bots fired: the others draw it, and enemy bots hear it. */
+  #botShot(bot, muzzle, dir) {
+    this.send({ t: 'fire', as: bot.id, o: round(muzzle), d: round(dir), w: WEAPONS.indexOf(bot.weapon) });
+    this.#heard(muzzle, bot.gun.sample ?? 'fire', 0.45, 110);
+    this.#noise(muzzle, bot);
+  }
+
+  /** Gunfire at pos by `who`: the bots we run on the other side hear it. */
+  #noise(pos, who) {
+    for (const b of this.botList) if (b.alive && b.team !== who.team && b.pos.distanceTo(pos) < 48) b.hear(pos, who);
+  }
+
+  #combatant(id) { return id === this.id ? this.me : this.remotes.get(id) ?? this.brains.get(id); }
+
+  /** Our bots' poses, one message for all of them. */
+  #sendBots() {
+    const r2 = (x) => Math.round(x * 100) / 100, r3 = (x) => Math.round(x * 1000) / 1000, t = Math.round(performance.now());
+    const b = [];
+    for (const bot of this.botList) {
+      if (!bot.alive) continue;
+      const p = bot.poseTarget, st = bot.climb ? (bot.climb.up ? 4 : 1) : bot.slideT > 0 ? 2 : 0;
+      const f = (p.crouch ? 1 : 0) | (p.ads ? 2 : 0) | (bot.reloadT > 0 ? 4 : 0);
+      b.push([bot.id, [r3(bot.pos.x), r3(bot.pos.y), r3(bot.pos.z), r2(bot.vel.x), 0, r2(bot.vel.z), r3(bot.aimYaw), r3(bot.aimPitch), Math.max(0, WEAPONS.indexOf(bot.weapon)), st, f, r2(bot.side), t]]);
+    }
+    if (b.length) this.send({ t: 'sb', b });
+  }
+
+  #runBots(dt) {
+    const w = this.bw;
+    w.now += dt;
+    w.pathBudget = 4;
+    this.foes.length = this.friends.length = 0;
+    this.friends.push(this.me);
+    for (const o of this.#others()) (o.team === 'enemy' ? this.foes : this.friends).push(o);
+    w.tactics.update(dt, w.now);
+    for (const b of this.botList) b.update(dt);
   }
 
   /** In place: main.js holds on to this array. */
   #refreshTargets() {
     this.targets ??= [];
     this.targets.length = 0;
-    this.targets.push(...this.arena.raycastTargets, ...[...this.remotes.values()].flatMap((r) => r.hitboxes));
+    this.targets.push(...this.arena.raycastTargets, ...this.#others().flatMap((r) => r.hitboxes));
   }
 
   #who(id) {
     if (id === this.id) return { name: 'You', team: 'ally' };
-    return { name: this.names.get(id) ?? '?', team: this.remotes.get(id)?.team ?? 'enemy' };
+    return { name: this.names.get(id) ?? '?', team: (this.remotes.get(id) ?? this.brains.get(id))?.team ?? 'enemy' };
   }
 
   #score() { this.ui.score({ ally: this.score[this.team], enemy: this.score[this.foe] }, this.time); }
@@ -305,15 +477,25 @@ class Online {
       case 'join':
         this.#add(m.player);
         this.#refreshTargets();
-        this.ui.toast(`${m.player.name} joined`);
+        if (!m.player.bot) this.ui.toast(`${m.player.name} joined`);
         break;
+      case 'host': if (m.id === this.id && !this.host) this.#takeOver(); break;
+      case 'bhurt': {
+        const b = this.brains.get(m.id);
+        if (!b) break;
+        b.hp = m.hp;
+        if (m.dmg) b.hurt(m.dmg, this.#combatant(m.by));
+        break;
+      }
       case 'leave': {
+        const bot = this.infos.get(m.id)?.bot;
+        if (this.#dropBot(m.id)) { this.#refreshTargets(); break; }
         const r = this.remotes.get(m.id);
         if (!r) break;
         this.scene.remove(r.root);
         this.remotes.delete(m.id);
         this.#refreshTargets();
-        this.ui.toast(`${this.names.get(m.id)} left`);
+        if (!bot) this.ui.toast(`${this.names.get(m.id)} left`);
         break;
       }
       case 'fire': this.#remoteFire(m); break;
@@ -322,13 +504,13 @@ class Online {
         if (m.a === 'stop') r?.stopAct(); else r?.act(m.a, m.i);
         break;
       }
-      case 'struck': { const r = this.remotes.get(m.id); if (r?.alive) r.flash = 0.08; break; }
+      case 'struck': { const r = this.remotes.get(m.id) ?? this.brains.get(m.id); if (r?.alive) r.flash = 0.08; break; }
       case 'hurt': {
         const v = this.vitals;
         const hit = m.dmg && m.hp + (m.ar ?? 0) < v.hp + v.armour;
         if (m.dmg) v.quiet = 0;
         v.set({ hp: m.hp, armour: m.ar, armourMax: m.am });
-        const by = this.remotes.get(m.by);
+        const by = this.remotes.get(m.by) ?? this.brains.get(m.by);
         this.ui.hurt(v.hp / MAX_HP, hit && by ? this.#bearing(by.pos) : null);
         if (hit) {
           this.audio.play('land', { volume: 0.25, rate: 1.5 });
@@ -354,9 +536,11 @@ class Online {
           this.killer = killer.name;
           this.deathT = 0;
         } else {
-          const r = this.remotes.get(m.v);
-          const from = m.k === this.id ? this.camera.position : this.remotes.get(m.k)?.pos;
-          r?.kill(from ? _a.subVectors(r.pos, from).setY(0).normalize() : null);
+          const r = this.remotes.get(m.v), b = this.brains.get(m.v), who = r ?? b;
+          const from = m.k === this.id ? this.camera.position : (this.remotes.get(m.k) ?? this.brains.get(m.k))?.pos;
+          const dir = who && from ? _a.subVectors(who.pos, from).setY(0).normalize() : null;
+          r?.kill(dir);
+          b?.fall(dir);
           if (m.k === this.id) {
             this.ui.toast(`Eliminated ${victim.name}`, m.head);
             this.hud?.hitmarker('kill', m.head);
@@ -376,6 +560,8 @@ class Online {
         this.score = m.score;
         this.#score();
         this.#respawn();
+        // our bots: everyone's up again, at their base, with the round's gun
+        for (const b of this.botList) { b.setWeapon(WEAPONS[m.weapon] ?? WEAPONS[0]); b.spawn(this.#botSpawn(b)); b.showMarker(); }
         this.ui.toast(`Round ${m.n} · ${WEAPONS[m.weapon]?.name ?? ''}`);
         break;
       case 'end': this.#end(m.score, m.vote); break;
@@ -407,6 +593,7 @@ class Online {
     if (!r) return;
     _ray.origin.fromArray(m.o);
     _ray.direction.fromArray(m.d).normalize();
+    this.#noise(_ray.origin, r);
     const hit = this.octree.rayIntersect(_ray);
     const end = _b.copy(_ray.origin).addScaledVector(_ray.direction, hit ? hit.distance : 150);
     r.muzzle.getWorldPosition(_a);
@@ -452,7 +639,7 @@ class Online {
   /** Our team's spawns (team a uses the map's ally spawns), picking among the ones farthest from live enemies. */
   #pickSpawn() {
     const list = this.arena.spawns[this.team === 'a' ? 'ally' : 'enemy'];
-    const foes = [...this.remotes.values()].filter((r) => r.alive && r.team === 'enemy');
+    const foes = this.#others().filter((r) => r.alive && r.team === 'enemy');
     const scored = list.map((s) => ({ s, d: Math.min(Infinity, ...foes.map((f) => f.pos.distanceTo(s.position))) })).sort((a, b) => b.d - a.d);
     return scored[(Math.random() * Math.min(2, scored.length)) | 0].s;
   }
@@ -504,7 +691,8 @@ class Online {
     const { options, tally, mine } = this.vote;
     box.innerHTML = `<div class="label">Vote for the next map <span class="vote-t"></span></div><div class="vote-maps">${options.map((id, i) => {
       const n = tally[id] ?? 0;
-      return `<button type="button" data-map="${id}" class="${id === mine ? 'mine' : ''}"><kbd>${i + 1}</kbd><b>${this.getMap(id)?.name ?? id}</b><span>${id === this.mapId ? 'again' : ''}</span><em>${'●'.repeat(n) || '·'}</em></button>`;
+      const img = this.getMap(id)?.preview;
+      return `<button type="button" data-map="${id}" class="${id === mine ? 'mine' : ''}">${img ? `<i style="background-image:url('${img}')"></i>` : ''}<kbd>${i + 1}</kbd><b>${this.getMap(id)?.name ?? id}</b><span>${id === this.mapId ? 'again' : ''}</span><em>${'●'.repeat(n) || '·'}</em></button>`;
     }).join('')}</div>`;
     this.#voteClock();
   }
@@ -544,6 +732,7 @@ class Online {
       if (gun && gun.sinceShot === 0) {
         camera.getWorldDirection(_a);
         this.send({ t: 'fire', o: round(camera.position), d: round(_a), w: this.arsenal.findIndex((x) => x.gun === gun), sup: !!gun.stats.suppressed });
+        if (this.host && !gun.stats.suppressed) this.#noise(camera.position, this.me);
       }
     } else {
       this.deathT += dt;
@@ -559,12 +748,15 @@ class Online {
       const g = this.arsenal[w];
       const f = (mv.crouched ? 1 : 0) | (g && g.gun.adsEased > 0.5 ? 2 : 0) | (g && g.vm.reloading ? 4 : 0);
       const r2 = (x) => Math.round(x * 100) / 100, r3 = (x) => Math.round(x * 1000) / 1000;
-      this.send({ t: 's', q: [r3(mv.feet.x), r3(mv.feet.y), r3(mv.feet.z), r2(mv.vel.x), r2(mv.vel.y), r2(mv.vel.z), r3(this.rig.yaw + Math.PI), r3(this.rig.pitch), w, Math.max(0, STATES.indexOf(mv.state)), f, 0, Math.round(performance.now())] });
+      this.send({ t: 's', q: [r3(mv.feet.x), r3(mv.feet.y), r3(mv.feet.z), r2(mv.vel.x), r2(mv.vel.y), r2(mv.vel.z), r3(this.rig.yaw + Math.PI), r3(this.rig.pitch), w, Math.max(0, STATES.indexOf(mv.state)), f, r2(this.rig.lean), Math.round(performance.now())] });
+      if (this.host) this.#sendBots();
     }
+    if (this.host && this.bw && !this.ended) this.#runBots(dt);
     if ((this.pingT -= dt) <= 0) { this.pingT = 2; this.send({ t: 'ping', c: performance.now() }); }
 
     const now = performance.now();
     for (const r of this.remotes.values()) { r.flushHits(); r.update(dt, now); }
+    this.#flushHits();
     if (this.ended) this.#voteClock();
     this.fx.update(dt, camera);
     this.ui.update(dt, { ally: 0, enemy: 0 }, this.time);
