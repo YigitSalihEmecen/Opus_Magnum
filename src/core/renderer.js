@@ -354,7 +354,7 @@ const ZERO4 = [0, 0, 0, 0];
 const _c = new THREE.Vector3(), _f = new THREE.Vector3(), _lx = new THREE.Vector3(), _ly = new THREE.Vector3(), _lz = new THREE.Vector3();
 /**
  * A sun with userData.shadowFollow = r keeps its shadow box (±r m) on the view instead of on the whole map, so
- * the same map size gives sharp shadows on any level. The box sits a little ahead of the view and moves in
+ * the same map size gives sharp shadows on any level, and sets its normal bias to the texel size. The box sits a little ahead of the view and moves in
  * whole shadow texels, so standing shadows don't shimmer as you walk.
  */
 function followShadow(light, cam) {
@@ -367,6 +367,9 @@ function followShadow(light, cam) {
   _lx.set(0, 1, 0).cross(_lz).normalize();
   _ly.crossVectors(_lz, _lx);
   const texel = (2 * r) / light.shadow.mapSize.x;
+  // look the shadow up half a texel off the surface: enough to stop acne, little enough that the shade right under
+  // a ledge or a cap stays shut (a bigger offset leaks a lit strip there)
+  light.shadow.normalBias = texel * 0.5;
   const x = Math.round(_c.dot(_lx) / texel) * texel, y = Math.round(_c.dot(_ly) / texel) * texel, z = _c.dot(_lz);
   _c.set(0, 0, 0).addScaledVector(_lx, x).addScaledVector(_ly, y).addScaledVector(_lz, z);
   light.target.position.copy(_c);

@@ -265,6 +265,5 @@ function atmosphere(scene, group, half) {
   c.near = 10;
   c.far = 260;
   sun.shadow.bias = -0.0004;
-  sun.shadow.normalBias = 0.09; // ~2 texels: no acne stripes on walls lit at grazing angles
   group.add(sun, sun.target);
 }
