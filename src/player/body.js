@@ -23,8 +23,12 @@ export class PlayerBody {
     if (this.avatar) this.scene.remove(this.avatar.root);
     const a = (this.avatar = new Avatar({ team: 'player', name: '', char: id }));
     const B = a.motion.bones;
-    B.chest.visible = false; // shoulders, arms, neck, head and the third-person gun all hang off it
-    for (const b of [B.hips, B.spine]) for (const c of b.children) if (c.isMesh) c.visible = false; // the plating, not the legs
+    // shoulders, arms, neck, head and the third-person gun all hang off the chest; the hips' and spine's own
+    // plating would sit under the lens. Skinned parts are hidden by collapsing them, the rest by visibility.
+    B.chest.visible = false;
+    const hide = (o) => { if (o.userData.skinPart) o.scale.setScalar(0); };
+    B.chest.traverse(hide);
+    for (const b of [B.hips, B.spine]) b.children.forEach(hide);
     a.root.traverse((o) => { if (o.isMesh) o.castShadow = false; });
     this.scene.add(a.root);
   }

@@ -385,12 +385,11 @@ function coloured(mesh, matrix) {
 }
 
 /**
- * Draw-call reduction for a whole character: every rigid leaf mesh is merged into one mesh per parent (bone,
- * mirror group, or ram barrel/rod), coloured per vertex through one shared toon material. Same triangles in
- * the same places, so silhouettes and hitboxes are unchanged; only the draw count drops (~230 → ~80 a robot).
+ * Every rigid leaf mesh is merged into one mesh per parent (bone, mirror group, or ram barrel/rod), coloured per
+ * vertex through one shared toon material (~230 meshes → ~80 a robot). skinParts then makes those one draw.
  * Glowing (unlit) parts are left as they are.
  */
-export function bakeParts(root) {
+function bakeParts(root) {
   const mat = toon(0xffffff, { rim: 0.25, vertexColors: true });
   const nodes = [];
   root.traverse((o) => nodes.push(o));
@@ -403,12 +402,54 @@ export function bakeParts(root) {
     const merged = mergeGeometries(geos);
     for (const m of leaves) node.remove(m);
     if (self) { node.geometry = merged; node.material = mat; }
-    else { const m = new THREE.Mesh(merged, mat); m.castShadow = true; node.add(m); }
+    else node.add(new THREE.Mesh(merged, mat));
   }
-  // every lit material still in use (for the hit flash)
-  const mats = new Set();
-  root.traverse((o) => { if (o.isMesh && o.material.emissive) mats.add(o.material); });
-  return [...mats];
+}
+
+/**
+ * One draw call for the whole character: every lit part becomes a piece of one SkinnedMesh, rigidly bound
+ * (weight 1) to the part itself as its bone. The parts stay in the graph, invisible, so posing, rams and IK
+ * move them as before and the skin follows. A part can be hidden by scaling it to zero (the first-person body).
+ */
+function skinParts(root) {
+  root.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
+  const parts = [];
+  root.traverse((o) => { if (o.isMesh && o.visible && o.material.isMeshToonMaterial) parts.push(o); });
+  const geos = parts.map((p, i) => {
+    let g = p.material.vertexColors ? p.geometry.clone() : coloured(p, _bm.identity());
+    if (g.index) g = g.toNonIndexed();
+    for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'color'].includes(k)) g.deleteAttribute(k);
+    _bm.multiplyMatrices(inv, p.matrixWorld);
+    g.applyMatrix4(_bm);
+    if (_bm.determinant() < 0) flipWinding(g); // a mirrored part (the left hand): the renderer won't flip it for us now
+    const n = g.attributes.position.count, si = new Uint16Array(n * 4), sw = new Float32Array(n * 4);
+    for (let v = 0; v < n; v++) { si[v * 4] = i; sw[v * 4] = 1; }
+    g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4));
+    g.setAttribute('skinWeight', new THREE.BufferAttribute(sw, 4));
+    return g;
+  });
+  const skin = new THREE.SkinnedMesh(mergeGeometries(geos), toon(0xffffff, { rim: 0.25, vertexColors: true }));
+  skin.castShadow = true;
+  // fixed, generous bounds for culling: computing them would skin every vertex on the CPU
+  skin.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 1, 0), 1.6);
+  root.add(skin);
+  skin.bind(new THREE.Skeleton(parts));
+  for (const p of parts) { p.visible = false; p.userData.skinPart = true; p.geometry.dispose(); p.geometry = NO_GEOMETRY; }
+  return skin;
+}
+
+const NO_GEOMETRY = new THREE.BufferGeometry(); // a skinned part's own copy is only dead weight
+
+function flipWinding(g) {
+  for (const a of Object.values(g.attributes)) {
+    const s = a.itemSize, arr = a.array, tmp = new Float32Array(s);
+    for (let t = 0; t < a.count; t += 3) {
+      tmp.set(arr.subarray((t + 1) * s, (t + 2) * s));
+      arr.copyWithin((t + 1) * s, (t + 2) * s, (t + 3) * s);
+      arr.set(tmp, (t + 2) * s);
+    }
+  }
 }
 
 /**
@@ -431,15 +472,17 @@ export function bakeFlat(root) {
   root.add(mesh);
 }
 
-/** Common tail of every character builder: bake, bone map, skeleton, hit zones (head = neck and above), rams. */
+/** Common tail of every character builder: bake, bone map, skeleton, hit zones (head = neck and above), rams, skin. */
 export function finishRobot({ root, links, ...rest }) {
-  const baked = bakeParts(root);
+  bakeParts(root);
   const bones = {};
   root.traverse((o) => { if (o.isBone) bones[o.name] = o; });
   const skeleton = new THREE.Skeleton(Object.values(bones));
   const update = () => { root.updateMatrixWorld(true); for (const l of links) l(); };
   update();
-  return { root, bones, skeleton, hitboxes: hitProxies(root, bones), update, flashMats: baked, ...rest };
+  const hitboxes = hitProxies(root, bones);
+  const skin = skinParts(root);
+  return { root, bones, skeleton, hitboxes, update, flashMats: [skin.material], ...rest };
 }
 
 // one rough box per body segment, a little bigger than the plating; hands and feet ride with their limb
