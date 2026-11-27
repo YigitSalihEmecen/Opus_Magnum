@@ -270,6 +270,7 @@ function bindWorld() {
   mv.octree = level.octree;
   targets = level.targets;
   if (level.doors) Object.assign(level.doors, { audio, camera }).attach(level.octree);
+  renderer.warm(scene, camera, vmScene, vmCamera);
 }
 
 const title = new Title(document.getElementById('title'), {
@@ -488,7 +489,7 @@ requestAnimationFrame(frame);
 drawWeapon(0);
 
 window.OM = {
-  body,
+  body, renderer,
   get vm() { return vm; }, get gun() { return gun; }, arsenal, switchWeapon, inv, vitals, get grenades() { return grenades; },
   mv, rig, melee, handheld, get level() { return level; }, get lobby() { return lobby; }, scene, vmScene, input, gunsmith, setInspect, startMode,
   step: (n = 1, dt = 1 / 60) => { for (let i = 0; i < n; i++) tick(dt); },

@@ -239,6 +239,20 @@ export class Renderer {
     scene.background = bg;
   }
 
+  /**
+   * Compile every material in the scenes now, hidden ones too (effects, the other guns), so the first explosion
+   * or weapon swap doesn't stall a frame on shader compiles. The browser finishes them in the background.
+   */
+  warm(world, worldCam, vm, vmCam) {
+    const hidden = [];
+    for (const sc of [world, vm]) sc.traverse((o) => { if (!o.visible) { hidden.push(o); o.visible = true; } });
+    this.gl.setRenderTarget(this.world); // programs depend on the target (it's linear, the canvas sRGB)
+    const done = Promise.all([this.gl.compileAsync(world, worldCam), this.gl.compileAsync(vm, vmCam)]);
+    for (const o of hidden) o.visible = false; // compiling started synchronously; nothing renders in between
+    this.gl.setRenderTarget(null);
+    return done;
+  }
+
   /** opts.eyepiece: { x, y, r, shadow } in screen UV (or null); opts.focus: 0..1 inspect blur. */
   render(world, worldCam, vm, vmCam, { eyepiece = null, focus = 0 } = {}) {
     const u = this.composite.uniforms;
