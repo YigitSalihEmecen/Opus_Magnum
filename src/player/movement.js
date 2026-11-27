@@ -46,7 +46,7 @@ export const MOVE = {
 
   vaultMinHeight: 0.45,
   vaultMaxHeight: 1.35, // cover, rails, half walls, window sills
-  vaultMaxDepth: 1.7, // anything thicker is climbed onto instead
+  vaultMaxDepth: 0.6, // thin things only (walls, rails, sills): anything deeper, a crate say, is climbed onto
   vaultReach: 0.55, // + vaultReachPerSpeed × speed: sprinting spots the obstacle earlier
   vaultReachPerSpeed: 0.11,
   vaultMinSpeed: 5.4 * SPEED, // carried over the top; faster approaches keep their speed

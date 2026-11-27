@@ -7,9 +7,9 @@ import { FX_LAYER } from '../../core/renderer.js';
 /*
   Animation demo: a small parkour loop in front of you, and three robots running it one behind the other,
   driven exactly as the game drives bodies (position, velocity, aim, stance) — nothing here poses a bone.
-    near leg   sprint · vault a crate · slide · climb onto a platform · jump the gap · drop down
-    far leg    vault the half wall · crouch along the cover · strafe · backpedal · stop and reload · walk out
-  Vaults follow the game's own path: up to the top, flat across, drop
+    near leg   sprint · climb onto a crate and jump off · slide · climb onto a platform · jump the gap · drop
+    far leg    vault through a window · crouch along the cover · strafe · backpedal · stop and reload · walk out
+  Vaults follow the game's own path: up to the sill, flat across, drop
   A tag over each says what it's doing. [ and ] slow down / speed up time, \ pauses it.
   Loaded only when picked (main.js MODES).
 */
@@ -24,7 +24,7 @@ const PIECES = [
   { type: 'crate', x: -8, y: 0, z: FRONT, rot: 0 },
   { type: 'floor', x: 4, y: PLAT, z: FRONT, rot: 0 },
   { type: 'floor', x: 10.5, y: PLAT, z: FRONT, rot: 0 },
-  { type: 'wall_half', x: 7, y: 0, z: BACK, rot: 90 },
+  { type: 'wall_window', x: 7, y: 0, z: BACK, rot: 90 },
   { type: 'wall_half', x: -6, y: 0, z: BACK - 1.1, rot: 0 },
   { type: 'wall_half', x: -10, y: 0, z: BACK - 1.1, rot: 0 },
 ];
@@ -33,10 +33,10 @@ const PIECES = [
 // closed curve, speed eases toward each part's own
 const ROUTE = [
   { p: [-16, 0, FRONT], label: 'Sprint', sp: 5.7 },
-  { p: [-9.7, 0, FRONT], label: 'Vault', sp: 6, pose: { vault: 1 } },
-  { p: [-8.7, 1.26, FRONT], label: 'Vault', sp: 6, pose: { vault: 1 } },
-  { p: [-7.3, 1.26, FRONT], label: 'Vault', sp: 6, pose: { vault: 1 } },
-  { p: [-6.2, 0, FRONT], label: 'Sprint', sp: 5.7 },
+  { p: [-9.4, 0, FRONT], label: 'Climb', sp: 2.4, pose: { mantle: 1 } },
+  { p: [-8.3, 1.2, FRONT], label: 'Run', sp: 3.6 },
+  { p: [-7.5, 1.2, FRONT], label: 'Jump down', sp: 4.6, pose: { air: 1 } },
+  { p: [-5.8, 0, FRONT], label: 'Sprint', sp: 5.7 },
   { p: [-4, 0, FRONT], label: 'Slide', sp: 6.2, pose: { slide: 1, crouch: 1 } },
   { p: [0.2, 0, FRONT], label: 'Run', sp: 4.2 },
   { p: [1.2, 0, FRONT], label: 'Climb', sp: 2.2, pose: { mantle: 1 } },
@@ -48,9 +48,9 @@ const ROUTE = [
   { p: [14, 0, FRONT], label: 'Run', sp: 4.6 },
   { p: [17, 0, -6.5], label: 'Run', sp: 4.6 },
   { p: [13.5, 0, BACK], label: 'Sprint', sp: 5.7 },
-  { p: [8.6, 0, BACK], label: 'Vault', sp: 6, pose: { vault: 1 } },
-  { p: [7.6, 1.21, BACK], label: 'Vault', sp: 6, pose: { vault: 1 } },
-  { p: [6.4, 1.21, BACK], label: 'Vault', sp: 6, pose: { vault: 1 } },
+  { p: [8.4, 0, BACK], label: 'Vault', sp: 5.4, pose: { vault: 1 } },
+  { p: [7.45, 1.06, BACK], label: 'Vault', sp: 5.4, pose: { vault: 1 } },
+  { p: [6.55, 1.06, BACK], label: 'Vault', sp: 5.4, pose: { vault: 1 } },
   { p: [5.2, 0, BACK], label: 'Sprint', sp: 5.7 },
   { p: [-1.4, 0, BACK], label: 'Run', sp: 4.2 },
   { p: [-3.5, 0, BACK], label: 'Crouch walk', sp: 2, pose: { crouch: 1 } },
@@ -61,7 +61,7 @@ const ROUTE = [
 ];
 
 // what's underfoot: the tops of the platforms and the things vaulted (half extents along x, z), else the ground
-const TOPS = { floor: [2, 2, PLAT], crate: [0.6, 0.6, 1.2], wall_half: [2, 0.15, 1.15] };
+const TOPS = { floor: [2, 2, PLAT], crate: [0.6, 0.6, 1.2], wall_window: [0.7, 0.15, 1.0] }; // the window: its sill
 const support = (x, z) => Math.max(0, ...PIECES.filter((q) => TOPS[q.type]).map((q) => {
   const [hx, hz, top] = TOPS[q.type], turned = Math.abs(Math.sin(((q.rot ?? 0) * Math.PI) / 180)) > 0.5;
   return Math.abs(x - q.x) < (turned ? hz : hx) && Math.abs(z - q.z) < (turned ? hx : hz) ? top : 0;

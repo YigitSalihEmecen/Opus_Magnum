@@ -269,7 +269,9 @@ export class Avatar {
     const leanX = S.leanX.to(THREE.MathUtils.clamp(0.1 * run + fwd * 0.018, -0.12, 0.22), HL.lean, dt);
     const leanY = S.leanY.to(THREE.MathUtils.clamp(-this.turnRate * sp * 0.025, -0.22, 0.22), HL.lean, dt);
     this.body.rotation.set(leanX * (1 - w.slide), 0, leanY * base, 'YXZ');
-    if (w.vault > 0.01) this.#skim(w.vault);
+    // vaults and climbs: the clips carry their own rise, the game moves the body; keep the feet on its line
+    const skim = Math.max(w.vault, w.mantle);
+    if (skim > 0.01) this.#skim(skim);
 
     this.dt = dt;
     this.#holdGun(w);
@@ -281,7 +283,7 @@ export class Avatar {
     for (const mt of this.mats) mt.emissive.setScalar(e);
   }
 
-  /** Vaulting: hips down (or up) until the lower foot skims what the body is passing over (its feet line). */
+  /** Vaulting or climbing: hips down (or up) until the lower foot skims what the body is passing over (its feet line). */
   #skim(k) {
     const B = this.motion.bones;
     this.root.updateMatrixWorld(true);
