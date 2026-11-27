@@ -43,16 +43,19 @@ uniform float near, far, vmNear, vmFar, fogNear, fogFar, lineWidth;
 uniform vec3 ink;
 uniform vec2 eyeCenter;
 uniform float eyeRadius, eyeShadow, aspect, focus;
+uniform float worldScale; // the world target's resolution scale (dynamic resolution); the viewmodel's is 1
 
 float viewZ(float d, float n, float f) { return -perspectiveDepthToViewZ(d, n, f); }
 
-// Outline from depth discontinuities + normal creases (cross-shaped kernel). sparse: a mostly empty layer (the
-// viewmodel): where none of the five depths was drawn, skip the normals.
-float edge(sampler2D tD, sampler2D tN, vec2 uv, float n, float f, float depthTol, bool sparse, out float z0) {
-  vec2 o = texel * lineWidth;
+// Outline from depth discontinuities + normal creases (cross-shaped kernel), lines lineWidth screen pixels wide
+// (at least one texel of a target drawn at scale s). sparse: a mostly empty layer (the viewmodel): where none of
+// the five depths was drawn, skip the normals.
+float edge(sampler2D tD, sampler2D tN, vec2 uv, float s, float n, float f, float depthTol, bool sparse, out float z0) {
+  vec2 o = texel * max(lineWidth, 1.0 / s);
+  vec2 ul = uv - vec2(o.x, 0.0), ur = uv + vec2(o.x, 0.0), uu = uv + vec2(0.0, o.y), ud = uv - vec2(0.0, o.y);
   float d0 = texture2D(tD, uv).x;
-  float dl = texture2D(tD, uv - vec2(o.x, 0.0)).x, dr = texture2D(tD, uv + vec2(o.x, 0.0)).x;
-  float du = texture2D(tD, uv + vec2(0.0, o.y)).x, dd = texture2D(tD, uv - vec2(0.0, o.y)).x;
+  float dl = texture2D(tD, ul).x, dr = texture2D(tD, ur).x;
+  float du = texture2D(tD, uu).x, dd = texture2D(tD, ud).x;
   z0 = viewZ(d0, n, f);
   if (sparse && min(min(d0, dl), min(min(dr, du), dd)) >= 1.0) return 0.0;
   float zl = viewZ(dl, n, f), zr = viewZ(dr, n, f), zu = viewZ(du, n, f), zd = viewZ(dd, n, f);
@@ -62,10 +65,10 @@ float edge(sampler2D tD, sampler2D tN, vec2 uv, float n, float f, float depthTol
 
   vec4 n0 = texture2D(tN, uv);
   vec3 c = n0.xyz * 2.0 - 1.0;
-  vec3 nl = texture2D(tN, uv - vec2(o.x, 0.0)).xyz * 2.0 - 1.0;
-  vec3 nr = texture2D(tN, uv + vec2(o.x, 0.0)).xyz * 2.0 - 1.0;
-  vec3 nu = texture2D(tN, uv + vec2(0.0, o.y)).xyz * 2.0 - 1.0;
-  vec3 nd = texture2D(tN, uv - vec2(0.0, o.y)).xyz * 2.0 - 1.0;
+  vec3 nl = texture2D(tN, ul).xyz * 2.0 - 1.0;
+  vec3 nr = texture2D(tN, ur).xyz * 2.0 - 1.0;
+  vec3 nu = texture2D(tN, uu).xyz * 2.0 - 1.0;
+  vec3 nd = texture2D(tN, ud).xyz * 2.0 - 1.0;
   float dn = (1.0 - dot(c, nl)) + (1.0 - dot(c, nr)) + (1.0 - dot(c, nu)) + (1.0 - dot(c, nd));
   float ne = smoothstep(0.45, 0.8, dn) * n0.a;
   return max(de, ne);
@@ -74,7 +77,7 @@ float edge(sampler2D tD, sampler2D tN, vec2 uv, float n, float f, float depthTol
 void main() {
   vec2 uvW = vUv;
   float zw;
-  float ew = edge(tWorldDepth, tWorldNormal, uvW, near, far, 0.06, false, zw);
+  float ew = edge(tWorldDepth, tWorldNormal, uvW, worldScale, near, far, 0.06, false, zw);
   float fog = smoothstep(fogNear, fogFar, zw);
   vec3 world = texture2D(tWorld, uvW).rgb;
   world = mix(world, ink, ew * (1.0 - fog) * 0.92 * (1.0 - focus));
@@ -100,7 +103,7 @@ void main() {
   }
 
   float zv;
-  float ev = edge(tVMDepth, tVMNormal, vUv, vmNear, vmFar, 0.12, true, zv);
+  float ev = edge(tVMDepth, tVMNormal, vUv, 1.0, vmNear, vmFar, 0.12, true, zv);
   vec4 vm = texture2D(tVM, vUv);
   vec3 col = mix(world, vm.rgb / max(vm.a, 1e-4), vm.a);
   col = mix(col, ink, ev * 0.95);
@@ -124,14 +127,23 @@ function makeTarget(w, h) {
 }
 
 /**
- * Graphics presets. Rendering only: resolution, anti-aliasing and shadows. Geometry, placement, hitboxes and
- * view distance are identical on every preset, so nobody gains a gameplay edge from a lower setting.
+ * Graphics presets. Rendering only: placement, hitboxes, view distance and silhouettes are identical on every
+ * preset, so nobody gains a gameplay edge from a lower setting.
+ *   ratio        pixel ratio cap for the screen, the gun and the ink lines (always crisp)
+ *   minScale     how far the world alone may drop below that when the GPU runs over budget (dynamic resolution;
+ *                flat toon colour upscales cleanly). A fast machine stays at full scale on every preset.
+ *   fixed        the world's scale where the GPU can't be timed (Safari)
+ *   shadows      on/off; shadowScale × the map size each level asks for; shadowEvery: refresh every n frames
+ *   lod          × the distances characters switch to their coarser models at
  */
 export const QUALITY = {
-  high: { ratio: 2, scale: 1, shadows: true, shadowScale: 1, shadowEvery: 1 },
-  medium: { ratio: 1.5, scale: 1, shadows: true, shadowScale: 0.5, shadowEvery: 2 },
-  low: { ratio: 1, scale: 0.75, shadows: false, shadowScale: 0.5, shadowEvery: 4 },
+  high: { ratio: 2, minScale: 0.85, fixed: 1, shadows: true, shadowScale: 1, shadowEvery: 1, lod: 1 },
+  medium: { ratio: 2, minScale: 0.7, fixed: 0.85, shadows: true, shadowScale: 0.5, shadowEvery: 2, lod: 0.6 },
+  low: { ratio: 1, minScale: 0.6, fixed: 0.75, shadows: false, shadowScale: 0.5, shadowEvery: 4, lod: 0.4 },
 };
+const GPU_BUDGET = 8.5; // ms a frame the GPU may take: room for 100 fps with the CPU's share overlapped
+const ADAPT_EVERY = 250; // ms between dynamic resolution steps (STEP of the world's scale)
+const STEP = 0.05;
 
 /**
  * Two-scene renderer: world + first-person viewmodel, each rendered in one pass to colour/normal/depth
@@ -171,6 +183,7 @@ export class Renderer {
         eyeCenter: { value: new THREE.Vector2(0.5, 0.5) },
         eyeRadius: { value: 0.1 }, eyeShadow: { value: 0 },
         aspect: { value: 1 }, focus: { value: 0 },
+        worldScale: { value: 1 },
       },
       depthTest: false,
       depthWrite: false,
@@ -182,9 +195,14 @@ export class Renderer {
     this.quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     this.q = QUALITY.high;
     this.frameN = 0;
+    this.scale = 1; // the world's current resolution scale
+    this.gpuMs = 0; // smoothed GPU time a frame, where the browser can measure it
+    this.timer = gl.getContext().getExtension('EXT_disjoint_timer_query_webgl2'); // none in Safari: no dynamic resolution
+    this.queries = [];
+    this.adaptT = 0;
   }
 
-  /** Switch preset: pixel ratio, shadow on/off + resolution + refresh rate. */
+  /** Switch preset: pixel ratio, world scale floor, shadow on/off + resolution + refresh rate, LOD distances. */
   setQuality(name) {
     const q = QUALITY[name] ?? QUALITY.high;
     if (q === this.q && this.qSet) return;
@@ -192,20 +210,22 @@ export class Renderer {
     this.q = q;
     this.qSet = true;
     const gl = this.gl;
-    gl.setPixelRatio(Math.min(window.devicePixelRatio, q.ratio) * q.scale);
+    gl.setPixelRatio(Math.min(window.devicePixelRatio, q.ratio));
     this.composite.uniforms.lineWidth.value = Math.max(1, gl.getPixelRatio());
     if (prev.shadows !== q.shadows) { gl.shadowMap.enabled = q.shadows; this.recompile = true; }
-    this.lightsFor = null; // re-apply shadow resolution on the next frame
+    this.lightsFor = null; // re-apply shadow resolution and LOD distances on the next frame
+    this.#setScale(this.timer ? Math.max(this.scale, q.minScale) : q.fixed);
     if (this.cssW) this.resize(this.cssW, this.cssH);
   }
 
-  /** Shadow map size per preset (each light remembers the size its level asked for). */
-  #applyShadows(scene) {
-    // re-run when the scene's content changes (a level or the lobby was added) or the preset changed
+  /** Shadow map size and LOD distances per preset (each light and LOD remembers what its builder asked for). */
+  #applyPreset(scene) {
+    // re-run when the scene's content changes (a level, a player or the lobby was added) or the preset changed
     if (this.lightsFor === scene && this.lightsN === scene.children.length && !this.recompile) return;
     this.followers = [];
     scene.traverse((o) => {
       if (this.recompile && o.material) for (const m of [].concat(o.material)) m.needsUpdate = true;
+      if (o.isLOD) for (const l of o.levels) l.distance = (l.object.userData.lodFrom ??= l.distance) * this.q.lod;
       if (!o.isLight || !o.shadow) return;
       if (o.userData.shadowFollow) this.followers.push(o);
       const base = (o.userData.baseShadow ??= o.shadow.mapSize.x);
@@ -221,8 +241,58 @@ export class Renderer {
     this.cssW = w; this.cssH = h;
     this.gl.setSize(w, h, false);
     this.gl.getDrawingBufferSize(this.size);
-    for (const t of [this.world, this.vm]) t.setSize(this.size.x, this.size.y);
+    this.vm.setSize(this.size.x, this.size.y);
     this.composite.uniforms.texel.value.set(1 / this.size.x, 1 / this.size.y);
+    this.#setScale(this.scale);
+  }
+
+  /**
+   * The world's target at `s` of the screen's resolution; the composite stretches it back (bilinear: flat toon
+   * colour upscales cleanly) and draws the ink lines and the gun at full resolution. A real resize, not a smaller
+   * viewport: a tiled GPU clears and stores the whole target either way. Steps are rare (see #adapt).
+   */
+  #setScale(s) {
+    this.scale = s;
+    this.world.setSize(Math.max(1, Math.round(this.size.x * s)), Math.max(1, Math.round(this.size.y * s)));
+    this.composite.uniforms.worldScale.value = s;
+  }
+
+  /**
+   * Dynamic resolution: time each frame on the GPU (results arrive a few frames late) and step the world's scale
+   * down when it runs over budget, back up when there's clear room. Steps are slow and small, and a step up only
+   * happens well under budget, so it settles instead of pumping.
+   */
+  #timeFrame(begin) {
+    const ext = this.timer;
+    if (!ext) return;
+    const ctx = this.gl.getContext();
+    if (begin) {
+      while (this.queries.length && ctx.getQueryParameter(this.queries[0], ctx.QUERY_RESULT_AVAILABLE)) {
+        const q = this.queries.shift();
+        const ms = ctx.getQueryParameter(q, ctx.QUERY_RESULT) / 1e6;
+        ctx.deleteQuery(q);
+        if (!ctx.getParameter(ext.GPU_DISJOINT_EXT)) this.#adapt(ms);
+      }
+      if (this.queries.length >= 4) return; // results stalled: skip timing rather than pile up queries
+      this.query = ctx.createQuery();
+      ctx.beginQuery(ext.TIME_ELAPSED_EXT, this.query);
+    } else if (this.query) {
+      ctx.endQuery(ext.TIME_ELAPSED_EXT);
+      this.queries.push(this.query);
+      this.query = null;
+    }
+  }
+
+  #adapt(ms) {
+    this.gpuMs = this.gpuMs ? this.gpuMs * 0.9 + ms * 0.1 : ms;
+    const now = performance.now();
+    if (now - this.adaptT < ADAPT_EVERY) return;
+    this.adaptT = now;
+    let s = this.scale;
+    if (this.gpuMs > GPU_BUDGET) s -= STEP;
+    else if (this.gpuMs < GPU_BUDGET * 0.7) s += STEP;
+    s = Math.round(THREE.MathUtils.clamp(s, this.q.minScale, 1) * 100) / 100;
+    if (s !== this.scale) this.#setScale(s);
   }
 
   #pass(scene, camera, target, clearAlpha) {
@@ -267,13 +337,15 @@ export class Renderer {
     u.vmNear.value = vmCam.near; u.vmFar.value = vmCam.far;
     if (world.fog) { u.fogNear.value = world.fog.near; u.fogFar.value = world.fog.far; }
 
-    this.#applyShadows(world);
+    this.#applyPreset(world);
     for (const l of this.followers) followShadow(l, worldCam);
+    this.#timeFrame(true);
     this.gl.shadowMap.needsUpdate = this.frameN++ % this.q.shadowEvery === 0;
     this.#pass(world, worldCam, this.world, 1);
     this.#pass(vm, vmCam, this.vm, 0);
     this.gl.setRenderTarget(null);
     this.gl.render(this.quadScene, this.quadCam);
+    this.#timeFrame(false);
   }
 }
 
