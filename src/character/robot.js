@@ -490,7 +490,7 @@ const D2R = Math.PI / 180;
  * Put both hands on a gun using its first-person grip poses (gun space, same hand frame):
  * `frame` is the gun's frame (the gun model sits inside it), `poses` the weapon def's poses.
  */
-export function gripGun(robot, frame, poses, { left = poses.lhRest, trigger = poses.triggerCurl, leftTo = null } = {}) {
+export function gripGun(robot, frame, poses, { left = poses.lhRest, trigger = poses.triggerCurl, leftTo = null, rightTo = null } = {}) {
   frame.updateWorldMatrix(true, false);
   for (const [side, pose] of [['R', poses.rightHand], ['L', left]]) {
     if (!pose) continue;
@@ -500,14 +500,15 @@ export function gripGun(robot, frame, poses, { left = poses.lhRest, trigger = po
     _hp.updateMatrix();
     _hm.multiplyMatrices(frame.matrixWorld, _hp.matrix);
     let curl = pose[6];
-    // leftTo { matrix (world), k 0..1, curl?, rot? }: the support hand leaves the gun for somewhere else (a vault's
-    // plant, a knife swing); rot false keeps the grip's turn and moves only the hand's place
-    if (side === 'L' && leftTo?.k > 0) {
+    // leftTo / rightTo { matrix (world), k 0..1, curl?, rot? }: a hand leaves the gun for somewhere else (a vault's
+    // plant, a ledge, a knife swing); rot false keeps the grip's turn and moves only the hand's place
+    const to = side === 'L' ? leftTo : rightTo;
+    if (to?.k > 0) {
       _hm.decompose(_ga, _gq, _gs);
-      leftTo.matrix.decompose(_gb, _gr, _gs);
-      if (leftTo.rot !== false) _gq.slerp(_gr, leftTo.k);
-      _hm.compose(_ga.lerp(_gb, leftTo.k), _gq, _gs.set(1, 1, 1));
-      curl += ((leftTo.curl ?? curl) - curl) * leftTo.k;
+      to.matrix.decompose(_gb, _gr, _gs);
+      if (to.rot !== false) _gq.slerp(_gr, to.k);
+      _hm.compose(_ga.lerp(_gb, to.k), _gq, _gs.set(1, 1, 1));
+      curl += ((to.curl ?? curl) - curl) * to.k;
     }
     // elbows down and out, a little back
     arm.shoulder.localToWorld(_pole.set(side === 'L' ? 0.35 : -0.35, -0.6, -0.25));

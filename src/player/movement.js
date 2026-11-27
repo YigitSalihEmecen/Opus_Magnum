@@ -298,6 +298,12 @@ export class Movement {
       crouch = true;
     }
 
+    // where the hands grab: the ledge's edge, a shoulder's width apart (kept after the climb, so the hands can
+    // let go of it smoothly)
+    const edge = wall.position.clone().addScaledVector(n, -0.08).setY(ledge.position.y);
+    const side = _v.set(-n.z, 0, n.x).multiplyScalar(-0.27); // to the right, facing the wall
+    this.ledgeGrab = { L: edge.clone().sub(side), R: edge.clone().add(side), dir: n.clone().negate() };
+
     const prev = this.state;
     this.state = 'mantle';
     this.mantle = {

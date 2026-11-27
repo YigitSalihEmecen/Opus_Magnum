@@ -84,7 +84,7 @@ export class CameraRig {
 
     // mantle dip
     const mp = mv.mantleProgress;
-    const mantlePitch = mv.state === 'mantle' ? -Math.sin(mp * Math.PI) * 5 * D2R : 0;
+    const mantlePitch = mv.state === 'mantle' ? -Math.sin(mp * Math.PI) * 12 * D2R : 0; // a look down at the hands on the ledge
     const mantleRoll = mv.state === 'mantle' ? Math.sin(mp * Math.PI) * 2.5 * D2R : 0;
     // vault: a quick dip of the head and a lean toward the planted hand
     const vaultK = mv.state === 'vault' ? Math.sin(mp * Math.PI) : 0;
