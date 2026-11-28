@@ -10,6 +10,7 @@ const _aim = new THREE.Vector3();
 /** Aim input mode, shared by every gun (pause menu → Controls). */
 export const AIM = { mode: 'hold' };
 const _right = new THREE.Vector3();
+const PULL_BUFFER = 0.2; // s: how early a single-shot pull may come and still fire once the gun is ready
 const _up = new THREE.Vector3();
 
 /**
@@ -32,6 +33,7 @@ export class Gunplay {
     this.mode = this.modes[0];
     this.burstLeft = 0;
     this.cooldown = 0;
+    this.pull = 0;
     this.shotIndex = 0;
     this.sinceShot = 99;
     this.ads = 0;
@@ -60,6 +62,7 @@ export class Gunplay {
     this.hud.setModes(this.modes);
     this.vm.setFireMode(this.modes.indexOf(this.mode));
     this.burstLeft = 0;
+    this.pull = 0;
     this.loading = null;
     this.vm.playEquip();
   }
@@ -134,6 +137,8 @@ export class Gunplay {
     // trigger
     const held = input.mouse(0);
     const pressed = input.clicked(0);
+    // single-shot modes: a pull up to PULL_BUFFER s before the gun is ready again is kept and fires the moment it is
+    this.pull = pressed ? PULL_BUFFER : Math.max(0, this.pull - dt);
     this.triggerHeld = (held || this.burstLeft > 0) && this.ammo > 0 && !reloading && canAct;
     if (held && canAct) mv.blockSprint(0.3);
     const ready = canAct && !this.vm.busy && this.vm.w.sprint < 0.3;
@@ -141,11 +146,14 @@ export class Gunplay {
       // a burst finishes on its own once started
       if (!ready || this.ammo === 0) this.burstLeft = 0;
       else if (this.cooldown <= 0) this.#shot(mv, camera, targets, now);
-    } else if (held && ready) {
+    } else if ((held || this.pull > 0) && ready) {
       if (this.ammo === 0) {
         if (pressed) { this.audio.play('click', { volume: 0.7, rate: 0.9 }); if (this.reserve > 0) this.#reload(); else this.hud.toast('No ammo'); }
-      } else if (this.cooldown <= 0 && (this.mode === 'auto' || pressed)) {
-        if (this.cooldown < -0.05) this.cooldown = 0;
+      } else if (this.cooldown <= 0 && (this.mode === 'auto' ? held : this.pull > 0)) {
+        // full auto carries the remainder for a steady cadence; a single pull starts the clock fresh, so shots
+        // are never closer than 60 / rpm however fast the clicks come
+        if (this.mode !== 'auto' || this.cooldown < -0.05) this.cooldown = 0;
+        this.pull = 0;
         if (this.mode === 'burst') this.burstLeft = this.S.burst;
         this.#shot(mv, camera, targets, now);
       }
