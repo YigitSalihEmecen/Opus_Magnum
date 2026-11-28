@@ -203,13 +203,15 @@ export class Gunplay {
     const spin = Math.random() * 0.4;
     const muzzle = this.vm.muzzleWorld(camera);
     const tally = new Map();
+    // with an octree, meshes are only tested for what can take damage; the world goes through the octree (far cheaper)
+    const hittable = this.octree ? targets.filter((t) => t.userData.dummy) : targets;
     for (let i = 0; i < n; i++) {
       _dir.copy(_aim);
       if (i > 0) {
         const a = spin + ((i - 1) / (n - 1)) * Math.PI * 2, k = ring * (0.9 + Math.random() * 0.2);
         _dir.addScaledVector(_right, Math.cos(a) * k).addScaledVector(_up, Math.sin(a) * k).normalize();
       }
-      this.#trace(camera, targets, now, muzzle, tally);
+      this.#trace(camera, hittable, now, muzzle, tally);
     }
     for (const [, t] of tally) {
       this.hud.hitmarker(t.killed ? 'kill' : 'hit', t.head);
@@ -244,8 +246,7 @@ export class Gunplay {
   #trace(camera, targets, now, muzzle, tally) {
     this.raycaster.set(camera.position, _dir);
     this.raycaster.camera = camera;
-    // with an octree, meshes are only tested for what can take damage; the world goes through the octree (far cheaper)
-    const hits = this.raycaster.intersectObjects(this.octree ? targets.filter((t) => t.userData.dummy) : targets, false);
+    const hits = this.raycaster.intersectObjects(targets, false);
     let hit = hits.find((h) => !h.object.userData.dummy?.dead && h.object.layers.test(this.raycaster.layers));
     const wall = this.octree?.rayIntersect(this.raycaster.ray);
     if (wall && wall.distance < this.S.range && (!hit || wall.distance < hit.distance)) hit = { point: wall.position, distance: wall.distance, object: null, normal: wall.triangle.getNormal(new THREE.Vector3()) };

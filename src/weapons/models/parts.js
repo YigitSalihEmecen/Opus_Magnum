@@ -51,7 +51,15 @@ export function profile(points, width, { bevel = 0.003, segments = 2, holes = []
   return geo;
 }
 
-export function rbox(w, h, d, r = 0.002) { return new RoundedBoxGeometry(w, h, d, 2, Math.min(r, w / 2, h / 2, d / 2)); }
+/**
+ * Rounded box. A second rounding step costs ~200 triangles a box for curvature under a pixel at gun scale, so
+ * radii up to 3 mm get one (a chamfer) and slivers under 6 mm (vents, pins) a plain box.
+ */
+export function rbox(w, h, d, r = 0.002) {
+  const rr = Math.min(r, w / 2, h / 2, d / 2);
+  if (Math.min(w, h, d) < 0.006 || rr < 0.0008) return new THREE.BoxGeometry(w, h, d);
+  return new RoundedBoxGeometry(w, h, d, rr <= 0.003 ? 1 : 2, rr);
+}
 
 /** Cylinder along the barrel axis between f0 and f1. */
 export function tube(r0, r1, f0, f1, seg = 20, open = false) {

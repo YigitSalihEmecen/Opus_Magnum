@@ -319,7 +319,11 @@ function bindWorld() {
   mv.octree = level.octree;
   targets = level.targets;
   if (level.doors) Object.assign(level.doors, { audio, camera }).attach(level.octree);
+  // holstered guns sit outside the scene: put them in just long enough for their shaders to compile
+  const holstered = arsenal.filter((a) => !a.vm.active);
+  holstered.forEach((a) => a.vm.setActive(true));
   renderer.warm(scene, camera, vmScene, vmCamera);
+  holstered.forEach((a) => a.vm.setActive(false));
 }
 
 const title = new Title(document.getElementById('title'), {
@@ -422,6 +426,7 @@ let now = 0;
 let wasAlive = true;
 let wasLowered = false;
 let beatT = 0;
+let vaultCheckT = 0, canVault = false;
 function tick(dt) {
   now += dt;
   if (loader.active) { input.endFrame(); return; } // the loading sheet covers the screen
@@ -493,8 +498,9 @@ function tick(dt) {
       prompt = door.open ? 'Close door' : 'Open door';
       if (input.pressed('KeyF')) level.doors.toggle(door, mv.feet);
     }
-    // nothing to use here: say so when a jump would vault what's ahead (a ray or two when nothing is there)
-    if (!prompt && mv.vaultAhead(rig.yaw)) prompt = { key: 'Space', text: 'Vault' };
+    // nothing to use here: say so when a jump would vault what's ahead (checked 20 times a second: it's a prompt)
+    if ((vaultCheckT -= dt) <= 0) { vaultCheckT = 0.05; canVault = mv.vaultAhead(rig.yaw); }
+    if (!prompt && canVault) prompt = { key: 'Space', text: 'Vault' };
     // zoom-matched: a mouse inch moves the target the same distance on screen at any magnification
     if (!vm.inspect && !wheel.open) rig.look(input, 1 / rig.zoom);
     mv.update(dt, input, rig.yaw);

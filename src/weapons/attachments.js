@@ -62,7 +62,17 @@ function glass(parent, tex, size, x, y, f, round = true) {
   return m;
 }
 
+// reticles and mag prints are drawn once and shared: an optic or mag is rebuilt on every swap
+const reticles = new Map();
+let curvedPrint, drumPrint;
+
 function reticle(draw, tint = 'rgba(150, 190, 200, 0.10)') {
+  const key = draw.toString() + tint;
+  if (!reticles.has(key)) reticles.set(key, drawReticle(draw, tint));
+  return reticles.get(key);
+}
+
+function drawReticle(draw, tint) {
   const c = document.createElement('canvas');
   c.width = c.height = 512;
   const g = c.getContext('2d');
@@ -181,7 +191,7 @@ function curvedMag(A, { N = 14, R = 0.42, flare = 0.006 } = {}) {
   });
   const outline = (inset = 0, from = 0, to = N) => [...edge(1, inset).slice(from, to + 1), ...edge(-1, inset).slice(from, to + 1).reverse()];
 
-  const printMat = toon(0xffffff, { map: magPrint(), rim: 0.3, rimColor: 0xfff3e8 });
+  const printMat = (curvedPrint ??= toon(0xffffff, { map: magPrint(), rim: 0.3, rimColor: 0xfff3e8 }));
   mesh(mag, profile(outline(), 0.03, { bevel: 0.0035 }), printMat);
   mesh(mag, profile(outline(0, 0, 2), 0.034, { bevel: 0.003 }), MATS.poly);
   mesh(mag, profile(outline(0, N - 2, N), 0.034, { bevel: 0.003 }), MATS.poly);
@@ -218,9 +228,8 @@ function drumMag() {
   const cy = -0.128, cf = 0.03, R = 0.074;
   const body = mesh(mag, new THREE.CylinderGeometry(R, R, 0.058, 48).rotateZ(Math.PI / 2), MATS.poly, 0, cy, cf);
   body.name = 'drum';
-  const tex = magPrint();
-  tex.repeat.set(1.4, 1.4);
-  const printMat = toon(0xffffff, { map: tex, rim: 0.25 });
+  const printMat = (drumPrint ??= toon(0xffffff, { map: magPrint(), rim: 0.25 }));
+  printMat.map.repeat.set(1.4, 1.4);
   for (const side of [-1, 1]) {
     const face = mesh(mag, new THREE.CircleGeometry(R * 0.86, 48), printMat, side * 0.0292, cy, cf);
     face.rotation.y = (side * Math.PI) / 2;

@@ -31,7 +31,7 @@ export const ITEM_MATS = {
 export const glow = (color) => new THREE.MeshBasicMaterial({ color });
 
 export function rbox(w, h, d, r = 0.004) {
-  return new RoundedBoxGeometry(w, h, d, 3, Math.min(r, w / 2 - 1e-4, h / 2 - 1e-4, d / 2 - 1e-4));
+  return new RoundedBoxGeometry(w, h, d, 2, Math.min(r, w / 2 - 1e-4, h / 2 - 1e-4, d / 2 - 1e-4));
 }
 
 /** Vertical cylinder from y0 to y1. */

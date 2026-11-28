@@ -6,6 +6,7 @@ import { ClipPlayer } from './anim.js';
 import { buildClips } from './animations.js';
 import { SLOTS } from './attachments.js';
 import { FX_LAYER } from '../core/renderer.js';
+import { mergeStatic } from '../core/merge.js';
 import { MOVE } from '../player/movement.js';
 
 const D2R = Math.PI / 180;
@@ -68,7 +69,8 @@ function setPose(obj, p) {
   obj.position.set(p[0], p[1], p[2]);
   obj.rotation.set(p[3] * D2R, p[4] * D2R, p[5] * D2R, 'YXZ');
 }
-const lerpArr = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+const lerpArr = (a, b, t, out) => { for (let i = 0; i < a.length; i++) out[i] = a[i] + (b[i] - a[i]) * t; return out; };
+const _lhA = [], _lhB = [], ZERO1 = [0], ZERO2 = [0, 0];
 
 function flashTexture() {
   const c = document.createElement('canvas');
@@ -136,8 +138,10 @@ export class Viewmodel {
     this.sprintRot = v.sprintRot ? new THREE.Vector3(...v.sprintRot).multiplyScalar(D2R) : SPRINT_ROT;
     this.onEvent = () => {};
 
-    this.muzzleLight = new THREE.PointLight(0xffb070, 0, 1.2, 2);
-    scene.add(this.muzzleLight);
+    // one muzzle light for every gun in the scene: each light costs every viewmodel pixel a loop step, lit or not
+    if (!scene.userData.muzzleLight) scene.add((scene.userData.muzzleLight = new THREE.PointLight(0xffb070, 0, 1.2, 2)));
+    this.muzzleLight = scene.userData.muzzleLight;
+    this.active = true;
 
     this.sway = new THREE.Group();
     this.anim = new THREE.Group();
@@ -145,6 +149,8 @@ export class Viewmodel {
     this.sway.add(this.anim);
 
     const { root, parts } = def.build();
+    // static pieces share a draw call per parent and material; everything gunplay moves or swaps stays its own
+    mergeStatic(root, new Set(Object.values(parts).flat().filter((o) => o?.isObject3D)), { vertexRim: true });
     this.model = root;
     this.parts = parts;
     // free: the gun relative to the hands (tosses), rotated about the bore pivot
@@ -250,25 +256,29 @@ export class Viewmodel {
   setCharacter(id) {
     const ch = characterById(id);
     if (this.character === ch.id) return;
-    const visible = this.rightArm?.upper.visible ?? true;
     if (this.rightArm) this.scene.remove(this.rightArm.upper, this.leftArm.upper);
     this.character = ch.id;
     this.rightArm = ch.arm(-1);
     this.leftArm = ch.arm(1);
-    this.rightArm.upper.visible = this.leftArm.upper.visible = visible;
-    this.scene.add(this.rightArm.upper, this.leftArm.upper);
+    mergeStatic(this.rightArm.upper, undefined, { vertexRim: true });
+    mergeStatic(this.leftArm.upper, undefined, { vertexRim: true });
+    if (this.active) this.scene.add(this.rightArm.upper, this.leftArm.upper);
     this.rightHand.userData = this.rightArm.hand.userData;
     this.leftHand.userData = this.leftArm.hand.userData;
     this.rightHand.userData.setCurl(this.poses.rightHand[6]);
     this.leftHand.userData.setCurl(this.lhRest[6]);
   }
 
-  /** Show/hide this weapon entirely (weapon switching). */
+  /**
+   * Put this weapon in the scene or take it out (weapon switching). Out, not just hidden: the renderer would
+   * still walk a hidden gun's whole tree every frame to update its matrices.
+   */
   setActive(on) {
-    this.sway.visible = on;
+    this.active = on;
+    const roots = [this.sway, this.rightArm.upper, this.leftArm.upper, ...this.shells];
+    if (on) this.scene.add(...roots); else this.scene.remove(...roots);
     this.leanWas = undefined; // a gun drawn while leaned starts from that lean, no catch-up swing
     this.look = { x: 0, y: 0 }; // inspecting: where the gun turns toward, eased after the cursor (-1 … 1)
-    this.rightArm.upper.visible = this.leftArm.upper.visible = on;
     if (!on) { for (const sh of this.shells) sh.visible = false; this.flashT = 0; this.flash.visible = false; this.muzzleLight.intensity = 0; }
   }
 
@@ -307,7 +317,7 @@ export class Viewmodel {
     const { mag, magSocket } = this.parts;
     return !!mag && (mag.parent !== magSocket || !mag.visible);
   }
-  get swapping() { return Object.keys(this.swaps).length > 0; }
+  get swapping() { for (const k in this.swaps) return true; return false; }
 
   playEquip() { this.player.play(this.clips.equip); }
   /** Play any named clip of this weapon (shell-by-shell reload steps). */
@@ -456,9 +466,11 @@ export class Viewmodel {
     const kr = this.kickRot.update(dt);
 
     // sight alignment for the mounted optic
+    // (an optic's sight point is fixed in gun space: worked out once per optic, not every frame)
     if (o.iron) this.sightPoint.copy(this.parts.ironSight);
-    else this.#mountPoint(o.sight, this.sightPoint);
-    const adsPos = new THREE.Vector3(-this.sightPoint.x, -this.sightPoint.y, -o.adsDist - this.sightPoint.z);
+    else if (o !== this.sightFor) this.#mountPoint(o.sight, this.sightPoint);
+    this.sightFor = o.iron ? null : o;
+    const adsPos = (this.adsPos ??= new THREE.Vector3()).set(-this.sightPoint.x, -this.sightPoint.y, -o.adsDist - this.sightPoint.z);
 
     const p = this.sway.position;
     p.copy(this.hipPos).lerp(adsPos, ads);
@@ -533,9 +545,9 @@ export class Viewmodel {
       const wantTwo = ads > 0.02 || this.reloading || (this.def.vm.twoHandHip && w.sprint < 0.4);
       this.twoHand = damp(this.twoHand, wantTwo ? 1 : 0, 14, dt);
       const k = this.twoHand * this.twoHand * (3 - 2 * this.twoHand);
-      lh = lerpArr(this.poses.lhHip ?? this.poses.lhOff, lh, k);
+      lh = lerpArr(this.poses.lhHip ?? this.poses.lhOff, lh, k, _lhA);
     }
-    if (ie > 0) lh = lerpArr(lh, this.poses.lhOff, Math.min(1, ie * 1.4));
+    if (ie > 0) lh = lerpArr(lh, this.poses.lhOff, Math.min(1, ie * 1.4), _lhB);
     setPose(this.leftHand, lh);
     this.leftHand.userData.setCurl(lh[6]);
     // one-handed guns: the free hand pumps like a runner's arm while sprinting (authored in camera space)
@@ -565,11 +577,11 @@ export class Viewmodel {
     // mechanical parts
     this.boltCycle = Math.min(1, this.boltCycle + dt / 0.075);
     const boltOpen = this.boltLocked ? 1 : Math.sin(Math.PI * this.boltCycle);
-    const ch = this.player.get('ch', [0])[0];
+    const ch = this.player.get('ch', ZERO1)[0];
     if (this.def.vm.bolt) {
       // bolt-action: the right hand lifts the handle (roll about the bolt axis), then draws it back
       this.parts.bolt.position.z = this.boltRest + ch * this.def.vm.boltTravel;
-      this.parts.bolt.rotation.z = (this.player.get('ch', [0, 0])[1] ?? 0) * 1.05;
+      this.parts.bolt.rotation.z = (this.player.get('ch', ZERO2)[1] ?? 0) * 1.05;
     } else if (this.def.vm.pump) {
       // pump-action: fore-end and bolt only move when the left hand racks
       this.parts.bolt.position.z = this.boltRest + ch * this.def.vm.boltTravel;
@@ -581,7 +593,7 @@ export class Viewmodel {
     }
     // hinged actions (break-open barrels, a swing-out cylinder) follow the clip's hinge track
     const hv = this.def.vm.hinge;
-    if (hv) this.parts.hinge.rotation[hv.axis] = this.player.get('hinge', [0])[0] * hv.angle;
+    if (hv) this.parts.hinge.rotation[hv.axis] = this.player.get('hinge', ZERO1)[0] * hv.angle;
     // revolver: the cylinder turns a sixth per shot; the hammer falls on the shot and comes back cocked
     this.sinceFire += dt;
     if (this.parts.cylinder) {
@@ -705,6 +717,7 @@ export class Viewmodel {
     const built = def.build?.();
     const obj = built?.isObject3D ? built : built?.obj ?? null;
     if (obj) {
+      mergeStatic(obj, new Set(built.isObject3D ? [] : Object.values(built).filter((o) => o?.isObject3D)), { vertexRim: true });
       obj.traverse((c) => { if (c.isMesh && !c.layers.isEnabled(FX_LAYER)) c.castShadow = true; });
       this.mounts[slot].add(obj);
     }
@@ -872,7 +885,8 @@ export class Viewmodel {
     const { mag } = this.parts;
     const def = this.attached.mag?.def;
     if (!mag || !def) return;
-    const copy = def.build();
+    const copy = mag.clone(); // shares the mag's geometry and materials (a rebuild made a new print texture per reload)
+    copy.visible = true;
     mag.updateWorldMatrix(true, false);
     mag.matrixWorld.decompose(copy.position, copy.quaternion, copy.scale);
     copy.userData = { v: new THREE.Vector3(rand(0.15), -0.6, 0.1), w: new THREE.Vector3(-4 + rand(1), rand(2), rand(3)), life: 1.0 };
@@ -896,11 +910,10 @@ export class Viewmodel {
       step(sh);
       if (sh.userData.life <= 0) sh.visible = false;
     }
-    this.drops = this.drops.filter((d) => {
+    for (let i = this.drops.length - 1; i >= 0; i--) {
+      const d = this.drops[i];
       step(d);
-      if (d.userData.life > 0) return true;
-      this.scene.remove(d);
-      return false;
-    });
+      if (d.userData.life <= 0) { this.scene.remove(d); this.drops.splice(i, 1); }
+    }
   }
 }
