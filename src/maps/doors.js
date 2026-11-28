@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { disposeTree } from '../core/renderer.js';
+import { mergeStatic } from '../core/merge.js';
 import { doorLeaf, doorLeaves, doorTint } from './assets.js';
 
 /*
@@ -27,7 +29,10 @@ class Door {
     this.leaves = doorLeaves(way).map((l) => {
       const pivot = new THREE.Group();
       pivot.position.x = l.x;
-      pivot.add(doorLeaf(l.w, l.h, tint, l.flip));
+      const leaf = doorLeaf(l.w, l.h, tint, l.flip);
+      leaf.traverse((o) => { o.userData = {}; }); // the editor's collision tags; in play a leaf collides by `solid`
+      mergeStatic(leaf); // 13 meshes → one per colour
+      pivot.add(leaf);
       this.root.add(pivot);
       // collision: a box a little thicker than the leaf, in the pivot's frame
       const solid = new THREE.BoxGeometry(l.w - 0.04, l.h, 0.16).translate((l.flip ? -1 : 1) * l.w / 2, l.h / 2, 0).toNonIndexed();
@@ -158,7 +163,7 @@ export class Doors {
     }
   }
 
-  dispose() { this.group.removeFromParent(); }
+  dispose() { disposeTree(this.group); }
 
   #sound(door, open) {
     if (!this.audio || !this.camera) return;
