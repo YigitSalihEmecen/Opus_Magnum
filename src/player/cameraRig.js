@@ -7,7 +7,7 @@ const damp = (a, b, rate, dt) => a + (b - a) * (1 - Math.exp(-rate * dt));
 const RECOVER = { delay: 0.12, rate: 9 };
 // lean (Q / E): the eye swings out this far (m) and drops a little, the view rolls; a wall stops it pad short
 const LEAN = { side: 0.414, drop: 0.072, roll: 12.6 * D2R, rate: 12, pad: 0.24 };
-const _ray = new THREE.Ray();
+const _ray = new THREE.Ray(), _right = new THREE.Vector3();
 
 /** Damped spring on a scalar. */
 class Spring {
@@ -136,7 +136,7 @@ export class CameraRig {
     if (Math.abs(cam.fov - fovDeg) > 1e-3) { cam.fov = fovDeg; cam.updateProjectionMatrix(); }
 
     // compose
-    const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+    const right = _right.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     // step smoothing: a sudden small height change while grounded (kerb, stair, ramp lip) is absorbed and
     // eased out over a few frames instead of jolting the view; real falls and jumps pass straight through
     const dy = this.lastFeetY === undefined ? 0 : mv.feet.y - this.lastFeetY;

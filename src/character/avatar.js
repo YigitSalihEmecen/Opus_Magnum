@@ -64,6 +64,16 @@ const LOWER = ['hips', 'thigh_L', 'shin_L', 'foot_L', 'thigh_R', 'shin_R', 'foot
 const UPPER = ['spine', 'chest', 'neck', 'head', 'shoulder_L', 'shoulder_R'];
 const FLINCH = ['spine', 'chest', 'neck', 'head'];
 const LEGS = LOWER.slice(1);
+// bone lists for the per-frame turns, made once (a literal in the frame loop is a new array every frame)
+const TORSO = ['chest', 'neck', 'head', 'shoulder_L', 'shoulder_R'], NECK = ['neck', 'head'], SHOULDER_L = ['shoulder_L'];
+const SLIDE_TOP = ['hips', ...UPPER];
+/** The blend layers, in a fixed order; animate() fills in each one's time and weight every frame. */
+const makeLayers = () => [
+  { clip: 'idle' }, ...GAITS.map(([clip]) => ({ clip })), { clip: 'crouchIdle' }, { clip: 'crouchWalk' }, { clip: 'air' },
+  { clip: 'crouchIdle', bones: SLIDE_TOP }, { clip: 'slide', bones: LEGS }, { clip: 'climb' },
+  { clip: 'tuckStart' }, { clip: 'tuck' }, { clip: 'tuckLand' }, { clip: 'land' }, { clip: 'hit', bones: FLINCH },
+];
+const put = (L, i, t, w) => { L[i].t = t; L[i].w = w; };
 const _aim = new THREE.Quaternion(), _lean = new THREE.Quaternion(), _e = new THREE.Euler(), _v1 = new THREE.Vector3();
 const _pq = new THREE.Quaternion(), ONE = new THREE.Vector3(1, 1, 1), DOWN = new THREE.Vector3(0, -1, 0);
 const _ray = new THREE.Ray(), _f = new THREE.Vector3(), _l = new THREE.Vector3();
@@ -308,14 +318,16 @@ export class Avatar {
 
     // gait weights by speed, and one stride phase advanced at the rate that keeps the feet planted
     const move = ss(sp, 0.25, 1.2);
-    const gw = GAITS.map(([, v], i) => {
-      const lo = GAITS[i - 1]?.[1], hi = GAITS[i + 1]?.[1];
-      if (sp <= v) return lo === undefined ? 1 : THREE.MathUtils.clamp((sp - lo) / (v - lo), 0, 1);
-      return hi === undefined ? 1 : THREE.MathUtils.clamp((hi - sp) / (hi - v), 0, 1);
-    });
+    const gw = (this.gw ??= GAITS.map(() => 0));
     let dur = 0, speed = 0;
     const scale = this.motion.scale;
-    GAITS.forEach(([name], i) => { dur += gw[i] * C[name].duration; speed += gw[i] * C[name].speed * scale; });
+    for (let i = 0; i < GAITS.length; i++) {
+      const v = GAITS[i][1], lo = GAITS[i - 1]?.[1], hi = GAITS[i + 1]?.[1];
+      gw[i] = sp <= v ? (lo === undefined ? 1 : THREE.MathUtils.clamp((sp - lo) / (v - lo), 0, 1)) : hi === undefined ? 1 : THREE.MathUtils.clamp((hi - sp) / (hi - v), 0, 1);
+      const c = C[GAITS[i][0]];
+      dur += gw[i] * c.duration;
+      speed += gw[i] * c.speed * scale;
+    }
     const crouchLoop = C.crouchWalk;
     dur = THREE.MathUtils.lerp(dur, crouchLoop.duration, w.crouch);
     speed = THREE.MathUtils.lerp(speed, crouchLoop.speed * scale, w.crouch);
@@ -337,23 +349,22 @@ export class Avatar {
     const landEnd = C.land.duration * 0.6;
     const land = T.land < landEnd ? 0.85 * ss(T.land, 0, 0.06) * (1 - ss(T.land, landEnd * 0.3, landEnd)) : 0;
     const hit = T.hit < C.hit.duration ? 0.7 * Math.sin((T.hit / C.hit.duration) * Math.PI) : 0;
-    const layers = [
-      { clip: 'idle', t: this.idleT, w: stand * (1 - move) },
-      ...GAITS.map(([name], i) => ({ clip: name, t: this.cycle * C[name].duration, w: stand * move * gw[i] })),
-      { clip: 'crouchIdle', t: this.idleT, w: crouch * (1 - move) },
-      { clip: 'crouchWalk', t: this.cycle * crouchLoop.duration, w: crouch * move },
-      { clip: 'air', t: T.air, w: w.air * (1 - over) },
-      // a slide: crouch height and torso, the slide clip's legs (out front, one tucked) — the clip itself lies
-      // back on the ground, lower than a slide sits in play
-      { clip: 'crouchIdle', t: this.idleT, w: w.slide, bones: ['hips', ...UPPER] },
-      { clip: 'slide', t: T.slide, w: w.slide, bones: LEGS },
-      { clip: 'climb', t: T.climb, w: w.mantle },
-      { clip: 'tuckStart', t: C.tuckStart.duration * (0.3 + 0.45 * Math.min(1, u / 0.34)), w: w.vault * vOff },
-      { clip: 'tuck', t: 0.25 + u * 0.4, w: w.vault * vTuck },
-      { clip: 'tuckLand', t: C.tuckLand.duration * 0.4 * Math.max(0, (u - 0.62) / 0.38), w: w.vault * vLand },
-      { clip: 'land', t: T.land, w: land * (1 - w.slide) },
-      { clip: 'hit', t: T.hit, w: hit, bones: FLINCH },
-    ];
+    const layers = (this.layers ??= makeLayers()), G = GAITS.length;
+    put(layers, 0, this.idleT, stand * (1 - move));
+    for (let i = 0; i < G; i++) put(layers, 1 + i, this.cycle * C[GAITS[i][0]].duration, stand * move * gw[i]);
+    put(layers, G + 1, this.idleT, crouch * (1 - move));
+    put(layers, G + 2, this.cycle * crouchLoop.duration, crouch * move);
+    put(layers, G + 3, T.air, w.air * (1 - over));
+    // a slide: crouch height and torso, the slide clip's legs (out front, one tucked) — the clip itself lies
+    // back on the ground, lower than a slide sits in play
+    put(layers, G + 4, this.idleT, w.slide);
+    put(layers, G + 5, T.slide, w.slide);
+    put(layers, G + 6, T.climb, w.mantle);
+    put(layers, G + 7, C.tuckStart.duration * (0.3 + 0.45 * Math.min(1, u / 0.34)), w.vault * vOff);
+    put(layers, G + 8, 0.25 + u * 0.4, w.vault * vTuck);
+    put(layers, G + 9, C.tuckLand.duration * 0.4 * Math.max(0, (u - 0.62) / 0.38), w.vault * vLand);
+    put(layers, G + 10, T.land, land * (1 - w.slide));
+    put(layers, G + 11, T.hit, hit);
     const m = this.motion.blend(layers);
     m.swing(LEGS, THREE.MathUtils.lerp(1, stride, base * move)); // shorter steps at our slower speeds
 
@@ -363,9 +374,9 @@ export class Avatar {
     if (w.slide > 0.01) m.turn(LEGS, RIGHT, w.slide * Math.asin(THREE.MathUtils.clamp((m.hipsRest.y + m.offset.y - 0.1) / 0.86, 0, 1)));
     m.turn(LOWER, UP, this.legYaw);
     m.turn(UPPER, RIGHT, -pitch * 0.35 - w.slide * 0.3 + w.crouch * 0.1);
-    m.turn(['chest', 'neck', 'head', 'shoulder_L', 'shoulder_R'], UP, STANCE * (1 - w.ads * 0.3));
-    m.turn(['neck', 'head'], UP, -STANCE * 0.8);
-    m.turn(['neck', 'head'], RIGHT, -pitch * 0.3 + w.slide * 0.3 + w.ads * 0.08);
+    m.turn(TORSO, UP, STANCE * (1 - w.ads * 0.3));
+    m.turn(NECK, UP, -STANCE * 0.8);
+    m.turn(NECK, RIGHT, -pitch * 0.3 + w.slide * 0.3 + w.ads * 0.08);
     if (w.vault > 0.01) {
       // over the top: legs swing out to the right until nearly level (so the hips ride just above the top),
       // the torso drops forward and over the planted left hand, that shoulder pressed down onto the straight
@@ -375,21 +386,21 @@ export class Avatar {
       m.turn(LOWER, UP, 0.35 * k);
       m.turn(UPPER, RIGHT, 0.45 * k);
       m.turn(UPPER, FWD, -0.42 * k);
-      m.turn(['shoulder_L'], FWD, -0.25 * k);
+      m.turn(SHOULDER_L, FWD, -0.25 * k);
       // and the torso turns about the hand as the body goes past: the left shoulder reaches ahead for the grab,
       // then trails back over it
       m.turn(UPPER, UP, w.vault * (0.75 * ss(u, 0.3, 0.56) - 0.35 * ss(u, 0.08, 0.26) * (1 - ss(u, 0.26, 0.4))));
-      m.turn(['neck', 'head'], FWD, 0.38 * k);
-      m.turn(['neck', 'head'], RIGHT, -0.3 * k);
+      m.turn(NECK, FWD, 0.38 * k);
+      m.turn(NECK, RIGHT, -0.3 * k);
     }
     if (w.mantle > 0.01) {
       // climbing: the torso leans out over the ledge onto the hands, then straightens as the body comes up
       // over it; the head keeps looking ahead
       const k = w.mantle * (1 - ss(T.climb, 0.12, 0.42));
       m.turn(UPPER, RIGHT, 0.6 * k);
-      m.turn(['neck', 'head'], RIGHT, -0.45 * k);
+      m.turn(NECK, RIGHT, -0.45 * k);
       // one hand: the torso leans over to the planted left hand
-      if (!this.ledge.two) { m.turn(UPPER, FWD, -0.3 * k); m.turn(['neck', 'head'], FWD, 0.25 * k); }
+      if (!this.ledge.two) { m.turn(UPPER, FWD, -0.3 * k); m.turn(NECK, FWD, 0.25 * k); }
     }
     // a lean (Q / E): the torso tips over the hips toward that side, the hips give a little the same way
     const side = S.side.to(this.side, HL.aim, dt);
@@ -418,7 +429,7 @@ export class Avatar {
     this.sm.kick.to(0, HL.kick, dt);
 
     this.dt = dt;
-    this.#holdGun(w);
+    if (!this.legsOnly) this.#holdGun(w); // the first-person body shows no arms or gun: skip their IK
 
     this.flashT -= dt;
     this.lastFlashT = this.flashT;
@@ -473,7 +484,7 @@ export class Avatar {
     // the support hand works the magazine (reloadHand), and the magazine goes with it while it's held
     const poses = this.weapon.poses;
     if (poses.lhMag) reloadHand(u, poses, _hand, rl);
-    else _hand.splice(0, 7, ...poses.lhRest);
+    else for (let i = 0; i < 7; i++) _hand[i] = poses.lhRest[i];
     this.#moveMag(u, rl, poses);
     const leftTo = lk > 0 ? ledge.L : this.#plantHand() ?? (H.k > 0 ? H : null);
     gripGun(this.robot, this.gunFrame, poses, { left: _hand, leftTo, rightTo: lk > 0 && two ? ledge.R : null });
@@ -606,4 +617,28 @@ export class Avatar {
 
   /** Animate from externally driven pos / vel / aimYaw / aimPitch (networked players). */
   pose(dt) { if (this.alive) this.animate(dt); else this.animateDeath(dt); }
+
+  /**
+   * animate(), less often where nobody can see the difference: off screen and away from the player (whose sun
+   * shadow box is ±16 m) every 4th frame, on screen past 45 m every 2nd; up close always. Skipped frames still
+   * carry the body to its position, and the time they missed goes into the next pose (the springs take any dt).
+   * Hit tests read the head bone relative to the body, so a pose a frame or two old aims and hits the same.
+   */
+  animateLod(dt, camera) {
+    this.lodDt = (this.lodDt ?? 0) + dt;
+    if (this.live && --this.lodWait > 0) {
+      this.root.position.copy(this.pos);
+      this.root.position.y += this.hopY;
+      return;
+    }
+    const d = this.pos.distanceTo(camera.position);
+    _frustum.setFromProjectionMatrix(_pm.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+    _hs.center.copy(this.pos).setY(this.pos.y + 1);
+    _hs.radius = 1.4;
+    this.lodWait = _frustum.intersectsSphere(_hs) ? (d > 45 ? 2 : 1) : d > 18 ? 4 : 1;
+    const step = this.lodDt;
+    this.lodDt = 0;
+    this.animate(step);
+  }
 }
+const _frustum = new THREE.Frustum(), _pm = new THREE.Matrix4();

@@ -69,6 +69,7 @@ const STEP = 1 / 120;
 const _ray = new THREE.Ray();
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
+const _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _wish = new THREE.Vector3(), _tris = [];
 const _testCap = new Capsule();
 
 const horiz = (v, out = _v) => out.set(v.x, 0, v.z);
@@ -132,16 +133,15 @@ export class Movement {
 
   update(dt, input, yaw) {
     const axes = input.axes();
-    const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
-    const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
-    const wish = fwd.clone().multiplyScalar(axes.y).addScaledVector(right, axes.x);
+    const fwd = _fwd.set(-Math.sin(yaw), 0, -Math.cos(yaw));
+    const right = _right.set(Math.cos(yaw), 0, -Math.sin(yaw));
+    const wish = _wish.copy(fwd).multiplyScalar(axes.y).addScaledVector(right, axes.x);
     if (wish.lengthSq() > 0) wish.normalize();
 
-    const ctrl = {
-      axes, fwd, right, wish,
-      crouchHeld: input.down('KeyC') || input.down('ControlLeft'),
-      crouchPressed: input.pressed('KeyC') || input.pressed('ControlLeft'),
-    };
+    const ctrl = (this.ctrl ??= {});
+    ctrl.axes = axes; ctrl.fwd = fwd; ctrl.right = right; ctrl.wish = wish;
+    ctrl.crouchHeld = input.down('KeyC') || input.down('ControlLeft');
+    ctrl.crouchPressed = input.pressed('KeyC') || input.pressed('ControlLeft');
     if (input.pressed('Space')) this.jumpBufferT = MOVE.jumpBuffer;
     // sprintMode 'hold': sprint while Shift is down; 'toggle': each press turns it on or off
     if (this.sprintMode === 'toggle') { if (input.pressed('ShiftLeft')) this.sprinting = !this.sprinting; }
@@ -589,7 +589,7 @@ export class Movement {
   /** snapping: a downward probe for the floor — walls met on the way down are ignored, not pushed against. */
   #resolve(snapping = false) {
     let onFloor = false;
-    const tris = [];
+    const tris = _tris;
     for (let i = 0; i < 5; i++) {
       tris.length = 0;
       this.octree.getCapsuleTriangles(this.capsule, tris);

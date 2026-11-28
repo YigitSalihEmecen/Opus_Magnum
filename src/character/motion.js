@@ -28,15 +28,16 @@ function motionClips() {
 }
 
 const _a = new THREE.Quaternion(), _b = new THREE.Quaternion(), _q = new THREE.Quaternion(), _inv = new THREE.Quaternion();
-const _k = [0, 0, 0, 0];
+const _k = [0, 0, 0, 0], _w = [0, 0, 0, 0];
+const keyAt = (c, i, n) => (c.loop ? ((i % n) + n) % n : THREE.MathUtils.clamp(i, 0, n - 1));
 
 /** Catmull-Rom through four keys (quaternions as 4-vectors, aligned to one hemisphere, then normalised):
  *  smooth through every key, so a clip's motion has no kinks at its 30 fps samples. */
 function cubic(arr, i, k, out) {
   let px = 0, py = 0, pz = 0, pw = 0;
   const o = i[1] * 4, rx = arr[o], ry = arr[o + 1], rz = arr[o + 2], rw = arr[o + 3];
-  const k2 = k * k, k3 = k2 * k;
-  const w = [(-k3 + 2 * k2 - k) / 2, (3 * k3 - 5 * k2 + 2) / 2, (-3 * k3 + 4 * k2 + k) / 2, (k3 - k2) / 2];
+  const k2 = k * k, k3 = k2 * k, w = _w;
+  w[0] = (-k3 + 2 * k2 - k) / 2; w[1] = (3 * k3 - 5 * k2 + 2) / 2; w[2] = (-3 * k3 + 4 * k2 + k) / 2; w[3] = (k3 - k2) / 2;
   for (let j = 0; j < 4; j++) {
     const b = i[j] * 4, x = arr[b], y = arr[b + 1], z = arr[b + 2], q = arr[b + 3];
     const s = x * rx + y * ry + z * rz + q * rw < 0 ? -w[j] : w[j];
@@ -75,8 +76,7 @@ export class Motion {
       const c = this.clips[L.clip];
       const f = c.loop ? ((L.t / c.duration) % 1 + 1) % 1 * c.frames : THREE.MathUtils.clamp(L.t / c.duration, 0, 1) * (c.frames - 1);
       const i0 = Math.floor(f) % c.frames, k = f - Math.floor(f), n = c.frames;
-      const key = (j) => (c.loop ? ((i0 + j) % n + n) % n : THREE.MathUtils.clamp(i0 + j, 0, n - 1));
-      _k[0] = key(-1); _k[1] = key(0); _k[2] = key(1); _k[3] = key(2);
+      _k[0] = keyAt(c, i0 - 1, n); _k[1] = keyAt(c, i0, n); _k[2] = keyAt(c, i0 + 1, n); _k[3] = keyAt(c, i0 + 2, n);
       const i1 = _k[2];
       for (const b of L.bones ?? BONES) {
         cubic(c.q[b], _k, k, _a);

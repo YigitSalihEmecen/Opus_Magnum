@@ -254,7 +254,7 @@ export class Bot extends Avatar {
     this.#aim(dt);
     if (!this.climb) this.#shoot(dt, now);
     this.#pose(dt);
-    this.animate(dt);
+    this.animateLod(dt, this.world.camera);
   }
 
   // ── senses ──

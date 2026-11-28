@@ -27,6 +27,9 @@ export function buildCharacter(id, team = 'player') {
     if (!lodGeometry.has(key)) lodGeometry.set(key, withDetail(d, () => c.build(team)).skin.geometry);
     return [lodGeometry.get(key), from];
   });
+  // the near level too: every body of a character and team is the same mesh (built per body only for its skeleton)
+  const near = `${c.id}|${team}|1`;
+  if (lodGeometry.has(near)) { r.skin.geometry.dispose(); r.skin.geometry = lodGeometry.get(near); } else lodGeometry.set(near, r.skin.geometry);
   r.lod = addLods(r.skin, levels);
   return r;
 }
