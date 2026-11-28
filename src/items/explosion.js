@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { FX_LAYER, NORMAL_OUT_DECL } from '../core/renderer.js';
+import { FX_LAYER, NORMAL_OUT_DECL, disposeTree } from '../core/renderer.js';
 
 /*
   Grenade blast in the game's cel style, pooled (nothing is created per explosion).
@@ -86,7 +86,11 @@ const FIRE_FRAG = /* glsl */`
   void main() {
     float L = dot(normalize(vWN), normalize(vec3(0.35, 1.0, 0.25))) * 0.5 + 0.5;
     vec3 p = vP * 3.2 + uSeed + vec3(0.0, -uTime * 1.6, 0.0);
+    #ifdef SMOKE
+    float n = noise(p) * 0.62 + noise(p * 2.3 + 7.1) * 0.38; // smoke only shifts a threshold: two octaves read the same
+    #else
     float n = noise(p) * 0.55 + noise(p * 2.3 + 7.1) * 0.3 + noise(p * 5.2 + 3.7) * 0.15;
+    #endif
     float heat = uHeat + (n - 0.5) * 0.95 + (L - 0.5) * 0.4;
     vec3 c = heat > 0.98 ? uCol[0] : heat > 0.74 ? uCol[1] : heat > 0.52 ? uCol[2] : heat > 0.34 ? uCol[3] : heat > 0.2 ? uCol[4]
       : (L + (n - 0.5) * 0.3 > 0.52 ? uCol[5] : uCol[6]);
@@ -97,9 +101,9 @@ const FIRE_FRAG = /* glsl */`
 const FIRE_COLS = [0xfff2b0, 0xffd447, 0xff9b2f, 0xe4552a, 0x8e3b2b, 0xaaa59c, 0x7b766f].map((c) => new THREE.Color(c));
 
 /** The blast's lobe shading; smoke screens (smoke.js) use it with grey colours and the heat held low. */
-export function fireMaterial(cols = FIRE_COLS) {
+export function fireMaterial(cols = FIRE_COLS, { smoke = false } = {}) {
   return new THREE.ShaderMaterial({
-    vertexShader: FIRE_VERT, fragmentShader: FIRE_FRAG,
+    vertexShader: FIRE_VERT, fragmentShader: FIRE_FRAG, defines: smoke ? { SMOKE: '' } : {},
     uniforms: { uHeat: { value: 1 }, uTime: { value: 0 }, uSeed: { value: new THREE.Vector3() }, uCol: { value: cols } },
   });
 }
@@ -189,7 +193,7 @@ export class Explosions {
     this.group.add(this.embers);
   }
 
-  dispose() { this.scene.remove(this.group); }
+  dispose() { disposeTree(this.group); }
 
   /** A blast at `pos` on a surface facing `normal` (up when it went off in the air). */
   spawn(pos, normal = _up) {

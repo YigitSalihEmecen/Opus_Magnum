@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { disposeTree } from '../core/renderer.js';
 import { buildGrenade } from './models/grenade.js';
 import { buildSmoke } from './models/smoke.js';
 import { Explosions } from './explosion.js';
@@ -36,7 +37,7 @@ export class Grenades {
   }
 
   dispose() {
-    for (const g of this.live) this.scene.remove(g.mesh);
+    for (const g of this.live) disposeTree(g.mesh);
     this.fx.dispose();
     this.smoke.dispose();
   }

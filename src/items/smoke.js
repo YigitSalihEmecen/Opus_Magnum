@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { disposeTree } from '../core/renderer.js';
 import { fireMaterial, lobeGeometry, deform } from './explosion.js';
 
 /*
@@ -19,7 +20,7 @@ export class Smokes {
     this.scene = scene;
     this.group = new THREE.Group();
     scene.add(this.group);
-    this.mat = fireMaterial(COLS);
+    this.mat = fireMaterial(COLS, { smoke: true });
     this.mat.uniforms.uHeat.value = -1; // always the two smoke tones
     const shapes = Array.from({ length: SHAPES }, (_, i) => {
       const g = lobeGeometry(3);
@@ -41,7 +42,7 @@ export class Smokes {
     this.time = 0;
   }
 
-  dispose() { this.scene.remove(this.group); }
+  dispose() { disposeTree(this.group); }
 
   /** A canister went off at `pos`: the cloud billows out from there. */
   spawn(pos) {
