@@ -57,13 +57,14 @@ export class AudioBank {
     this.wind = this.#noiseLoop('lowpass', 500, 0.7);
     this.scrape = this.#noiseLoop('bandpass', 1400, 1.2);
 
-    await Promise.all(
-      Object.entries(MANIFEST).map(async ([key, files]) => {
-        this.buffers[key] = await Promise.all(
-          files.map(async (f) => ctx.decodeAudioData(await (await fetch(`${import.meta.env.BASE_URL}audio/${f}.wav`)).arrayBuffer())),
-        );
-      }),
-    );
+    // Opus (a twentieth of the download) where the browser decodes it; the WAV wherever that fails (Safari)
+    const url = (f, ext) => `${import.meta.env.BASE_URL}audio/${f}.${ext}`;
+    const opus = new Audio().canPlayType('audio/ogg; codecs=opus') !== '';
+    const load = async (f) => {
+      if (opus) try { return await ctx.decodeAudioData(await (await fetch(url(f, 'ogg'))).arrayBuffer()); } catch { /* fall back */ }
+      return ctx.decodeAudioData(await (await fetch(url(f, 'wav'))).arrayBuffer());
+    };
+    await Promise.all(Object.entries(MANIFEST).map(async ([key, files]) => { this.buffers[key] = await Promise.all(files.map(load)); }));
     this.ready = true;
   }
 
