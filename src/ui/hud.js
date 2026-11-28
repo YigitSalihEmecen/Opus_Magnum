@@ -3,6 +3,22 @@ import * as THREE from 'three';
 const D2R = Math.PI / 180;
 const html = (s) => { const t = document.createElement('template'); t.innerHTML = s.trim(); return t.content.firstElementChild; };
 
+// hit marker arms on the diagonals: inner / outer radius and width (px). Every outline is drawn under every
+// fill, so the arms never cut across each other, and the kill ring sits clear outside the arms
+const ARMS = { hit: [5, 14, 2.5], head: [5, 15.5, 3], kill: [6.5, 18, 4] };
+const D = Math.SQRT1_2;
+const arms = ([a, b], cls) => [1, -1].flatMap((sx) => [1, -1].map((sy) => `<line class="${cls}" x1="${sx * a * D}" y1="${sy * a * D}" x2="${sx * b * D}" y2="${sy * b * D}"/>`)).join('');
+const markerSvg = (kind) => {
+  const [a, b, w] = ARMS[kind];
+  const ring = kind === 'kill' ? '<g class="ring"><circle r="24" class="ol" stroke-width="7"/><circle r="24" class="fill" stroke-width="3.5"/></g>' : '';
+  return `<svg viewBox="-32 -32 64 64" width="64" height="64">${ring}<g stroke-width="${w + 3}">${arms([a - 1.5, b + 1.5], 'ol')}</g><g stroke-width="${w}">${arms([a, b], 'fill')}</g></svg>`;
+};
+const MARKERS = { hit: markerSvg('hit'), head: markerSvg('head'), kill: markerSvg('kill') };
+export const ARMOUR_HUD = [null, '#c4bba8', '#4f9be6', '#a477e0']; // damage-number colour by armour tier
+const SHIELD = '<svg class="sh" viewBox="-11 -13 22 26"><path d="M0-12.5-9.5-9V-1c0 6.4 4.3 10.8 9.5 13 5.2-2.2 9.5-6.6 9.5-13V-9z"/></svg>';
+// a broken vest: the shield split down a jagged line, the halves fly apart
+const SHIELD_BROKEN = '<svg class="sh" viewBox="-11 -13 22 26"><path class="l" d="M0-12.5-9.5-9V-1c0 6.4 4.3 10.8 9.5 13l1.6-6.2-2.6-3.4 2.4-4.6-2-4.2z"/><path class="r" d="M0-12.5 9.5-9V-1C9.5 5.4 5.2 9.8 0 12l1.6-6.2-2.6-3.4 2.4-4.6-2-4.2z"/></svg>';
+
 /** In-game overlay. Pure DOM; reads state each frame, never mutates gameplay. */
 export class HUD {
   constructor(root) {
@@ -10,7 +26,7 @@ export class HUD {
     root.innerHTML = `
       <div class="fps card">— FPS</div>
       <div class="xhair"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><i class="o"></i><i class="d"></i></div>
-      <div class="hitmarker"><b></b><i></i><i></i><i></i><i></i></div>
+      <div class="hitmarker"></div>
       <div class="killflash"></div>
       <div class="dmgs"></div>
       <div class="weapon card">
@@ -78,18 +94,23 @@ export class HUD {
   /** kind: 'hit' | 'kill'; head colours it amber. Kills also pulse a tinted vignette. */
   hitmarker(kind, head = false) {
     const h = this.el.hit;
+    const shape = kind === 'kill' ? 'kill' : head ? 'head' : 'hit';
+    if (h.dataset.shape !== shape) { h.innerHTML = MARKERS[shape]; h.dataset.shape = shape; }
     h.className = `hitmarker ${kind}${head ? ' head' : ''}`;
-    void h.offsetWidth;
+    h.getAnimations(); // restarts the animation: a style flush only (offsetWidth would force a whole layout)
     h.classList.add('on');
     if (kind !== 'kill') return;
     const f = this.el.killflash;
     f.className = `killflash${head ? ' head' : ''}`;
-    void f.offsetWidth;
+    f.getAnimations();
     f.classList.add('on');
   }
 
-  damageNumber(point, amount, head) {
-    const el = html(`<div class="dmg${head ? ' head' : ''}">${amount}</div>`);
+  /** armour: { tier, broke } when the hit landed on armour — the number takes the tier's colour and a shield,
+   *  which splits apart when the hit broke it. */
+  damageNumber(point, amount, head, armour = null) {
+    const tier = armour?.tier ?? 0;
+    const el = html(`<div class="dmg${head ? ' head' : ''}${tier ? ' ar' : ''}${armour?.broke ? ' brk' : ''}"${tier ? ` style="--ar:${ARMOUR_HUD[tier]}"` : ''}>${tier ? (armour.broke ? SHIELD_BROKEN : SHIELD) : ''}${amount}</div>`);
     this.el.dmgs.appendChild(el);
     this.numbers.push({ el, pos: point.clone(), t: 0, dx: (Math.random() - 0.5) * 40 });
     if (this.numbers.length > 24) this.numbers.shift().el.remove();
@@ -98,7 +119,7 @@ export class HUD {
   recoilPulse() {
     const w = this.el.weapon;
     w.classList.remove('kick');
-    void w.offsetWidth;
+    w.getAnimations();
     w.classList.add('kick');
   }
 
@@ -122,16 +143,23 @@ export class HUD {
     // pellet guns: a ring that traces the pattern instead of four bars
     const ring = !!gun.S.pellets;
     this.el.xhair.classList.toggle('ring', ring);
-    if (ring) {
-      const d = 2 * Math.max(6, gap - 2);
-      Object.assign(this.el.ring.style, { width: `${d}px`, height: `${d}px`, left: `${-d / 2}px`, top: `${-d / 2}px` });
+    // style writes only when the value moved (a write per frame restyles the crosshair and restarts its fade)
+    const g = Math.round(gap * 4) / 4;
+    if (g !== this.gap || ring !== this.ringOn) {
+      this.gap = g;
+      this.ringOn = ring;
+      if (ring) {
+        const d = 2 * Math.max(6, g - 2);
+        Object.assign(this.el.ring.style, { width: `${d}px`, height: `${d}px`, left: `${-d / 2}px`, top: `${-d / 2}px` });
+      }
+      const [t, b, l, r] = this.el.bars;
+      t.style.transform = `translateY(${-g - 9}px)`;
+      b.style.transform = `translateY(${g}px)`;
+      l.style.transform = `translateX(${-g - 9}px)`;
+      r.style.transform = `translateX(${g}px)`;
     }
-    const [t, b, l, r] = this.el.bars;
-    t.style.transform = `translateY(${-gap - 9}px)`;
-    b.style.transform = `translateY(${gap}px)`;
-    l.style.transform = `translateX(${-gap - 9}px)`;
-    r.style.transform = `translateX(${gap}px)`;
-    this.el.xhair.style.opacity = String(Math.max(0, 1 - gun.adsEased * 2.5) * (mv.sprinting ? 0.35 : 1));
+    const op = Math.round(Math.max(0, 1 - gun.adsEased * 2.5) * (mv.sprinting ? 0.35 : 1) * 50) / 50;
+    if (op !== this.xOpacity) { this.xOpacity = op; this.el.xhair.style.opacity = String(op); }
 
     // weapon panel
     if (gun.reserve !== this.lastReserve) {
@@ -148,17 +176,17 @@ export class HUD {
     this.el.modes.forEach((m) => m.classList.toggle('on', m.dataset.m === gun.mode));
 
     // floating damage numbers
-    this.numbers = this.numbers.filter((n) => {
+    // floating damage numbers: moved by transform (compositor only), never left/top (layout)
+    for (let i = this.numbers.length - 1; i >= 0; i--) {
+      const n = this.numbers[i];
       n.t += dt;
-      if (n.t > 0.8) { n.el.remove(); return false; }
+      if (n.t > 0.8) { n.el.remove(); this.numbers.splice(i, 1); continue; }
       const v = this._v.copy(n.pos).project(camera);
-      if (v.z > 1) { n.el.style.opacity = '0'; return true; }
+      if (v.z > 1) { n.el.style.opacity = '0'; continue; }
       const x = (v.x * 0.5 + 0.5) * innerWidth + n.dx * n.t;
       const y = (-v.y * 0.5 + 0.5) * innerHeight - 40 * n.t - 18;
-      n.el.style.left = `${x}px`;
-      n.el.style.top = `${y}px`;
+      n.el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -50%)`;
       n.el.style.opacity = String(Math.min(1, (0.8 - n.t) * 4));
-      return true;
-    });
+    }
   }
 }

@@ -8,6 +8,7 @@ export class Track {
   constructor(keys) {
     this.keys = keys;
     this.n = keys[0][1].length;
+    this.out = new Array(this.n); // sample()'s result, reused: read it before the next sample of this track
     this.tangents = keys.map((k, i) => {
       const prev = keys[i - 1], next = keys[i + 1];
       if (!prev || !next || k[2] === 'hold') return new Array(this.n).fill(0);
@@ -15,7 +16,7 @@ export class Track {
     });
   }
 
-  sample(t, out = new Array(this.n)) {
+  sample(t, out = this.out) {
     const k = this.keys;
     if (t <= k[0][0]) return copyInto(out, k[0][1]);
     const last = k[k.length - 1];

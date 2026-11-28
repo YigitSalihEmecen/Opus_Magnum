@@ -36,12 +36,14 @@ export function buildGrizzly() {
   const { trigger, selector } = k.fireControls();
   selector.position.x = -0.022;
 
-  // ── classic stock: rounded body, one big wrist panel, one accent band, thick butt pad ──
+  // ── classic stock: rounded body, a wrist panel each side, one accent band, thick butt pad ──
   add(profile([
     [-0.028, 0.05], [-0.06, 0.036], [-0.11, 0.027], [-0.25, 0.032], [-0.388, 0.04], [-0.395, 0.032], [-0.395, -0.1],
     [-0.385, -0.108], [-0.25, -0.084], [-0.14, -0.06], [-0.085, -0.044], [-0.04, -0.036], [-0.016, -0.036], [-0.016, -0.014], [-0.028, -0.014],
   ], 0.044, round(0.011, 4)), MATS.poly);
-  add(profile([[-0.03, -0.03], [-0.12, -0.05], [-0.12, 0.018], [-0.035, 0.032]], 0.0465, { bevel: 0.002 }), MATS.black);
+  // wrist panels: inlaid flush in the flat faces, kept inside the stock's rounded edges
+  const wrist = profile([[-0.04, -0.022], [-0.112, -0.036], [-0.112, 0.013], [-0.045, 0.022]], 0.002, { bevel: 0.0006, segments: 1 });
+  for (const s of [-1, 1]) add(wrist, MATS.black).position.x = s * 0.0226;
   at(add(rbox(0.046, 0.1, 0.014, 0.004), MATS.red), 0, -0.03, -0.335);
   at(add(rbox(0.048, 0.15, 0.018, 0.008), MATS.rubber), 0, -0.034, -0.402);
 

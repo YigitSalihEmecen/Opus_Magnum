@@ -38,6 +38,9 @@ const GRADIENT_SOFT = gradientMap([120, 190, 235, 255]);
   smooth ramp about three texels wide instead of a staircase of texels (fixed pattern: no grain). Away from
   edges four taps settle it.
 */
+/** fast: the shadow filter's lower-preset variant (core/renderer.js sets it; materials recompile). */
+export const SHADOW_FILTER = { fast: false };
+
 export const SUN_SHADOW = {
   omFarMap: { value: null },
   omFarMatrix: { value: new THREE.Matrix4() },
@@ -78,6 +81,9 @@ float omSoft( sampler2D m, vec2 size, vec4 coord, float bias ) {
 	// the inner four would only agree too; only edges pay for all eight
 	float s = 0.0;
 	for ( int i = 7; i >= 4; i -- ) s += omTap( m, size, c.xy + omSpiral( i ) / size, c.z );
+	#ifdef OM_FAST_SHADOW
+	return s * 0.25; // lower presets: the four outer taps only, edges a little coarser
+	#endif
 	if ( s < 0.001 || s > 3.999 ) return s * 0.25;
 	for ( int i = 3; i >= 0; i -- ) s += omTap( m, size, c.xy + omSpiral( i ) / size, c.z );
 	return s / 8.0;
@@ -100,8 +106,11 @@ const SUN_SHADOW_CALL = 'omSunShadow( directionalShadowMap[ i ], directionalLigh
 /**
  * Cel-shaded material with a stepped rim highlight and the two-layer sun shadows.
  * rim: 0..1 strength, rimColor: highlight tint.
+ * vertexRim: colour, rim strength and rim tint come per vertex (attributes color, rimK, rimC) instead, so parts of
+ * many toon materials can share one draw call (core/merge.js).
  */
-export function toon(color, { rim = 0.18, rimColor = 0xffffff, soft = false, ...rest } = {}) {
+export function toon(color, { rim = 0.18, rimColor = 0xffffff, soft = false, vertexRim = false, ...rest } = {}) {
+  if (vertexRim) { rest.vertexColors = true; rim = 1; }
   const mat = new THREE.MeshToonMaterial({ color, gradientMap: soft ? GRADIENT_SOFT : GRADIENT, ...rest });
   // shadows are cast from back faces (three's default), so a sunlit face never tests against itself (no acne at
   // any sun angle, with next to no bias, so shade under a ledge stays shut); a face turned away from the sun gets
@@ -112,12 +121,17 @@ export function toon(color, { rim = 0.18, rimColor = 0xffffff, soft = false, ...
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, SUN_SHADOW, rimUniforms || {});
     shader.vertexShader = shader.vertexShader.replace('void main() {', SHADOW_VERT_PARS).replace('#include <worldpos_vertex>', SHADOW_VERT);
-    shader.fragmentShader = shader.fragmentShader
+    shader.fragmentShader = (SHADOW_FILTER.fast ? '#define OM_FAST_SHADOW\n' : '') + shader.fragmentShader
       .replace('#include <shadowmap_pars_fragment>', SHADOW_FRAG)
       .replace('#include <lights_fragment_begin>', THREE.ShaderChunk.lights_fragment_begin.replace(DIR_SHADOW, SUN_SHADOW_CALL));
+    if (vertexRim) {
+      shader.vertexShader = shader.vertexShader.replace('void main() {', 'attribute float rimK;\nattribute vec3 rimC;\nvarying float vRimK;\nvarying vec3 vRimC;\nvoid main() {\n\tvRimK = rimK;\n\tvRimC = rimC;');
+    }
     if (rimUniforms) {
       shader.fragmentShader = shader.fragmentShader
-        .replace('void main() {', 'uniform float rimStrength;\nuniform vec3 rimColor;\nvoid main() {')
+        .replace('void main() {', vertexRim
+          ? 'varying float vRimK;\nvarying vec3 vRimC;\n#define rimStrength vRimK\n#define rimColor vRimC\nvoid main() {'
+          : 'uniform float rimStrength;\nuniform vec3 rimColor;\nvoid main() {')
         .replace(
           '#include <opaque_fragment>',
           `float rimF = 1.0 - saturate(dot(normalize(vViewPosition), normal));
@@ -126,7 +140,7 @@ export function toon(color, { rim = 0.18, rimColor = 0xffffff, soft = false, ...
         );
     }
   };
-  mat.customProgramCacheKey = () => (rimUniforms ? 'toon-rim' : 'toon');
+  mat.customProgramCacheKey = () => (vertexRim ? 'toon-vrim' : rimUniforms ? 'toon-rim' : 'toon') + (SHADOW_FILTER.fast ? '-fast' : '');
   return mat;
 }
 

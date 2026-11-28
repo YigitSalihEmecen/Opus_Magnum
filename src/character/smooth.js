@@ -17,16 +17,21 @@ import * as THREE from 'three';
 
 const LN2 = Math.LN2;
 const ENV = 2.5, RETAIN = 0.5;
+// the decayed offset and velocity land in dx, dv (no array per call: this runs for every spring and bone axis)
+let dx = 0, dv = 0;
 const decay = (x, v, halflife, dt) => {
   const y = (2 * LN2) / Math.max(halflife, 1e-4), j1 = v + x * y, e = Math.exp(-y * dt);
-  return [e * (x + j1 * dt), e * (v - j1 * y * dt)];
+  dx = e * (x + j1 * dt);
+  dv = e * (v - j1 * y * dt);
 };
+const AXES = ['x', 'y', 'z'];
 
 export class Spring {
   constructor(x = 0) { this.x = x; this.v = 0; }
   to(goal, halflife, dt) {
-    [this.x, this.v] = decay(this.x - goal, this.v, halflife, dt);
-    this.x += goal;
+    decay(this.x - goal, this.v, halflife, dt);
+    this.x = dx + goal;
+    this.v = dv;
     return this.x;
   }
   /** For angles: chases the goal the short way round. */
@@ -92,7 +97,7 @@ export class Inertializer {
       if (caught) s.t2.copy(_v.slerp(_p.identity(), 1 - RETAIN)).invert().multiply(q);
       else s.t2.copy(s.t1);
       s.t1.copy(q);
-      for (const k of ['x', 'y', 'z']) [s.o[k], s.v[k]] = decay(s.o[k], s.v[k], this.halflife, dt);
+      for (const k of AXES) { decay(s.o[k], s.v[k], this.halflife, dt); s.o[k] = dx; s.v[k] = dv; }
       q.premultiply(toQuat(s.o, _o));
     }
     const s = this.offset;
@@ -106,7 +111,7 @@ export class Inertializer {
       }
     } else s.t2.copy(s.t1);
     s.t1.copy(offset);
-    for (const k of ['x', 'y', 'z']) [s.o[k], s.v[k]] = decay(s.o[k], s.v[k], this.halflife, dt);
+    for (const k of AXES) { decay(s.o[k], s.v[k], this.halflife, dt); s.o[k] = dx; s.v[k] = dv; }
     offset.add(s.o);
     this.frames++;
   }

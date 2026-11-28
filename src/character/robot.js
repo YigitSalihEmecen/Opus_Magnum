@@ -52,7 +52,12 @@ export function withDetail(d, build) {
 /** A segment count scaled by the current detail. */
 export const seg = (n, min = 3) => Math.max(min, Math.round(n * detail));
 
-export const rb = (w, h, d, r = 0.012) => detail < 0.5 ? new THREE.BoxGeometry(w, h, d) : new RoundedBoxGeometry(w, h, d, detail < 1 ? 1 : 2, Math.min(r, w / 2.01, h / 2.01, d / 2.01));
+/** Rounded box: small radii (fingers, pins) get one chamfer step, slivers a plain box; the bigger forms keep two. */
+export const rb = (w, h, d, r = 0.012) => {
+  const rr = Math.min(r, w / 2.01, h / 2.01, d / 2.01);
+  if (detail < 0.5 || Math.min(w, h, d) < 0.008) return new THREE.BoxGeometry(w, h, d);
+  return new RoundedBoxGeometry(w, h, d, detail < 1 || rr <= 0.006 ? 1 : 2, rr);
+};
 export const cyl = (r, h, n = 16, axis = 'y') => { const g = new THREE.CylinderGeometry(r, r, h, seg(n, 5)); if (axis === 'x') g.rotateZ(Math.PI / 2); if (axis === 'z') g.rotateX(Math.PI / 2); return g; };
 export const ball = (r) => new THREE.SphereGeometry(r, seg(18, 6), seg(12, 4));
 
@@ -185,8 +190,9 @@ export function ram(m, a, pa, b, pb, { r = 0.015, len = 0.18, rodLen = len, lug 
   part(barrel, cyl(r * 1.15, 0.016, 14), m.trim, [0, len - 0.005, 0]); // gland, standing proud of the barrel end
   const rod = part(b, cyl(r * 0.5, rodLen, 10).translate(0, rodLen / 2, 0), m.metal, pb);
   part(rod, ball(r * 1.2), m.metal);
+  const ends = [[a, barrel, b, pb], [b, rod, a, pa]];
   return () => {
-    for (const [from, to, other, otherAt] of [[a, barrel, b, pb], [b, rod, a, pa]]) {
+    for (const [from, to, other, otherAt] of ends) {
       other.localToWorld(_la.set(...otherAt));
       from.worldToLocal(_la).sub(to.position);
       if (_la.lengthSq() > 1e-8) to.quaternion.setFromUnitVectors(UPV, _la.normalize());
@@ -466,10 +472,16 @@ export function addLods(skin, levels) {
   };
   lod.addLevel(skin, 0, LOD_HYSTERESIS);
   for (const [geometry, distance] of levels) lod.addLevel(skinned(geometry, skin.material), distance, LOD_HYSTERESIS);
-  // the shadow is cast by the coarsest level at every distance: an invisible copy that only the shadow map sees
+  // the shadow is cast by the coarsest level at every distance: an invisible copy that only the shadow map sees.
+  // It draws nothing in the colour passes (an empty draw range there, the full one for the shadow map), so its
+  // geometry is a view of its own onto the coarsest level's buffers
   for (const l of lod.levels) l.object.castShadow = false;
-  const caster = skinned(levels.at(-1)[0], SHADOW_ONLY);
+  const src = levels.at(-1)[0], view = new THREE.BufferGeometry();
+  for (const [name, attr] of Object.entries(src.attributes)) view.setAttribute(name, attr);
+  const caster = skinned(view, SHADOW_ONLY);
   caster.castShadow = true;
+  caster.onBeforeShadow = () => { view.drawRange.count = Infinity; };
+  caster.onBeforeRender = () => { view.drawRange.count = 0; };
   lod.parent.add(caster);
   return lod;
 }
@@ -501,12 +513,34 @@ export function bakeFlat(root) {
   let vis = true;
   for (const m of meshes) { vis = true; for (let p = m; p && p !== root; p = p.parent) if (!p.visible) vis = false; m.userData.bakeVisible = vis; }
   const keep = meshes.filter((m) => m.userData.bakeVisible);
-  if (keep.length < 2) return;
-  const merged = mergeGeometries(keep.map((m) => coloured(m, _bm.multiplyMatrices(inv, m.matrixWorld))));
-  for (const m of keep) m.parent.remove(m);
-  const mesh = new THREE.Mesh(merged, toon(0xffffff, { rim: 0.3, rimColor: 0xfff3e8, vertexColors: true }));
-  mesh.castShadow = true;
-  root.add(mesh);
+  if (keep.length >= 2) {
+    const merged = mergeGeometries(keep.map((m) => coloured(m, _bm.multiplyMatrices(inv, m.matrixWorld))));
+    for (const m of keep) m.parent.remove(m);
+    const mesh = new THREE.Mesh(merged, toon(0xffffff, { rim: 0.3, rimColor: 0xfff3e8, vertexColors: true }));
+    mesh.castShadow = true;
+    root.add(mesh);
+  }
+  // the unlit opaque bits (vents, bores: dozens of tiny meshes on a gun) likewise, one mesh per material
+  const flat = new Map();
+  root.traverse((o) => {
+    if (!o.isMesh || !o.material.isMeshBasicMaterial || o.material.transparent || !o.material.colorWrite || o.layers.mask !== 1 || o.children.length) return;
+    for (let p = o; p && p !== root; p = p.parent) if (!p.visible) return;
+    if (!flat.has(o.material)) flat.set(o.material, []);
+    flat.get(o.material).push(o);
+  });
+  for (const [material, list] of flat) {
+    if (list.length < 2) continue;
+    const geos = list.map((m) => {
+      const g = (m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone()).applyMatrix4(_bm.multiplyMatrices(inv, m.matrixWorld));
+      for (const k of Object.keys(g.attributes)) if (!['position', 'normal'].includes(k)) g.deleteAttribute(k);
+      if (_bm.determinant() < 0) flipWinding(g);
+      return g;
+    });
+    for (const m of list) m.parent.remove(m);
+    const mesh = new THREE.Mesh(mergeGeometries(geos), material);
+    mesh.castShadow = list.some((m) => m.castShadow);
+    root.add(mesh);
+  }
 }
 
 /** Common tail of every character builder: bake, bone map, skeleton, hit zones (head = neck and above), rams, skin. */

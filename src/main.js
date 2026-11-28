@@ -7,6 +7,7 @@ import { TestRange } from './world/testRange.js';
 import { Dummies } from './world/dummies.js';
 import { Movement, SPEED } from './player/movement.js';
 import { CameraRig } from './player/cameraRig.js';
+import { DeathCam } from './player/deathCam.js';
 import { PlayerBody } from './player/body.js';
 import { Viewmodel, addViewmodelLights } from './weapons/viewmodel.js';
 import { Gunplay, AIM } from './weapons/gunplay.js';
@@ -54,20 +55,26 @@ const vmCamera = new THREE.PerspectiveCamera(54, innerWidth / innerHeight, 0.01,
   (src/maps/) are shared by all of them.
 */
 const customWorld = async (mapId) => (await import('./maps/mapWorld.js')).buildMapWorld(scene, getMap(mapId));
+// the range hands out the carbine and the pistol; every other gun waits on the rack in front of the spawn
+const RANGE_LOADOUT = { guns: ['panther', 'lynx'].map((id) => WEAPONS.findIndex((w) => w.id === id)), maxGuns: 2 };
 const MODES = [
   {
     id: 'range', index: '01 / PRACTICE', title: 'Shooting Range', accent: '#8a9a7b', builtin: 'Test Range', preview: mapPreview('range'), blurb: 'Targets, vault blocks, mantle steps and a slide ramp. Tune your feel and your loadout.',
     load: async (mapId) => {
       if (mapId && getMap(mapId)) {
         const w = await customWorld(mapId);
-        return { octree: w.octree, spawn: w.spawn, targets: w.raycastTargets, doors: w.doors, pickups: new Pickups(scene, { octree: w.octree, spots: w.pickups, respawn: 20 }), update: () => {} };
+        return { octree: w.octree, spawn: w.spawn, targets: w.raycastTargets, doors: w.doors, loadout: RANGE_LOADOUT, pickups: new Pickups(scene, { octree: w.octree, spots: w.pickups, respawn: 20 }), update: () => {} };
       }
       const range = new TestRange(scene);
       const dummies = new Dummies(scene, range.dummySpots);
-      // every item on a line in front of the spawn, back a few seconds after you take it
-      const spots = ITEM_IDS.map((type, i) => ({ type, position: new THREE.Vector3((i - (ITEM_IDS.length - 1) / 2) * 1.7, 0, 34) }));
+      // every item on a line in front of the spawn and every gun on a line behind it, back a few seconds after you take it
+      const row = (n, i, z) => new THREE.Vector3((i - (n - 1) / 2) * 1.7, 0, z);
+      const spots = [
+        ...ITEM_IDS.map((type, i) => ({ type, position: row(ITEM_IDS.length, i, 34) })),
+        ...WEAPONS.map((_, gun) => ({ type: 'gun', gun, position: row(WEAPONS.length, gun, 30.5) })),
+      ];
       return {
-        range, dummies, octree: range.octree, spawn: range.spawn, targets: [...range.raycastTargets, ...dummies.hitboxes],
+        range, dummies, octree: range.octree, spawn: range.spawn, targets: [...range.raycastTargets, ...dummies.hitboxes], loadout: RANGE_LOADOUT,
         pickups: new Pickups(scene, { octree: range.octree, spots, respawn: 3 }),
         update: (dt, c) => dummies.update(dt, c.camera, c.now),
       };
@@ -115,6 +122,7 @@ const vitalsHud = new VitalsHud(document.getElementById('hud'));
 const wheel = new ItemWheel(document.getElementById('hud'), vitalsHud.icons);
 let leanMode = 'toggle', leanLatch = 0;
 const rig = new CameraRig(camera);
+const deathCam = new DeathCam(camera);
 addViewmodelLights(vmScene);
 
 // one viewmodel + gunplay per weapon; only the active one updates and renders
@@ -311,7 +319,11 @@ function bindWorld() {
   mv.octree = level.octree;
   targets = level.targets;
   if (level.doors) Object.assign(level.doors, { audio, camera }).attach(level.octree);
+  // holstered guns sit outside the scene: put them in just long enough for their shaders to compile
+  const holstered = arsenal.filter((a) => !a.vm.active);
+  holstered.forEach((a) => a.vm.setActive(true));
   renderer.warm(scene, camera, vmScene, vmCamera);
+  holstered.forEach((a) => a.vm.setActive(false));
 }
 
 const title = new Title(document.getElementById('title'), {
@@ -369,12 +381,12 @@ function dropPoint() {
   return mv.feet.clone().addScaledVector(_fwd, 0.9);
 }
 
-/** G: the grenade leaves the hand a little right of the eye; online modes pass it on. */
-inv.onThrow = () => {
+/** G / the wheel: the grenade (frag or smoke) leaves the hand a little right of the eye; online modes pass it on. */
+inv.onThrow = (kind) => {
   camera.getWorldDirection(_fwd);
   _right.setFromMatrixColumn(camera.matrixWorld, 0);
   const origin = camera.position.clone().addScaledVector(_fwd, 0.35).addScaledVector(_right, 0.12);
-  const g = grenades.throw(origin, _fwd, mv.vel);
+  const g = grenades.throw(origin, _fwd, mv.vel, { kind });
   level.onThrow?.(g);
 };
 
@@ -388,7 +400,8 @@ function onBlast(pos, mine) {
     const res = h.target.damage(h.dmg, 'blast', h.point, h.dir, now, 'grenade');
     if (!res) continue;
     hud.hitmarker(res.killed ? 'kill' : 'hit');
-    hud.damageNumber(h.point, h.dmg, false);
+    hud.damageNumber(h.point, h.dmg, false, res.armour);
+    if (res.armour?.broke) audio.armourBreak(res.armour.tier);
     audio.hit(res.killed ? 'kill' : 'body');
   }
   if (d < BLAST.radius && (level.playerAlive ?? true) && grenades.clear(pos, chest)) {
@@ -412,6 +425,8 @@ const VM_FOV_HIP = 54;
 let now = 0;
 let wasAlive = true;
 let wasLowered = false;
+let beatT = 0;
+let vaultCheckT = 0, canVault = false;
 function tick(dt) {
   now += dt;
   if (loader.active) { input.endFrame(); return; } // the loading sheet covers the screen
@@ -429,11 +444,13 @@ function tick(dt) {
   // a mode can take the player out (TDM death): drop the gun, lower the arms, bring them back on respawn
   if (alive !== wasAlive) {
     wasAlive = alive;
+    hud.root.classList.toggle('dead', !alive);
     if (!alive) {
       inv.cancel();
       melee.cancel();
       level.pickups?.release({ gun: current, ammo: gun.ammo, reserve: gun.reserve === Infinity ? 2 * gun.magSize : gun.reserve }, mv.feet.clone());
-    }
+      deathCam.start(mv.feet);
+    } else deathCam.stop();
   }
   // the gun goes down while dead or while the hands are busy with an item
   const lowered = !alive || inv.busy || melee.busy;
@@ -481,8 +498,9 @@ function tick(dt) {
       prompt = door.open ? 'Close door' : 'Open door';
       if (input.pressed('KeyF')) level.doors.toggle(door, mv.feet);
     }
-    // nothing to use here: say so when a jump would vault what's ahead (a ray or two when nothing is there)
-    if (!prompt && mv.vaultAhead(rig.yaw)) prompt = { key: 'Space', text: 'Vault' };
+    // nothing to use here: say so when a jump would vault what's ahead (checked 20 times a second: it's a prompt)
+    if ((vaultCheckT -= dt) <= 0) { vaultCheckT = 0.05; canVault = mv.vaultAhead(rig.yaw); }
+    if (!prompt && canVault) prompt = { key: 'Space', text: 'Vault' };
     // zoom-matched: a mouse inch moves the target the same distance on screen at any magnification
     if (!vm.inspect && !wheel.open) rig.look(input, 1 / rig.zoom);
     mv.update(dt, input, rig.yaw);
@@ -494,6 +512,7 @@ function tick(dt) {
   else if (leanMode === 'toggle') for (const [k, s] of [['KeyQ', -1], ['KeyE', 1]]) { if (input.pressed(k)) leanLatch = leanLatch === s ? 0 : s; }
   const lean = !canLean ? 0 : leanMode === 'toggle' ? leanLatch : (input.down('KeyE') ? 1 : 0) - (input.down('KeyQ') ? 1 : 0);
   rig.update(dt, mv, { ads: gun.adsEased, axes, zoom: gun.zoom, lean });
+  if (!alive) deathCam.update(dt, { watch: level.watch ?? null, octree: mv.octree });
   const view = window.OM?.view; // dev free camera: OM.view = { pos: [x, y, z], yaw, pitch } (degrees)
   if (view) { camera.position.set(...view.pos); camera.rotation.set((view.pitch ?? 0) * Math.PI / 180, (view.yaw ?? 0) * Math.PI / 180, 0); }
   camera.updateMatrixWorld();
@@ -523,7 +542,11 @@ function tick(dt) {
     scrape: mv.state === 'slide' ? Math.min(1, mv.speed / SPEED / 10) : 0,
   });
 
-  renderer.render(scene, camera, vmScene, vmCamera, { eyepiece: vm.eyepieceInfo(), focus: vm.inspectEase });
+  // low health drains the colour out of the view (and a heartbeat starts under 30%); dead, it's nearly grey
+  const hpFrac = vitals.hp / vitals.max;
+  const hurt = alive ? THREE.MathUtils.smoothstep(0.55 - hpFrac, 0, 0.43) * 0.8 : Math.min(0.9, 0.5 + deathCam.t);
+  if (alive && level.playerAlive !== undefined && hpFrac < 0.3 && hpFrac > 0 && (beatT -= dt) <= 0) { beatT = 0.55 + hpFrac * 1.6; audio.heartbeat(1 - hpFrac * 2); }
+  renderer.render(scene, camera, vmScene, vmCamera, { eyepiece: vm.eyepieceInfo(), focus: vm.inspectEase, hurt });
   input.endFrame();
 }
 
@@ -549,8 +572,9 @@ drawWeapon(0);
 window.OM = {
   body, renderer,
   get vm() { return vm; }, get gun() { return gun; }, arsenal, switchWeapon, inv, vitals, get grenades() { return grenades; },
-  mv, rig, melee, handheld, wheel, get level() { return level; }, get lobby() { return lobby; }, scene, vmScene, input, gunsmith, setInspect, startMode,
+  mv, rig, deathCam, hud, melee, handheld, wheel, get level() { return level; }, get lobby() { return lobby; }, scene, vmScene, input, gunsmith, setInspect, startMode,
   step: (n = 1, dt = 1 / 60) => { for (let i = 0; i < n; i++) tick(dt); },
+  bench: async (opts) => (await import('./dev/bench.js')).bench(window.OM, opts),
 };
 const params = new URLSearchParams(location.search);
 let lobby = params.has('dev') ? null : new Lobby(scene, camera, canvas);

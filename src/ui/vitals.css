@@ -52,7 +52,7 @@
 .wheel-dial { position: absolute; inset: 0; border-radius: 50%; border: 2.5px solid var(--ink); box-shadow: 5px 5px 0 var(--ink);
   background: radial-gradient(circle, transparent 0 25%, var(--ink) 25% calc(25% + 2.5px), transparent calc(25% + 2.5px)), color-mix(in srgb, var(--ivory) 88%, transparent); }
 .wheel-dial::after { content: ''; position: absolute; inset: 0; border-radius: 50%; opacity: 0; transition: opacity 0.1s;
-  background: conic-gradient(from calc(var(--sel, 0rad) - 45deg), var(--clay) 0 90deg, transparent 0);
+  background: conic-gradient(from calc(var(--sel, 0rad) - var(--span, 90deg) / 2), var(--clay) 0 var(--span, 90deg), transparent 0);
   -webkit-mask: radial-gradient(circle, transparent 0 calc(25% + 2.5px), #000 calc(25% + 3px)); mask: radial-gradient(circle, transparent 0 calc(25% + 2.5px), #000 calc(25% + 3px)); }
 .wheel.picked .wheel-dial::after { opacity: 0.9; }
 .wheel-slot { position: absolute; left: 50%; top: 50%; display: grid; justify-items: center; gap: 2px;

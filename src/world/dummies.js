@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { PALETTE as P, toon } from '../core/toon.js';
 import { FX_LAYER } from '../core/renderer.js';
+import { ARMOUR_TIERS, armourTier, soakArmour } from '../items/items.js';
 
 const MAX_HEALTH = 100;
 const REGEN_DELAY = 3;
@@ -24,6 +25,7 @@ class Dummy {
   constructor(spot) {
     this.spot = spot;
     this.health = MAX_HEALTH;
+    this.armourMax = this.armour = spot.armour ?? 0;
     this.lastHit = -99;
     this.dead = false;
     this.deadTimer = 0;
@@ -89,6 +91,15 @@ class Dummy {
     this.ghost.position.z = 0.001;
     this.ghostFrac = 1;
     this.bar.add(bg, this.ghost, this.fill);
+    // armour (some range targets wear a vest): a strip in the tier's colour over the health bar
+    if (this.armourMax) {
+      const abg = new THREE.Mesh(G.bar, bg.material);
+      abg.scale.set(0.9, 0.07, 1);
+      abg.position.y = 0.1;
+      this.arFill = new THREE.Mesh(G.bar, new THREE.MeshBasicMaterial({ color: ARMOUR_TIERS[armourTier(this.armourMax)].color, fog: false }));
+      this.arFill.position.set(0, 0.1, 0.002);
+      this.bar.add(abg, this.arFill);
+    }
     for (let i = 1; i < 6; i++) {
       const tick = new THREE.Mesh(G.bar, new THREE.MeshBasicMaterial({ color: P.ink, fog: false }));
       tick.scale.set(0.012, 0.075, 1);
@@ -101,7 +112,8 @@ class Dummy {
 
   damage(amount, zone, point, dir, now) {
     if (this.dead) return null;
-    this.health = Math.max(0, this.health - amount);
+    const { lost, armour } = soakArmour(this, amount);
+    this.health = Math.max(0, this.health - lost);
     this.lastHit = now;
     this.flash = 0.07;
     // knock the hinge away from the shot
@@ -110,7 +122,7 @@ class Dummy {
     this.wobbleVel.y -= local.x * 2.2;
     const killed = this.health <= 0;
     if (killed) { this.dead = true; this.deadTimer = 0; }
-    return { killed };
+    return { killed, armour };
   }
 
   update(dt, camera, now) {
@@ -124,6 +136,7 @@ class Dummy {
         this.root.position.set(this.origin.x + Math.cos(a) * s.radius, this.origin.y, this.origin.z + Math.sin(a) * s.radius);
       }
       if (now - this.lastHit > REGEN_DELAY && this.health < MAX_HEALTH) this.health = Math.min(MAX_HEALTH, this.health + 90 * dt);
+      if (now - this.lastHit > REGEN_DELAY && this.health >= MAX_HEALTH) this.armour = Math.min(this.armourMax, this.armour + 60 * dt);
     }
 
     // knockdown / respawn
@@ -131,7 +144,7 @@ class Dummy {
       this.deadTimer += dt;
       if (this.deadTimer > RESPAWN_TIME) {
         this.fall = Math.max(0, this.fall - dt * 2.2);
-        if (this.fall === 0) { this.dead = false; this.health = MAX_HEALTH; this.ghostFrac = 1; }
+        if (this.fall === 0) { this.dead = false; this.health = MAX_HEALTH; this.armour = this.armourMax; this.ghostFrac = 1; }
       } else this.fall = Math.min(1, this.fall + dt * 3.2);
     }
     const fallEase = this.fall < 1 ? 1 - Math.pow(1 - this.fall, 3) : 1;
@@ -151,13 +164,19 @@ class Dummy {
     // health bar
     const frac = this.health / MAX_HEALTH;
     this.ghostFrac = Math.max(frac, this.ghostFrac - dt * 0.6);
-    const show = !this.dead && (now - this.lastHit < 4 || frac < 1);
+    const show = !this.dead && (now - this.lastHit < 4 || frac < 1 || this.armour < this.armourMax);
     this.bar.visible = show;
     if (show) {
       this.fill.scale.set(0.84 * frac, 0.07, 1);
       this.fill.position.x = -0.42 + 0.42 * frac;
       this.ghost.scale.set(0.84 * this.ghostFrac, 0.07, 1);
       this.ghost.position.x = -0.42 + 0.42 * this.ghostFrac;
+      if (this.arFill) {
+        const af = this.armour / this.armourMax;
+        this.arFill.visible = af > 0;
+        this.arFill.scale.set(0.84 * af || 1e-4, 0.035, 1);
+        this.arFill.position.x = -0.42 + 0.42 * af;
+      }
       this.bar.quaternion.copy(camera.quaternion);
     }
   }

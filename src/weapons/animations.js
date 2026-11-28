@@ -412,3 +412,139 @@ function boltReloadEmpty(P, lhRest) {
 export function buildBoltClips(P, lhRest = P.lhRest) {
   return { ...buildClips(P, lhRest), bolt: boltCycle(P, lhRest), reloadEmpty: boltReloadEmpty(P, lhRest) };
 }
+
+/*
+  Revolver clips (vm.revolver). Extra track:
+    hinge — [open 0..1] the crane swinging the cylinder out (the viewmodel maps it to vm.hinge's angle)
+  The support thumb pushes the cylinder out, the gun tips up and the palm slaps the ejector (all six drop),
+  the hand fetches a speedloader, sets it in, twists, and the wrist flicks the cylinder home.
+  Poses: lhCrane (thumb on the cylinder's left), lhLoad (holding the loader square behind the open cylinder).
+*/
+function revolverReload(P, lhRest) {
+  const { lhCrane, lhLoad, lhOff } = P;
+  const up = [-0.035, 0.02, -0.05, 34, 8, -26]; // muzzle up, rolled so the open cylinder faces the eye
+  const level = [-0.045, 0.0, -0.05, 4, 16, -34]; // out from the eye so the loading hand doesn't fill the view
+  return {
+    name: 'reload',
+    duration: 2.25,
+    readyAt: 1.95,
+    tracks: {
+      gun: new Track([
+        [0, GUN0],
+        [0.22, [-0.02, 0.012, 0.01, 6, 8, -24]],
+        [0.36, [-0.022, 0.016, 0.012, 8, 9, -30], 'hold'],
+        [0.52, up],
+        [0.62, add(up, [0, -0.006, 0, -4, 0, 2])],
+        [0.82, level],
+        [1.2, add(level, [0.004, 0.006, 0, 2, 0, -2])],
+        [1.4, add(level, [0, -0.004, 0.004, -2, 0, 1]), 'hold'],
+        [1.56, [-0.01, 0.01, 0, 2, 4, -6]],
+        [1.64, [0, -0.004, 0, -3, 1, 4]],
+        [2.25, GUN0],
+      ]),
+      lh: new Track([
+        [0, lhRest],
+        [0.18, add(lhCrane, [0, -0.01, 0.01, 0, 0, 0, -0.3])],
+        [0.3, lhCrane, 'hold'],
+        [0.4, add(lhCrane, [-0.02, 0, 0])],
+        [0.5, add(lhCrane, [0.0, 0.02, 0.03, -20, 0, 0])],
+        [0.56, add(lhCrane, [0.004, 0.026, -0.004, -20, 0, 0]), 'hold'],
+        [0.74, lhOff],
+        [0.9, add(lhOff, [0.02, -0.02, 0])],
+        [1.15, add(lhLoad, [-0.01, -0.04, 0.05, 0, 0, 0, -0.1])],
+        [1.32, add(lhLoad, [0, 0, 0.012])],
+        [1.38, lhLoad, 'hold'],
+        [1.48, add(lhLoad, [-0.03, -0.04, 0.06, 10, 20, -20])],
+        [1.75, add(lhRest, [0.01, -0.05, 0.08, 10, 20, -30])],
+        [1.95, lhRest],
+        [2.25, lhRest],
+      ]),
+      hinge: new Track([[0, [0]], [0.26, [0], 'hold'], [0.38, [1], 'hold'], [1.55, [1], 'hold'], [1.62, [0], 'hold'], [2.25, [0]]]),
+    },
+    events: [
+      [0.04, 'cloth'],
+      [0.27, 'cylOpen'],
+      [0.38, 'kick', { pos: [-0.002, 0, 0], rot: [0, 0, 2] }],
+      [0.56, 'ejectAll', { n: 6 }],
+      [0.56, 'kick', { pos: [0, 0.006, 0.006], rot: [2.5, 0, 0] }],
+      [0.86, 'loaderGrab'],
+      [1.38, 'speedload'],
+      [1.38, 'kick', { pos: [0, 0, -0.004], rot: [-1, 0, 1] }],
+      [1.58, 'cylClose'],
+      [1.62, 'kick', { pos: [0.004, 0.006, 0], rot: [2, 0, -3] }],
+    ],
+  };
+}
+
+export function buildRevolverClips(P, lhRest = P.lhRest) {
+  const r = revolverReload(P, lhRest);
+  return { equip: equip(P, lhRest), reload: r, reloadEmpty: { ...r, name: 'reloadEmpty' } };
+}
+
+/*
+  Break-action clips (two barrels on a hinge). Extra track:
+    hinge — [open 0..1] the barrels breaking down (the viewmodel maps it to vm.hinge's angle)
+  The thumb works the top lever, the support hand pushes the barrels down, the extractors throw the spent
+  shells back over the shoulder, the hand fetches a shell per empty barrel (shellIn) and the gun snaps shut.
+  Poses: lhOpen (the support hand where the fore-end sits once broken open), lhPort (a shell held at the
+  open breech; shellAt places it), lhOff.
+*/
+function breakReload(P, lhRest, shells) {
+  const { lhOpen, lhPort, lhOff } = P;
+  const T = 0.42 * shells; // the shell trips
+  const open = [-0.03, 0.02, 0.01, 14, 12, -30]; // barrels low and canted so the breech faces the eye
+  const trip = (t0, dx) => {
+    const port = add(lhPort, [dx, 0, 0]);
+    return [
+      [t0 + 0.1, add(lhOff, [0, 0.02, 0])],
+      [t0 + 0.24, add(port, [-0.01, 0.03, 0.04, 0, 0, 0, 0.1])],
+      [t0 + 0.32, port, 'hold'],
+      [t0 + 0.38, add(port, [0, -0.004, -0.02]), 'hold'],
+    ];
+  };
+  const keysLh = [
+    [0, lhRest],
+    [0.16, add(lhRest, [0, 0.01, 0.01])],
+    [0.34, lhOpen, 'hold'],
+    ...trip(0.42, 0),
+    ...(shells > 1 ? trip(0.42 + 0.42, 0.025) : []),
+    [0.5 + T, add(lhOpen, [0, -0.01, 0.01])],
+    [0.6 + T, add(lhOpen, [0, 0.01, 0]), 'hold'],
+    [0.68 + T, lhRest, 'hold'],
+    [1.05 + T, lhRest],
+  ];
+  return {
+    name: shells > 1 ? 'reloadEmpty' : 'reload',
+    duration: 1.05 + T,
+    readyAt: 0.85 + T,
+    tracks: {
+      gun: new Track([
+        [0, GUN0],
+        [0.2, add(open, [0, -0.01, 0, -4, 0, 4])],
+        [0.36, add(open, [0, -0.016, 0.004, -6, 0, 2]), 'hold'],
+        [0.46, open],
+        [0.45 + T, add(open, [0, 0.004, 0, 2, 0, -2])],
+        [0.58 + T, [-0.01, -0.012, 0.008, -6, 5, -12]],
+        [0.66 + T, [0, 0.012, -0.004, 4, 2, -6], 'hold'],
+        [1.05 + T, GUN0],
+      ]),
+      lh: new Track(keysLh),
+      hinge: new Track([[0, [0]], [0.2, [0], 'hold'], [0.34, [1], 'hold'], [0.56 + T, [1], 'hold'], [0.66 + T, [0], 'hold'], [1.05 + T, [0]]]),
+    },
+    events: [
+      [0.12, 'latch'],
+      [0.3, 'breakOpen'],
+      [0.36, 'eject', { n: shells, back: true }],
+      [0.36, 'kick', { pos: [0, -0.006, 0.004], rot: [-2, 0, 1] }],
+      [0.48, 'shellGrab'],
+      [0.8, 'shellIn'],
+      ...(shells > 1 ? [[0.9, 'shellGrab'], [1.22, 'shellIn']] : []),
+      [0.64 + T, 'breakClose'],
+      [0.66 + T, 'kick', { pos: [0, 0.012, -0.006], rot: [4, 0, -2] }],
+    ],
+  };
+}
+
+export function buildBreakClips(P, lhRest = P.lhRest) {
+  return { equip: equip(P, lhRest), reload: breakReload(P, lhRest, 1), reloadEmpty: breakReload(P, lhRest, 2) };
+}

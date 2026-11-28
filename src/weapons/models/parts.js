@@ -20,6 +20,11 @@ export const MATS = {
   red: toon(0xc23a2e, { rim: 0.28, rimColor: 0xfff3e8 }), // Grizzly accent + shotgun shells
   blue: toon(0x3f8ad6, { rim: 0.3, rimColor: 0xfff3e8 }), // Kestrel accent
   slate: toon(0x4f5964, { rim: 0.3, rimColor: 0xfff3e8 }),
+  sage: toon(P.sage, { rim: 0.3, rimColor: 0xfff3e8 }), // Osprey accent
+  amber: toon(0xe3a83a, { rim: 0.35, rimColor: 0xfff3e8 }), // Hornet accent
+  greige: toon(0xb1a796, { rim: 0.18, rimColor: 0xfff3e8 }), // Jackal grip
+  gunmetal: toon(0x74777e, { rim: 0.45, rimColor: 0xfff3e8 }), // bright machined steel (revolver cylinder)
+  tan: toon(0xb89a72, { rim: 0.22, rimColor: 0xfff3e8 }), // Coyote stock (flat dark earth)
 };
 
 export const f2z = (f) => -f;
@@ -46,7 +51,15 @@ export function profile(points, width, { bevel = 0.003, segments = 2, holes = []
   return geo;
 }
 
-export function rbox(w, h, d, r = 0.002) { return new RoundedBoxGeometry(w, h, d, 2, Math.min(r, w / 2, h / 2, d / 2)); }
+/**
+ * Rounded box. A second rounding step costs ~200 triangles a box for curvature under a pixel at gun scale, so
+ * radii up to 3 mm get one (a chamfer) and slivers under 6 mm (vents, pins) a plain box.
+ */
+export function rbox(w, h, d, r = 0.002) {
+  const rr = Math.min(r, w / 2, h / 2, d / 2);
+  if (Math.min(w, h, d) < 0.006 || rr < 0.0008) return new THREE.BoxGeometry(w, h, d);
+  return new RoundedBoxGeometry(w, h, d, rr <= 0.003 ? 1 : 2, rr);
+}
 
 /** Cylinder along the barrel axis between f0 and f1. */
 export function tube(r0, r1, f0, f1, seg = 20, open = false) {
@@ -100,6 +113,22 @@ export function shotShell() {
 
 
 /**
+ * The standard pistol grip's layout in gun space: a straight rake (RAKE metres back per metre down) from the
+ * frame (top) to the foot; front(y) / back(y) give its edges at height y. Stock-integrated grips reuse it.
+ */
+const RAKE = 0.28;
+export const GRIP = {
+  width: 0.031, top: -0.028, foot: -0.154,
+  front: (y) => 0.012 + RAKE * (y + 0.028),
+  back: (y) => -0.044 + RAKE * (y + 0.028),
+  /** Base cap geometry for a grip of width w on this layout, its foot at `foot`. */
+  cap(w, foot = this.foot) {
+    const c0 = foot + 0.008, c1 = foot - 0.006, e = 0.002;
+    return profile([[this.front(c0) + e, c0], [this.front(c1) + e, c1], [this.back(c1) - e, c1], [this.back(c0) - e, c0]], w + 0.004, { bevel: 0.003, segments: 1, inset: true });
+  },
+};
+
+/**
  * Shared builders for receiver parts every gun has (fire controls, grip, rail, irons, mounts…).
  * Usage: const k = gunKit(root); k.add(geo, mat); k.at(obj, x, y, f); …
  */
@@ -132,11 +161,21 @@ export function gunKit(root) {
       return { trigger, selector };
     },
 
-    /** Raked pistol grip behind the trigger with stipple panels. */
-    pistolGrip(mat = MATS.poly, panelMat = MATS.black) {
-      add(profile([[0.012, -0.028], [0.006, -0.058], [0.0, -0.068], [-0.002, -0.082], [-0.009, -0.093], [-0.012, -0.108], [-0.019, -0.122], [-0.025, -0.138], [-0.03, -0.152], [-0.05, -0.16], [-0.077, -0.152], [-0.074, -0.13], [-0.064, -0.082], [-0.054, -0.04], [-0.046, -0.028]], 0.031, { bevel: 0.006 }), mat);
-      for (const x of [-0.0175, 0.0175]) add(profile([[-0.006, -0.05], [-0.018, -0.13], [-0.06, -0.135], [-0.05, -0.05]], 0.004, { bevel: 0.001 }), panelMat).position.x = x;
-      at(add(rbox(0.036, 0.012, 0.03, 0.004), MATS.black), 0, -0.158, -0.052);
+    /**
+     * Raked pistol grip behind the trigger: a straight, even-width block (front and back edges parallel) with flat
+     * chamfered edges, a stipple panel inlaid flush in each side and a flared base cap. Panel and cap are laid out
+     * from the same rake lines as the grip, so they always sit square on it.
+     */
+    pistolGrip(mat = MATS.poly, panelMat = MATS.black, capMat = MATS.black, { width = GRIP.width, foot = GRIP.foot } = {}) {
+      const G = GRIP, W = width;
+      add(profile([[G.front(G.top), G.top], [G.front(foot), foot], [G.back(foot), foot], [G.back(G.top), G.top]], W, { bevel: 0.004, segments: 1, inset: true }), mat);
+      // panel: a parallelogram on the flat side face, an even margin in from every edge
+      const m = 0.009, y0 = -0.05, y1 = foot + 0.02;
+      const panel = profile([[G.front(y0) - m, y0], [G.front(y1) - m, y1], [G.back(y1) + m, y1], [G.back(y0) + m, y0]], 0.002, { bevel: 0.0006, segments: 1 });
+      for (const sx of [-1, 1]) add(panel, panelMat).position.x = sx * (W / 2 + 0.0006);
+      // base cap: a band over the foot, its ends just outside the same rake lines and a little wider than the
+      // grip, so it covers the grip's chamfered foot all round
+      add(G.cap(W, foot), capMat);
     },
 
     /** Picatinny rail from f0 to f1; base centred at y, teeth on top (top surface ≈ y + 0.01). */

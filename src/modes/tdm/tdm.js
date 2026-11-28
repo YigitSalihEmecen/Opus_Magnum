@@ -6,7 +6,7 @@ import { Tactics } from './tactics.js';
 import { WorldFX } from '../../weapons/effects.js';
 import { WEAPONS } from '../../weapons/weapons.js';
 import { Pickups } from '../../items/pickups.js';
-import { pickupSpec } from '../../items/items.js';
+import { pickupSpec, armourTier } from '../../items/items.js';
 import { MatchHud } from '../../ui/matchHud.js';
 
 /*
@@ -25,10 +25,10 @@ const RESPAWN_PLAYER = 4;
 const SPAWN_SHIELD = 1.5;
 const ITEM_RESPAWN = 25;
 const WEAPON_IDS = WEAPONS.map((w) => w.id);
-// what you deploy with each life: carbine + sidearm, three spare mags, one grenade, two bandages
-const LOADOUT = { guns: ['panther', 'lynx'].map((id) => WEAPON_IDS.indexOf(id)), maxGuns: 2, mags: 3, items: { grenade: 1, bandage: 2 } };
+// what you deploy with each life: carbine + sidearm, three spare mags, one grenade, one smoke, two bandages
+const LOADOUT = { guns: ['panther', 'lynx'].map((id) => WEAPON_IDS.indexOf(id)), maxGuns: 2, mags: 3, items: { grenade: 1, smoke: 1, bandage: 2 } };
 // handed out over the roam hotspots in order (Kiln: centre, then mirrored pairs), plus a starter pair by each base
-const ITEM_PLAN = ['armour3', 'gun_kestrel', 'gun_grizzly', 'medkit', 'medkit', 'armour2', 'armour2', 'charger', 'charger', 'ammo', 'ammo', 'grenade', 'grenade', 'gun_snake'];
+const ITEM_PLAN = ['armour3', 'gun_kestrel', 'gun_grizzly', 'medkit', 'medkit', 'armour2', 'armour2', 'charger', 'charger', 'ammo', 'ammo', 'grenade', 'grenade', 'gun_snake', 'smoke', 'smoke'];
 const BASE_ITEMS = ['bandage', 'armour1', 'ammo'];
 
 const ROSTER = {
@@ -66,6 +66,7 @@ class TDM {
     this.soundsThisFrame = 0;
 
     this.player = this.#playerProxy();
+    this.ledger = new Map(); // this life: combatant → { dealt, taken, hits }
     this.bots = [];
     for (const team of ['ally', 'enemy']) {
       for (const [name, gun, skill] of ROSTER[team]) {
@@ -92,6 +93,18 @@ class TDM {
 
   get doors() { return this.arena.doors; }
   get playerAlive() { return this.player.alive; }
+  /** Who the camera follows while you're down: whoever killed you. */
+  get watch() { const k = this.player.killer; return k && k !== this.player ? k : null; }
+
+  /** Damage traded with `who` this life (clamped to what it really took off). */
+  #trade(who, key, amount) {
+    const e = this.ledger.get(who) ?? { dealt: 0, taken: 0, hits: 0 };
+    e[key] += amount;
+    if (key === 'taken') e.hits++;
+    this.ledger.set(who, e);
+  }
+  /** A bot lost `amount` to us (bot.js). */
+  noteDealt(bot, amount) { this.#trade(bot, 'dealt', amount); }
 
   /** Custom maps only give a few spawn markers and no roam points: fill both in from the nav grid. */
   #prepareArena() {
@@ -137,6 +150,12 @@ class TDM {
     return spots;
   }
 
+  /** A bot's vest for its next life: most go without, a few come in heavy. */
+  spawnArmour() {
+    const r = Math.random();
+    return r < 0.45 ? 0 : r < 0.75 ? 25 : r < 0.93 ? 50 : 75;
+  }
+
   /** A grenade of ours caught us. */
   hurtSelf(dmg) { this.player.takeDamage(dmg, 'body', this.player, null, 'grenade'); }
 
@@ -145,6 +164,7 @@ class TDM {
     this.arena.dispose();
     for (const b of this.bots) this.scene.remove(b.root);
     this.ui.root.remove();
+    this.ui.fx.remove();
   }
 
   // ── world services used by bots ──
@@ -153,6 +173,7 @@ class TDM {
   get #allySide() { return (this._allySide ??= [this.player, ...this.allies]); }
 
   los(from, to) {
+    if (this.grenades?.smoke.blocks(from, to)) return false;
     const d = from.distanceTo(to);
     _ray.origin.copy(from);
     _ray.direction.subVectors(to, from).divideScalar(d || 1);
@@ -234,17 +255,23 @@ class TDM {
       },
       takeDamage(dmg, zone, attacker, dir, weapon) {
         if (!this.alive || this.shield > 0 || tdm.ended) return false;
-        tdm.vitals.damage(dmg);
-        tdm.ui.hurt(tdm.vitals.hp / tdm.vitals.max, attacker === this ? null : tdm.#bearing(attacker.pos));
-        tdm.audio.play('land', { volume: 0.25, rate: 1.5 });
-        tdm.rig.punch(-0.6 - Math.random() * 0.4, (Math.random() - 0.5) * 0.8, (Math.random() - 0.5) * 1.2);
-        if (tdm.vitals.dead) {
+        const v = tdm.vitals, ar0 = v.armour, before = v.hp + ar0, tier = armourTier(v.armourMax);
+        v.damage(dmg);
+        const lost = before - v.hp - v.armour, k = Math.min(1, lost / 35), other = attacker !== this;
+        if (other) tdm.#trade(attacker, 'taken', lost);
+        tdm.ui.hurt(v.hp / v.max, other ? attacker : null, lost);
+        tdm.rig.flinch(k, other ? Math.sin(tdm.#bearing(attacker.pos)) : 0);
+        tdm.audio.hurt(k);
+        tdm.audio.play('land', { volume: 0.2, rate: 1.5 });
+        if (ar0 > 0 && v.armour <= 0) tdm.audio.armourBreak(tier, { volume: 0.6 });
+        if (v.dead) {
           this.alive = false;
           this.deathT = 0;
           this.killer = attacker;
           tdm.tactics.died('ally', mv.feet);
           tdm.onKill(attacker, this, zone === 'head', weapon);
-          tdm.ui.death(attacker.name, RESPAWN_PLAYER);
+          const e = tdm.ledger.get(attacker);
+          tdm.ui.death(attacker.name, RESPAWN_PLAYER, other ? { dealt: e?.dealt ?? 0, taken: e?.taken ?? lost, hits: e?.hits ?? 1, left: attacker.alive ? attacker.hp + (attacker.armour ?? 0) : 0 } : null);
           return true;
         }
         return false;
@@ -269,7 +296,9 @@ class TDM {
     this.rig.pitch = 0;
     this.inv.reset(LOADOUT);
     this.vitals.reset();
+    this.ledger.clear();
     p.alive = true;
+    p.killer = null;
     p.shield = SPAWN_SHIELD;
     this.ui.death(null);
     this.ui.hurt(1, null);
@@ -336,7 +365,7 @@ class TDM {
 
     if (!this.ended) for (const b of this.bots) b.update(dt);
     this.fx.update(dt, camera);
-    this.ui.update(dt, this.score, this.time);
+    this.ui.update(dt, this.score, this.time, (p) => this.#bearing(p));
   }
 }
 

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { PALETTE, SUN_SHADOW } from './toon.js';
+import { PALETTE, SUN_SHADOW, SHADOW_FILTER } from './toon.js';
 
 /** Objects on this layer (tracers, flashes, sprites): tags for effects, which are all transparent and so leave no normals. */
 export const FX_LAYER = 1;
@@ -8,6 +8,23 @@ export const STATIC_LAYER = 3;
 /** Tag a level's fixed scenery: its shadow casters go into the far shadow map, drawn once per level. */
 export function markStatic(root) {
   root.traverse((o) => { if (o.isMesh && o.castShadow) o.layers.enable(STATIC_LAYER); });
+}
+
+/**
+ * Free a removed subtree's GPU memory: geometry, materials and their textures, skeletons, light shadow maps.
+ * Shared pieces are safe to free too: three uploads them again the next time something draws them.
+ */
+export function disposeTree(root) {
+  root.removeFromParent();
+  root.traverse((o) => {
+    o.geometry?.dispose();
+    o.skeleton?.dispose();
+    if (o.isLight) o.dispose();
+    for (const m of [].concat(o.material ?? [])) {
+      for (const v of Object.values(m)) if (v?.isTexture) v.dispose();
+      m.dispose();
+    }
+  });
 }
 
 /*
@@ -59,7 +76,7 @@ uniform vec2 texel;
 uniform float near, far, vmNear, vmFar, fogNear, fogFar, lineWidth;
 uniform vec3 ink;
 uniform vec2 eyeCenter;
-uniform float eyeRadius, eyeShadow, aspect, focus;
+uniform float eyeRadius, eyeShadow, aspect, focus, hurt;
 uniform float worldScale; // the world target's resolution scale (dynamic resolution); the viewmodel's is 1
 
 float viewZ(float d, float n, float f) { return -perspectiveDepthToViewZ(d, n, f); }
@@ -80,6 +97,9 @@ float edge(sampler2D tD, sampler2D tN, vec2 uv, float s, float n, float f, float
   float lap = abs(zl + zr + zu + zd - 4.0 * z0) / max(min(z0, zmin), 1e-3);
   float de = smoothstep(depthTol, depthTol * 1.8, lap);
 
+  #ifdef CHEAP_EDGES
+  if (!sparse) return de; // the world's ink from depth alone; the gun keeps its creases
+  #endif
   vec4 n0 = texture2D(tN, uv);
   vec3 c = n0.xyz * 2.0 - 1.0;
   vec3 nl = texture2D(tN, ul).xyz * 2.0 - 1.0;
@@ -129,6 +149,14 @@ void main() {
   vec2 q = vUv - 0.5;
   col *= 1.0 - dot(q, q) * 0.28;
 
+  // hurt (low health, dead): colour washes out toward grey, the edges darken and go red
+  if (hurt > 0.001) {
+    float l = dot(col, vec3(0.299, 0.587, 0.114));
+    col = mix(col, vec3(l), hurt * 0.85);
+    float rim = smoothstep(0.18, 0.62, length(q * vec2(aspect, 1.0) / max(aspect, 1.0)) * 1.25);
+    col = mix(col, col * vec3(0.9, 0.32, 0.28), hurt * rim * 0.55);
+  }
+
   gl_FragColor = vec4(col, 1.0);
   #include <colorspace_fragment>
 }
@@ -152,12 +180,14 @@ function makeTarget(w, h) {
  *   fixed        the world's scale where the GPU can't be timed (Safari)
  *   shadows      on/off; shadowScale × the near map size each level asks for; shadowEvery: refresh every n frames;
  *                farShadow: size of the level's static far map (drawn once)
+ *                fastShadow: 4 filter taps instead of up to 8 (edges a touch coarser)
  *   lod          × the distances characters switch to their coarser models at
+ *   cheapEdges   ink lines from depth only (no crease lines inside a surface): half the outline pass's reads
  */
 export const QUALITY = {
   high: { ratio: 2, minScale: 0.85, fixed: 1, shadows: true, shadowScale: 1, farShadow: 4096, shadowEvery: 1, lod: 1 },
-  medium: { ratio: 2, minScale: 0.7, fixed: 0.85, shadows: true, shadowScale: 0.5, farShadow: 2048, shadowEvery: 2, lod: 0.6 },
-  low: { ratio: 1, minScale: 0.6, fixed: 0.75, shadows: false, shadowScale: 0.5, farShadow: 0, shadowEvery: 4, lod: 0.4 },
+  medium: { ratio: 2, minScale: 0.7, fixed: 0.85, shadows: true, shadowScale: 0.5, farShadow: 2048, shadowEvery: 2, lod: 0.6, fastShadow: true },
+  low: { ratio: 1, minScale: 0.6, fixed: 0.75, shadows: false, shadowScale: 0.5, farShadow: 0, shadowEvery: 4, lod: 0.4, cheapEdges: true },
 };
 const GPU_BUDGET = 8.5; // ms a frame the GPU may take: room for 100 fps with the CPU's share overlapped
 const ADAPT_EVERY = 250; // ms between dynamic resolution steps (STEP of the world's scale)
@@ -200,7 +230,7 @@ export class Renderer {
         ink: { value: new THREE.Color(PALETTE.ink) },
         eyeCenter: { value: new THREE.Vector2(0.5, 0.5) },
         eyeRadius: { value: 0.1 }, eyeShadow: { value: 0 },
-        aspect: { value: 1 }, focus: { value: 0 },
+        aspect: { value: 1 }, focus: { value: 0 }, hurt: { value: 0 },
         worldScale: { value: 1 },
       },
       depthTest: false,
@@ -231,6 +261,11 @@ export class Renderer {
     gl.setPixelRatio(Math.min(window.devicePixelRatio, q.ratio));
     this.composite.uniforms.lineWidth.value = Math.max(1, gl.getPixelRatio());
     if (prev.shadows !== q.shadows) { gl.shadowMap.enabled = q.shadows; this.recompile = true; }
+    if (SHADOW_FILTER.fast !== !!q.fastShadow) { SHADOW_FILTER.fast = !!q.fastShadow; this.recompile = true; }
+    if (!!this.composite.defines.CHEAP_EDGES !== !!q.cheapEdges) {
+      if (q.cheapEdges) this.composite.defines.CHEAP_EDGES = ''; else delete this.composite.defines.CHEAP_EDGES;
+      this.composite.needsUpdate = true;
+    }
     this.lightsFor = null; // re-apply shadow resolution and LOD distances on the next frame
     this.#setScale(this.timer ? Math.max(this.scale, q.minScale) : q.fixed);
     if (this.cssW) this.resize(this.cssW, this.cssH);
@@ -264,9 +299,9 @@ export class Renderer {
    * covers them all (the sun never moves). Toon materials read it wherever the near map doesn't reach.
    */
   #drawFarShadow(scene, statics) {
-    const sun = this.followers[0], size = this.q.shadows ? this.q.farShadow : 0;
+    const sun = this.followers[0], cap = this.q.shadows ? this.q.farShadow : 0;
     SUN_SHADOW.omFarOn.value = 0;
-    if (!sun || !size || !statics) { this.farTarget?.dispose(); this.farTarget = null; return; }
+    if (!sun || !cap || !statics) { this.farTarget?.dispose(); this.farTarget = null; return; }
     const cam = (this.farCam ??= new THREE.OrthographicCamera());
     const offset = (sun.userData.sunOffset ??= sun.position.clone().sub(sun.target.position));
     cam.position.set(0, 0, 0);
@@ -285,6 +320,8 @@ export class Renderer {
     });
     Object.assign(cam, { left: lo.x - 1, right: hi.x + 1, bottom: lo.y - 1, top: hi.y + 1, near: -hi.z - 1, far: -lo.z + 200 });
     cam.updateProjectionMatrix();
+    // about 4 cm a texel, up to the preset's cap: a 64 m map needs a quarter of the 4096² a 128 m one does
+    const size = Math.min(cap, Math.max(1024, 2 ** Math.round(Math.log2((Math.max(hi.x - lo.x, hi.y - lo.y) + 2) / 0.04))));
     if (this.farTarget?.width !== size) {
       this.farTarget?.dispose();
       this.farTarget = new THREE.WebGLRenderTarget(size, size, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
@@ -336,7 +373,7 @@ export class Renderer {
    */
   #timeFrame(begin) {
     const ext = this.timer;
-    if (!ext) return;
+    if (!ext) { if (begin) this.#paceFrame(); return; }
     const ctx = this.gl.getContext();
     if (begin) {
       while (this.queries.length && ctx.getQueryParameter(this.queries[0], ctx.QUERY_RESULT_AVAILABLE)) {
@@ -355,15 +392,29 @@ export class Renderer {
     }
   }
 
+  /**
+   * No GPU timer (Safari, Firefox): pace by the frame interval instead, against 60 fps. Slower frames step the
+   * world's scale down, frames back at 60 (or a faster display's rate) step it up.
+   * ponytail: can't tell a CPU-bound frame from a GPU-bound one, so a slow CPU also drops scale (floored at minScale).
+   */
+  #paceFrame() {
+    const now = performance.now(), dt = now - (this.lastFrameT ?? now);
+    this.lastFrameT = now;
+    if (dt <= 0 || dt > 100) return; // first frame, a hidden tab, a stall: not a measure of the GPU
+    this.frameMs = this.frameMs ? this.frameMs * 0.9 + dt * 0.1 : dt;
+    this.#step(this.frameMs > 20, this.frameMs < 17.5, ADAPT_EVERY * 2);
+  }
+
   #adapt(ms) {
     this.gpuMs = this.gpuMs ? this.gpuMs * 0.9 + ms * 0.1 : ms;
+    this.#step(this.gpuMs > GPU_BUDGET, this.gpuMs < GPU_BUDGET * 0.7, ADAPT_EVERY);
+  }
+
+  #step(down, up, every) {
     const now = performance.now();
-    if (now - this.adaptT < ADAPT_EVERY) return;
+    if (now - this.adaptT < every) return;
     this.adaptT = now;
-    let s = this.scale;
-    if (this.gpuMs > GPU_BUDGET) s -= STEP;
-    else if (this.gpuMs < GPU_BUDGET * 0.7) s += STEP;
-    s = Math.round(THREE.MathUtils.clamp(s, this.q.minScale, 1) * 100) / 100;
+    const s = Math.round(THREE.MathUtils.clamp(this.scale + (down ? -STEP : up ? STEP : 0), this.q.minScale, 1) * 100) / 100;
     if (s !== this.scale) this.#setScale(s);
   }
 
@@ -395,9 +446,10 @@ export class Renderer {
     return done;
   }
 
-  /** opts.eyepiece: { x, y, r, shadow } in screen UV (or null); opts.focus: 0..1 inspect blur. */
-  render(world, worldCam, vm, vmCam, { eyepiece = null, focus = 0 } = {}) {
+  /** opts.eyepiece: { x, y, r, shadow } in screen UV (or null); opts.focus: 0..1 inspect blur; opts.hurt: 0..1 washout. */
+  render(world, worldCam, vm, vmCam, { eyepiece = null, focus = 0, hurt = 0 } = {}) {
     const u = this.composite.uniforms;
+    u.hurt.value = hurt;
     u.aspect.value = this.size.x / this.size.y;
     u.focus.value = focus;
     u.eyeShadow.value = eyepiece ? eyepiece.shadow : 0;

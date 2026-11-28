@@ -4,6 +4,7 @@ import { buildAmmo } from './models/ammo.js';
 import { buildArmour } from './models/armour.js';
 import { buildCharger } from './models/charger.js';
 import { buildGrenade } from './models/grenade.js';
+import { buildSmoke } from './models/smoke.js';
 
 /*
   Item definitions. Everything that differs between items lives here:
@@ -28,6 +29,7 @@ export const ITEMS = {
   bandage: { name: 'Bandage', kind: 'heal', heal: 40, time: 2.4, max: 4, show: 2.2, accent: 0xf1eee4, build: buildBandage },
   charger: { name: 'Armour charger', kind: 'charge', time: 3, max: 3, show: 1.8, accent: 0x5fd0ff, build: buildCharger },
   grenade: { name: 'Frag grenade', kind: 'throw', max: 2, show: 2.4, accent: 0xd97757, build: buildGrenade },
+  smoke: { name: 'Smoke grenade', kind: 'throw', max: 2, show: 2.4, accent: 0x9fb4c7, build: buildSmoke },
   ammo: { name: 'Ammo box', kind: 'ammo', mags: 2, show: 1.8, accent: 0xc9a04e, build: buildAmmo },
   ...Object.fromEntries(ARMOUR_TIERS.filter(Boolean).map((a) => [`armour${a.tier}`, {
     name: a.name, kind: 'armour', tier: a.tier, cap: a.cap, show: 1.45, accent: a.color, build: () => buildArmour(a.tier, a.color),
@@ -35,6 +37,19 @@ export const ITEMS = {
 };
 
 export const ITEM_IDS = Object.keys(ITEMS);
+
+export const armourTier = (cap) => Math.max(0, ARMOUR_TIERS.findIndex((t) => t?.cap === cap));
+
+/**
+ * Armour takes a hit first. who: { armour, armourMax } (changed in place). Returns the health lost and, when the
+ * hit landed on armour, { tier, broke } for the damage number.
+ */
+export function soakArmour(who, dmg) {
+  if (!(who.armour > 0)) return { lost: dmg, armour: null };
+  const soak = Math.min(who.armour, dmg);
+  who.armour -= soak;
+  return { lost: dmg - soak, armour: { tier: armourTier(who.armourMax), broke: who.armour <= 0 } };
+}
 
 /**
  * A pickup from a map record's type: 'item_medkit' / 'medkit' → { type: 'medkit' }, 'gun_kestrel' → { type: 'gun', gun: arsenal index }.

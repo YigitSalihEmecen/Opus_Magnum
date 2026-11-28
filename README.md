@@ -14,8 +14,13 @@ node server/index.js   # match server for online play (ws://localhost:8787); nod
 
 ## Controls
 WASD move · Mouse look · Space jump / vault · Shift sprint (toggle) · C or Ctrl crouch/slide ·
-LMB fire · RMB aim · R reload · 1–5 or wheel switch weapon · B fire mode · F gunsmith · Tab scoreboard ·
-E pick up / swap · T drop weapon · G throw grenade · V punch · Q heal · X charge armour · Esc or P pause/settings
+LMB fire · RMB aim · R reload · 1–2 or wheel switch weapon (two gun slots) · B fire mode · H gunsmith · Tab scoreboard ·
+F pick up / swap / doors · T drop weapon · G throw grenade · Z item wheel · V punch · Q / E lean · Esc or P pause/settings
+
+## Weapons
+Two gun slots. The range starts you with the Panther and Lynx; every other gun waits on the rack in front of the
+spawn (F to pick up or swap): Snake SMG, Grizzly pump shotgun, Kestrel sniper, Osprey marksman rifle, Hornet SMG,
+Jackal revolver, Bison double-barrel and Coyote scout rifle. H opens the gunsmith for each gun's attachments.
 
 ## Items
 Health is 100; armour adds 25 / 50 / 75 on top by tier (light, guard, heavy) and soaks damage first.
@@ -23,13 +28,14 @@ Health regenerates slowly after 8 s out of combat, so heals matter.
 
 | Item | Use |
 |---|---|
-| Bandage | Q · +40 health in 2.4 s (carry 4) |
-| Medkit | Q · full health in 5 s (carry 2). Q picks the bandage when it covers the wound |
-| Armour charger | X · refills your vest in 3 s (carry 3) |
-| Frag grenade | G · bounces, 2.4 s fuse, up to 135 damage within 6.5 m; it hurts you too (carry 2) |
+| Bandage | Z wheel · +40 health in 2.4 s (carry 4) |
+| Medkit | Z wheel · +150 health in 5 s (carry 2) |
+| Armour charger | Z wheel · refills your vest in 3 s (carry 3) |
+| Frag grenade | G or Z wheel · bounces, 2.4 s fuse, up to 135 damage within 6.5 m; it hurts you too (carry 2) |
+| Smoke grenade | Z wheel · pops 1.4 s after the throw, a screen that hangs about 16 s; bots can't see through it (carry 2) |
 | Ammo box | walk over it · +2 mags for each gun you carry |
-| Armour | walk over it with no vest, E to upgrade |
-| Guns | E to pick up (two at most; a third swaps out the one in your hands), T to drop |
+| Armour | walk over it with no vest, F to upgrade |
+| Guns | F to pick up (two at most; a third swaps out the one in your hands), T to drop |
 
 Heals are cancelled by firing, aiming or switching weapons. The range lays every item out in front of the
 spawn; TDM scatters them over the map (25 s respawn) and starts you with a carbine, a pistol, a grenade and

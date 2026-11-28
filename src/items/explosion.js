@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { FX_LAYER, NORMAL_OUT_DECL } from '../core/renderer.js';
+import { FX_LAYER, NORMAL_OUT_DECL, disposeTree } from '../core/renderer.js';
 
 /*
   Grenade blast in the game's cel style, pooled (nothing is created per explosion).
@@ -86,7 +86,11 @@ const FIRE_FRAG = /* glsl */`
   void main() {
     float L = dot(normalize(vWN), normalize(vec3(0.35, 1.0, 0.25))) * 0.5 + 0.5;
     vec3 p = vP * 3.2 + uSeed + vec3(0.0, -uTime * 1.6, 0.0);
+    #ifdef SMOKE
+    float n = noise(p) * 0.62 + noise(p * 2.3 + 7.1) * 0.38; // smoke only shifts a threshold: two octaves read the same
+    #else
     float n = noise(p) * 0.55 + noise(p * 2.3 + 7.1) * 0.3 + noise(p * 5.2 + 3.7) * 0.15;
+    #endif
     float heat = uHeat + (n - 0.5) * 0.95 + (L - 0.5) * 0.4;
     vec3 c = heat > 0.98 ? uCol[0] : heat > 0.74 ? uCol[1] : heat > 0.52 ? uCol[2] : heat > 0.34 ? uCol[3] : heat > 0.2 ? uCol[4]
       : (L + (n - 0.5) * 0.3 > 0.52 ? uCol[5] : uCol[6]);
@@ -96,15 +100,16 @@ const FIRE_FRAG = /* glsl */`
   }`;
 const FIRE_COLS = [0xfff2b0, 0xffd447, 0xff9b2f, 0xe4552a, 0x8e3b2b, 0xaaa59c, 0x7b766f].map((c) => new THREE.Color(c));
 
-function fireMaterial() {
+/** The blast's lobe shading; smoke screens (smoke.js) use it with grey colours and the heat held low. */
+export function fireMaterial(cols = FIRE_COLS, { smoke = false } = {}) {
   return new THREE.ShaderMaterial({
-    vertexShader: FIRE_VERT, fragmentShader: FIRE_FRAG,
-    uniforms: { uHeat: { value: 1 }, uTime: { value: 0 }, uSeed: { value: new THREE.Vector3() }, uCol: { value: FIRE_COLS } },
+    vertexShader: FIRE_VERT, fragmentShader: FIRE_FRAG, defines: smoke ? { SMOKE: '' } : {},
+    uniforms: { uHeat: { value: 1 }, uTime: { value: 0 }, uSeed: { value: new THREE.Vector3() }, uCol: { value: cols } },
   });
 }
 
-function lobeGeometry() {
-  const g = mergeVertices(new THREE.IcosahedronGeometry(1, DETAIL).deleteAttribute('normal').deleteAttribute('uv'));
+export function lobeGeometry(detail = DETAIL) {
+  const g = mergeVertices(new THREE.IcosahedronGeometry(1, detail).deleteAttribute('normal').deleteAttribute('uv'));
   g.userData.dirs = Float32Array.from(g.attributes.position.array);
   g.attributes.position.setUsage(THREE.DynamicDrawUsage);
   g.computeVertexNormals();
@@ -112,12 +117,12 @@ function lobeGeometry() {
 }
 
 /** Push a lobe's vertices out along their directions by boiling noise: lumpy, never spiky. */
-function deform(geo, seed, t) {
+export function deform(geo, seed, t, base = 0.7, amp = 0.62, freq = 2) {
   const dirs = geo.userData.dirs, pos = geo.attributes.position.array;
   const sx = seed.x, sy = seed.y - t * 0.9, sz = seed.z;
   for (let i = 0; i < dirs.length; i += 3) {
     const x = dirs[i], y = dirs[i + 1], z = dirs[i + 2];
-    const r = 0.7 + 0.62 * fbm(x * 2 + sx, y * 2 + sy, z * 2 + sz);
+    const r = base + amp * fbm(x * freq + sx, y * freq + sy, z * freq + sz);
     pos[i] = x * r; pos[i + 1] = y * r; pos[i + 2] = z * r;
   }
   geo.attributes.position.needsUpdate = true;
@@ -188,7 +193,7 @@ export class Explosions {
     this.group.add(this.embers);
   }
 
-  dispose() { this.scene.remove(this.group); }
+  dispose() { disposeTree(this.group); }
 
   /** A blast at `pos` on a surface facing `normal` (up when it went off in the air). */
   spawn(pos, normal = _up) {

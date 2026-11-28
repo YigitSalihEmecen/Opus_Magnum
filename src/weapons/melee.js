@@ -113,7 +113,8 @@ export class Melee {
       const res = who.damage(dmg, zone, best.point, best.dir, now, 'fist');
       if (!res) return false;
       this.hud.hitmarker(res.killed ? 'kill' : 'hit', head);
-      this.hud.damageNumber(best.point, Math.round(dmg), head);
+      this.hud.damageNumber(best.point, Math.round(dmg), head, res.armour);
+      if (res.armour?.broke) this.audio.armourBreak(res.armour.tier);
       this.audio.punch();
       this.audio.hit(res.killed ? 'kill' : 'body', head);
       this.fx.impact(best.point, best.dir.clone().negate(), { flesh: true });

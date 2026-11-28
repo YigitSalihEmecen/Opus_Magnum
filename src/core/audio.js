@@ -5,6 +5,15 @@ const MANIFEST = {
   smgFire: range('weapon/smg_fire', 4),
   shotgunFire: range('weapon/shotgun_fire', 4),
   pistolFire: range('weapon/pistol_fire', 4),
+  dmrFire: range('weapon/dmr_fire', 4),
+  hornetFire: range('weapon/hornet_fire', 4),
+  revolverFire: range('weapon/revolver_fire', 4),
+  doubleFire: range('weapon/double_fire', 4),
+  scoutFire: range('weapon/scout_fire', 4),
+  shellIn: range('weapon/shell_in', 2),
+  breakOpen: ['weapon/break_open'],
+  breakClose: ['weapon/break_close'],
+  latch: ['weapon/latch'],
   pumpBack: ['weapon/pump_back'],
   pumpForward: ['weapon/pump_forward'],
   magOut: range('weapon/mag_out', 2),
@@ -48,13 +57,14 @@ export class AudioBank {
     this.wind = this.#noiseLoop('lowpass', 500, 0.7);
     this.scrape = this.#noiseLoop('bandpass', 1400, 1.2);
 
-    await Promise.all(
-      Object.entries(MANIFEST).map(async ([key, files]) => {
-        this.buffers[key] = await Promise.all(
-          files.map(async (f) => ctx.decodeAudioData(await (await fetch(`${import.meta.env.BASE_URL}audio/${f}.wav`)).arrayBuffer())),
-        );
-      }),
-    );
+    // Opus (a twentieth of the download) where the browser decodes it; the WAV wherever that fails (Safari)
+    const url = (f, ext) => `${import.meta.env.BASE_URL}audio/${f}.${ext}`;
+    const opus = new Audio().canPlayType('audio/ogg; codecs=opus') !== '';
+    const load = async (f) => {
+      if (opus) try { return await ctx.decodeAudioData(await (await fetch(url(f, 'ogg'))).arrayBuffer()); } catch { /* fall back */ }
+      return ctx.decodeAudioData(await (await fetch(url(f, 'wav'))).arrayBuffer());
+    };
+    await Promise.all(Object.entries(MANIFEST).map(async ([key, files]) => { this.buffers[key] = await Promise.all(files.map(load)); }));
     this.ready = true;
   }
 
@@ -94,11 +104,12 @@ export class AudioBank {
   }
 
   /** Gunshot: recorded report + synthesized sub thump + mechanical tick. Suppressed = muffled, mostly mechanism. */
-  fire({ ads = false, suppressed = false, sample = 'fire' } = {}) {
+  /** brass: the gun throws a case on every shot (not pumps, bolts or revolvers): a tinkle sometimes follows. */
+  fire({ ads = false, suppressed = false, sample = 'fire', brass = true } = {}) {
     if (!this.ready) return;
     const ctx = this.ctx;
     const t = ctx.currentTime;
-    const v = suppressed ? this.#muffled(sample, 0.2, 1100) : this.play(sample, { volume: { fire: 0.55, shotgunFire: 0.6 }[sample] ?? 0.42, jitter: 0.035 });
+    const v = suppressed ? this.#muffled(sample, 0.2, 1100) : this.play(sample, { volume: { fire: 0.55, shotgunFire: 0.6, doubleFire: 0.62, dmrFire: 0.56, scoutFire: 0.58, revolverFire: 0.52 }[sample] ?? 0.42, jitter: 0.035 });
     if (v) {
       this.fireVoices.push(v);
       if (this.fireVoices.length > 8) {
@@ -111,13 +122,13 @@ export class AudioBank {
     const g = ctx.createGain();
     osc.frequency.setValueAtTime(140, t);
     osc.frequency.exponentialRampToValueAtTime(42, t + 0.11);
-    g.gain.setValueAtTime((ads ? 0.55 : 0.45) * (suppressed ? 0.4 : 1) * (sample === 'shotgunFire' ? 1.6 : 1), t);
+    g.gain.setValueAtTime((ads ? 0.55 : 0.45) * (suppressed ? 0.4 : 1) * ({ shotgunFire: 1.6, doubleFire: 1.7, revolverFire: 1.3, scoutFire: 1.3, dmrFire: 1.2 }[sample] ?? 1), t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
     osc.connect(g).connect(this.master);
     osc.start(t);
     osc.stop(t + 0.15);
     this.play('click', { volume: suppressed ? 0.3 : 0.12, rate: 1.6, jitter: 0.1 });
-    if (sample !== 'shotgunFire' && Math.random() < 0.35) this.brass(0.32 + Math.random() * 0.15);
+    if (brass && Math.random() < 0.35) this.brass(0.32 + Math.random() * 0.15);
   }
 
   #muffled(name, volume, cutoff) {
@@ -231,6 +242,46 @@ export class AudioBank {
     if (head) burst(0.002, 0.009, 'highpass', 5200, 5200, 0.8, 0.7); // dry tick
   }
 
+  /**
+   * Armour shattering: a dry crack, a few narrow inharmonic rings (the plate splitting), a scatter of fine
+   * shards falling off and a short low thunk. Heavier tiers sit lower. volume < 1 for our own vest.
+   */
+  armourBreak(tier = 1, { volume = 1 } = {}) {
+    if (!this.ready) return;
+    const ctx = this.ctx, t = ctx.currentTime, k = [1, 1.08, 0.9, 0.74][tier] ?? 1;
+    const out = ctx.createGain();
+    out.gain.value = volume;
+    out.connect(this.#hitBus());
+    const burst = (at, dur, type, f0, f1, q, amp) => {
+      const src = ctx.createBufferSource();
+      src.buffer = this.noise;
+      const f = ctx.createBiquadFilter();
+      f.type = type;
+      f.Q.value = q;
+      f.frequency.setValueAtTime(f0, t + at);
+      f.frequency.exponentialRampToValueAtTime(f1, t + at + dur);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t + at);
+      g.gain.exponentialRampToValueAtTime(amp, t + at + 0.0015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + at + dur);
+      src.connect(f).connect(g).connect(out);
+      src.start(t + at, Math.random() * 1.5);
+      src.stop(t + at + dur + 0.02);
+    };
+    burst(0, 0.025, 'highpass', 3800 * k, 2600 * k, 0.7, 0.9);                          // crack
+    for (const [f, a] of [[2300, 0.5], [3450, 0.42], [5100, 0.3]]) burst(0.004, 0.16, 'bandpass', f * k, f * k * 0.93, 22, a); // plate rings
+    for (let i = 0; i < 7; i++) burst(0.03 + Math.random() * 0.2, 0.02, 'bandpass', (3200 + Math.random() * 4200) * k, 2400 * k, 6, 0.18 + Math.random() * 0.14); // shards
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.setValueAtTime(260 * k, t);
+    o.frequency.exponentialRampToValueAtTime(90 * k, t + 0.07);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.55, t + 0.003);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+    o.connect(g).connect(out);
+    o.start(t);
+    o.stop(t + 0.1);
+  }
+
   /** A fist landing: a slap on top, a low meaty thud and a sub drop under it. wall: harder, drier, no flesh. */
   punch({ wall = false } = {}) {
     if (!this.ready) return;
@@ -307,6 +358,81 @@ export class AudioBank {
     o.start(t);
     o.stop(t + 0.75);
     this.play('land', { volume: 0.5 * volume, rate: 0.55 });
+  }
+
+  /** Taking a hit (k 0..1 with the damage): a dull body thump under a short muffled smack. */
+  hurt(k = 0.5) {
+    if (!this.ready) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.setValueAtTime(110, t);
+    o.frequency.exponentialRampToValueAtTime(42, t + 0.16);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.35 + 0.45 * k, t + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+    o.connect(g).connect(this.master);
+    o.start(t);
+    o.stop(t + 0.22);
+    const src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), n = ctx.createGain();
+    src.buffer = this.noise;
+    f.type = 'lowpass';
+    f.frequency.setValueAtTime(1600, t);
+    f.frequency.exponentialRampToValueAtTime(200, t + 0.09);
+    n.gain.setValueAtTime(0.0001, t);
+    n.gain.exponentialRampToValueAtTime(0.3 + 0.3 * k, t + 0.002);
+    n.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
+    src.connect(f).connect(n).connect(this.master);
+    src.start(t, Math.random() * 1.5);
+    src.stop(t + 0.12);
+  }
+
+  /** Low health: lub-dub, k (0..1) louder as it gets worse. */
+  heartbeat(k = 0.5) {
+    if (!this.ready) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    for (const [at, amp] of [[0, 1], [0.17, 0.7]]) {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.setValueAtTime(68, t + at);
+      o.frequency.exponentialRampToValueAtTime(38, t + at + 0.12);
+      g.gain.setValueAtTime(0.0001, t + at);
+      g.gain.exponentialRampToValueAtTime((0.25 + 0.35 * k) * amp, t + at + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + at + 0.16);
+      o.connect(g).connect(this.master);
+      o.start(t + at);
+      o.stop(t + at + 0.18);
+    }
+  }
+
+  /** Smoke canister going off: a soft pop, then a long airy hiss that settles as the cloud fills out. */
+  smoke({ volume = 1, pan = 0 } = {}) {
+    if (!this.ready) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const out = ctx.createGain();
+    out.gain.value = volume;
+    let node = out;
+    if (pan) { const p = ctx.createStereoPanner(); p.pan.value = pan; out.connect(p); node = p; }
+    node.connect(this.master);
+    const burst = (at, dur, type, f0, f1, q, amp, attack) => {
+      const src = ctx.createBufferSource();
+      src.buffer = this.noise;
+      src.loop = true;
+      const f = ctx.createBiquadFilter();
+      f.type = type;
+      f.Q.value = q;
+      f.frequency.setValueAtTime(f0, t + at);
+      f.frequency.exponentialRampToValueAtTime(f1, t + at + dur);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t + at);
+      g.gain.exponentialRampToValueAtTime(amp, t + at + attack);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + at + dur);
+      src.connect(f).connect(g).connect(out);
+      src.start(t + at, Math.random() * 1.5);
+      src.stop(t + at + dur + 0.05);
+    };
+    burst(0, 0.08, 'lowpass', 1400, 300, 0.8, 0.5, 0.003);     // pop
+    burst(0.03, 2.6, 'bandpass', 5200, 2600, 0.6, 0.16, 0.12); // hiss
+    burst(0.05, 2.2, 'lowpass', 900, 200, 0.7, 0.12, 0.3);      // the rush of the cloud
+    this.play('click', { volume: 0.35 * volume, rate: 0.7 });
   }
 
   setVolume(v) {

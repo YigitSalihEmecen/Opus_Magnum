@@ -10,7 +10,7 @@ import { FX_LAYER } from '../core/renderer.js';
     muzzle — origin at the barrel crown, +f forward     scope — origin on the rail top
     mag    — origin at the seated top of the mag         grip  — origin under the rail
     stock  — gun space (mount sits at the gun origin)
-  Stat keys (multipliers unless noted): vRecoil, hRecoil, ads, reload, flash, magSize (abs),
+  Stat keys (multipliers unless noted): vRecoil, hRecoil, ads, reload, flash, choke (pellet ring), magSize (abs),
   zoom (abs), suppressed (bool).
 */
 
@@ -62,7 +62,17 @@ function glass(parent, tex, size, x, y, f, round = true) {
   return m;
 }
 
+// reticles and mag prints are drawn once and shared: an optic or mag is rebuilt on every swap
+const reticles = new Map();
+let curvedPrint, drumPrint;
+
 function reticle(draw, tint = 'rgba(150, 190, 200, 0.10)') {
+  const key = draw.toString() + tint;
+  if (!reticles.has(key)) reticles.set(key, drawReticle(draw, tint));
+  return reticles.get(key);
+}
+
+function drawReticle(draw, tint) {
   const c = document.createElement('canvas');
   c.width = c.height = 512;
   const g = c.getContext('2d');
@@ -181,7 +191,7 @@ function curvedMag(A, { N = 14, R = 0.42, flare = 0.006 } = {}) {
   });
   const outline = (inset = 0, from = 0, to = N) => [...edge(1, inset).slice(from, to + 1), ...edge(-1, inset).slice(from, to + 1).reverse()];
 
-  const printMat = toon(0xffffff, { map: magPrint(), rim: 0.3, rimColor: 0xfff3e8 });
+  const printMat = (curvedPrint ??= toon(0xffffff, { map: magPrint(), rim: 0.3, rimColor: 0xfff3e8 }));
   mesh(mag, profile(outline(), 0.03, { bevel: 0.0035 }), printMat);
   mesh(mag, profile(outline(0, 0, 2), 0.034, { bevel: 0.003 }), MATS.poly);
   mesh(mag, profile(outline(0, N - 2, N), 0.034, { bevel: 0.003 }), MATS.poly);
@@ -196,11 +206,11 @@ function curvedMag(A, { N = 14, R = 0.42, flare = 0.006 } = {}) {
 }
 
 /** Straight SMG stick mag hanging from the foregrip; L = full length (more sticks out below). */
-function stickMag(L) {
+function stickMag(L, accent = MATS.olive) {
   const mag = group('magazine');
   mesh(mag, rbox(0.023, L, 0.031, 0.004), MATS.poly, 0, -L / 2, 0);
   for (let y = -0.035; y > -L + 0.03; y -= 0.026) mesh(mag, rbox(0.0245, 0.0035, 0.025, 0.0012), MATS.black, 0, y, 0);
-  mesh(mag, rbox(0.0242, L * 0.42, 0.008, 0.002), MATS.olive, 0, -L * 0.6, -0.009);
+  mesh(mag, rbox(0.0242, L * 0.42, 0.008, 0.002), accent, 0, -L * 0.6, -0.009);
   mesh(mag, rbox(0.029, 0.012, 0.038, 0.004), MATS.black, 0, -L - 0.004, 0.002);
   mesh(mag, rbox(0.01, 0.005, 0.022, 0.002), MATS.accent, 0, -L - 0.012, 0.004);
   rounds(mag);
@@ -218,9 +228,8 @@ function drumMag() {
   const cy = -0.128, cf = 0.03, R = 0.074;
   const body = mesh(mag, new THREE.CylinderGeometry(R, R, 0.058, 48).rotateZ(Math.PI / 2), MATS.poly, 0, cy, cf);
   body.name = 'drum';
-  const tex = magPrint();
-  tex.repeat.set(1.4, 1.4);
-  const printMat = toon(0xffffff, { map: tex, rim: 0.25 });
+  const printMat = (drumPrint ??= toon(0xffffff, { map: magPrint(), rim: 0.25 }));
+  printMat.map.repeat.set(1.4, 1.4);
   for (const side of [-1, 1]) {
     const face = mesh(mag, new THREE.CircleGeometry(R * 0.86, 48), printMat, side * 0.0292, cy, cf);
     face.rotation.y = (side * Math.PI) / 2;
@@ -471,6 +480,28 @@ function scope6x() {
   return g;
 }
 
+/** Revolver comp: a slotted block clamped under the shroud's crown, ports on top. */
+function revolverComp() {
+  const g = group('revolverComp');
+  mesh(g, rbox(0.03, 0.05, 0.05, 0.006), MATS.poly, 0, 0.002, 0.024);
+  mesh(g, rbox(0.031, 0.008, 0.014, 0.003), MATS.accent, 0, 0.002, 0.006);
+  for (const f of [0.022, 0.036]) mesh(g, rbox(0.02, 0.006, 0.008, 0.002), MATS.vent, 0, 0.026, f);
+  mesh(g, new THREE.CircleGeometry(0.007, 18).rotateY(Math.PI), MATS.vent, 0, 0, 0.0495);
+  return { obj: g, tip: 0.05 };
+}
+
+/** Twin choke for the double barrel: one ringed block over both muzzles. */
+function twinChoke() {
+  const g = group('twinChoke');
+  mesh(g, rbox(0.064, 0.034, 0.05, 0.008), MATS.poly, 0, 0, 0.025);
+  mesh(g, rbox(0.066, 0.036, 0.01, 0.005), MATS.red, 0, 0, 0.01);
+  for (const x of [-0.0125, 0.0125]) {
+    ring(g, 0.0105, 0.05, 0.056, MATS.steel, 20).position.x = x;
+    mesh(g, new THREE.CircleGeometry(0.0065, 16).rotateY(Math.PI), MATS.vent, x, 0, 0.0505);
+  }
+  return { obj: g, tip: 0.056 };
+}
+
 /** Sniper brake: castellated block with side ports and a blue collar. */
 function sniperBrake() {
   const g = group('sniperBrake');
@@ -486,13 +517,24 @@ function sniperBrake() {
   return { obj: g, tip: 0.12 };
 }
 
-/** Sniper box mag (origin at the seated top): dark body, ribbed sides, blue base plate. */
-function sniperMag(h) {
+/** Bolt-gun box mag (origin at the seated top): dark body, ribbed sides, a base plate in the gun's colour. */
+function sniperMag(h, plate = MATS.blue) {
   const g = group('sniperMag');
   mesh(g, rbox(0.036, h, 0.07, 0.004), MATS.black, 0, -h / 2 + 0.01, 0);
   for (let i = 0; i < 3; i++) mesh(g, rbox(0.0375, 0.004, 0.05, 0.001), MATS.poly, 0, -0.02 - i * (h - 0.03) / 3, 0);
-  mesh(g, rbox(0.04, 0.012, 0.076, 0.004), MATS.blue, 0, -h + 0.008, 0);
+  mesh(g, rbox(0.04, 0.012, 0.076, 0.004), plate, 0, -h + 0.008, 0);
   return g;
+}
+
+/** Marksman box mag (origin at the seated top): straight, slab-sided, ribbed, rounds showing, sage base plate. */
+function dmrMag(L) {
+  const mag = group('magazine');
+  mesh(mag, rbox(0.03, L, 0.07, 0.004), MATS.poly, 0, -L / 2, 0);
+  for (let y = -0.03; y > -L + 0.02; y -= 0.022) mesh(mag, rbox(0.0315, 0.004, 0.056, 0.0012), MATS.black, 0, y, 0.002);
+  mesh(mag, rbox(0.0312, L * 0.5, 0.012, 0.002), MATS.steel, 0, -L * 0.45, -0.026);
+  mesh(mag, rbox(0.036, 0.012, 0.078, 0.004), MATS.sage, 0, -L - 0.004, 0.002);
+  for (const [f, y] of [[0.004, 0.004], [-0.018, 0.008]]) mesh(mag, tube(0.0058, 0.0058, -0.032, 0.03, 10), MATS.brass, 0, y, f);
+  return mag;
 }
 
 // ───────────────────────────── grips ─────────────────────────────
@@ -529,6 +571,18 @@ function skeletonStock() {
   mesh(g, profile([[-0.368, 0.066], [-0.368, -0.07], [-0.382, -0.08], [-0.404, -0.072], [-0.404, 0.062], [-0.39, 0.074]], 0.042, { bevel: 0.005 }), MATS.poly);
   mesh(g, rbox(0.046, 0.15, 0.012, 0.004), MATS.rubber, 0, -0.003, -0.41);
   mesh(g, new THREE.CylinderGeometry(0.008, 0.008, 0.05, 14).rotateZ(Math.PI / 2), MATS.black, 0, 0.03, -0.36);
+  return g;
+}
+
+/** Marksman stock: long box over the buffer tube, adjustable cheek, angular butt with a rear monopod hook. */
+function marksmanStock() {
+  const g = group('marksmanStock');
+  mesh(g, profile([[-0.12, 0.058], [-0.36, 0.058], [-0.372, 0.048], [-0.372, 0.008], [-0.12, 0.004]], 0.04, { bevel: 0.005 }), MATS.poly);
+  mesh(g, profile([[-0.2, 0.058], [-0.215, 0.078], [-0.35, 0.08], [-0.362, 0.066], [-0.362, 0.058]], 0.036, { bevel: 0.004 }), MATS.black);
+  mesh(g, profile([[-0.34, 0.072], [-0.4, 0.074], [-0.41, 0.064], [-0.41, -0.07], [-0.396, -0.084], [-0.37, -0.084], [-0.33, -0.04], [-0.27, 0.004], [-0.34, 0.004]], 0.044, { bevel: 0.005, holes: [[[-0.36, -0.012], [-0.388, -0.012], [-0.388, -0.06], [-0.372, -0.06]]] }), MATS.poly);
+  mesh(g, rbox(0.048, 0.15, 0.014, 0.005), MATS.rubber, 0, -0.004, -0.414);
+  mesh(g, rbox(0.045, 0.008, 0.06, 0.002), MATS.sage, 0, 0.004, -0.3);
+  for (const f of [-0.24, -0.29]) mesh(g, new THREE.CylinderGeometry(0.004, 0.004, 0.042, 10).rotateZ(Math.PI / 2), MATS.steel, 0, 0.068, f);
   return g;
 }
 
@@ -619,6 +673,10 @@ const ATTACHMENTS = {
     { id: 'smgcan', name: 'Suppressor', blurb: 'Fat round can. Quiet, no flash, heavier.', stats: { vRecoil: 0.9, hRecoil: 0.92, flash: 0.0, ads: 1.12, suppressed: true }, build: smgSuppressor },
     { id: 'pthread', name: 'Threaded Barrel', blurb: 'Bare muzzle. Light, bright flash.', stats: {} },
     { id: 'sbrake', name: 'Muzzle Brake', blurb: 'Ported block. Tames the kick.', stats: { vRecoil: 0.85 }, build: sniperBrake },
+    { id: 'rbare', name: 'Bare Crown', blurb: 'Nothing on the shroud. Light and quick.', stats: {} },
+    { id: 'rcomp', name: 'Revolver Comp', blurb: 'Ported block. Flattens the flip, brighter flash.', stats: { vRecoil: 0.8, flash: 1.2, ads: 1.05 }, build: revolverComp },
+    { id: 'dbare', name: 'Open Bores', blurb: 'Cylinder bores. Widest spread, quickest handling.', stats: {} },
+    { id: 'choke', name: 'Twin Choke', blurb: 'Tightens both patterns for reach. A little heavier.', stats: { choke: 0.68, ads: 1.06 }, build: twinChoke },
     { id: 'pcan', name: 'Silent-12 Can', blurb: 'Big box can, longer than the pistol. Whisper quiet.', stats: { vRecoil: 0.85, hRecoil: 0.9, flash: 0.0, ads: 1.15, suppressed: true }, build: pistolSuppressor },
   ],
   scope: [
@@ -636,9 +694,16 @@ const ATTACHMENTS = {
     { id: 'drum', name: 'Drum', blurb: '50 rounds. Heavy and slow.', stats: { magSize: 50, reload: 1.35, ads: 1.12 }, build: drumMag },
     { id: 'smg25', name: 'Compact Mag', blurb: '25 rounds. Flush with the grip.', stats: { magSize: 25, reload: 0.9 }, build: () => stickMag(0.12) },
     { id: 'smg35', name: 'Extended Mag', blurb: '35 rounds. The standard.', stats: { magSize: 35 }, build: () => stickMag(0.16) },
+    { id: 'h25', name: 'Compact Mag', blurb: '25 rounds. Flush with the well.', stats: { magSize: 25, reload: 0.9 }, build: () => stickMag(0.12, MATS.amber) },
+    { id: 'h35', name: 'Extended Mag', blurb: '35 rounds. The standard.', stats: { magSize: 35 }, build: () => stickMag(0.16, MATS.amber) },
+    { id: 'h50', name: 'Long Stick', blurb: '50 rounds. Long and slower to swap.', stats: { magSize: 50, reload: 1.22, ads: 1.07 }, build: () => stickMag(0.215, MATS.amber) },
     { id: 'smg50', name: 'Long Stick', blurb: '50 rounds. Long and slower to swap.', stats: { magSize: 50, reload: 1.22, ads: 1.07 }, build: () => stickMag(0.215) },
     { id: 's5', name: 'Box Mag', blurb: '5 rounds. Quick to swap.', stats: { magSize: 5 }, build: () => sniperMag(0.07) },
     { id: 's10', name: 'Long Box', blurb: '10 rounds. Heavier, slower to swap.', stats: { magSize: 10, reload: 1.15, ads: 1.06 }, build: () => sniperMag(0.11) },
+    { id: 'd10', name: 'Short Box', blurb: '10 rounds. Light, quick to swap.', stats: { magSize: 10, reload: 0.9, ads: 0.96 }, build: () => dmrMag(0.085) },
+    { id: 'd20', name: 'Box Mag', blurb: '20 rounds. The standard.', stats: { magSize: 20 }, build: () => dmrMag(0.13) },
+    { id: 'c5', name: 'Box Mag', blurb: '5 rounds. Quick to swap.', stats: { magSize: 5 }, build: () => sniperMag(0.07, MATS.tan) },
+    { id: 'c10', name: 'Long Box', blurb: '10 rounds. Heavier, slower to swap.', stats: { magSize: 10, reload: 1.12, ads: 1.05 }, build: () => sniperMag(0.11, MATS.tan) },
     { id: 'p15', name: 'Standard Mag', blurb: '15 rounds. Flush fit.', stats: { magSize: 15 }, build: () => pistolMag(0.092) },
     { id: 'p24', name: 'Extended Mag', blurb: '24 rounds with a grip sleeve.', stats: { magSize: 24, reload: 1.1, ads: 1.04 }, build: () => pistolMag(0.136) },
   ],
@@ -650,6 +715,7 @@ const ATTACHMENTS = {
   stock: [
     { id: 'skeleton', name: 'Skeleton Stock', blurb: 'Light. Fast handling.', stats: { ads: 0.93 }, build: skeletonStock },
     { id: 'precision', name: 'Precision Stock', blurb: 'Solid cheek weld, less recoil.', stats: { vRecoil: 0.9, hRecoil: 0.88, ads: 1.06 }, build: precisionStock },
+    { id: 'marksman', name: 'Marksman Stock', blurb: 'Long, adjustable cheek. Steadiest follow-ups.', stats: { vRecoil: 0.86, hRecoil: 0.9, ads: 1.08 }, build: marksmanStock },
     { id: 'pnone', name: 'No Stock', blurb: 'One-handed carry. Fastest handling.', stats: {} },
     { id: 'pbrace', name: 'Brace Stock', blurb: 'Folding brace. Steadier bursts.', stats: { vRecoil: 0.82, hRecoil: 0.85, ads: 1.08 }, build: pistolStock },
   ],
@@ -659,7 +725,7 @@ export const findAttachment = (slot, id) => ATTACHMENTS[slot].find((a) => a.id =
 
 /** Combined stats for a loadout (only the slots the weapon has). */
 export function loadoutStats(loadout) {
-  const s = { vRecoil: 1, hRecoil: 1, ads: 1, reload: 1, flash: 1, magSize: 30, zoom: 1.32, suppressed: false };
+  const s = { vRecoil: 1, hRecoil: 1, ads: 1, reload: 1, flash: 1, choke: 1, magSize: 30, zoom: 1.32, suppressed: false };
   for (const slot of Object.keys(loadout)) {
     for (const [k, v] of Object.entries(findAttachment(slot, loadout[slot]).stats)) {
       if (k === 'magSize' || k === 'zoom' || k === 'suppressed') s[k] = v;
@@ -680,6 +746,7 @@ export function statChips(def) {
   if (st.hRecoil) out.push({ text: `H-recoil ${pct(st.hRecoil)}`, good: st.hRecoil < 1 });
   if (st.ads) out.push({ text: `ADS time ${pct(st.ads)}`, good: st.ads < 1 });
   if (st.reload) out.push({ text: `Reload ${pct(st.reload)}`, good: st.reload < 1 });
+  if (st.choke) out.push({ text: `Pellet spread ${pct(st.choke)}`, good: st.choke < 1 });
   if (st.flash !== undefined) out.push({ text: st.flash < 0.5 ? 'Low flash' : 'Bright flash', good: st.flash < 0.5 });
   if (st.suppressed) out.push({ text: 'Suppressed', good: true });
   return out;

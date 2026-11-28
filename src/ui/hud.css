@@ -41,34 +41,39 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--pampas
 .xhair.ring .t, .xhair.ring .b, .xhair.ring .l, .xhair.ring .r { display: none; }
 .xhair.ring .d { width: 4px; height: 4px; left: -2px; top: -2px; }
 
-.hitmarker { position: absolute; left: 50%; top: 50%; width: 0; height: 0; opacity: 0; }
-.hitmarker i { position: absolute; width: 11px; height: 2.5px; left: -5.5px; top: -1.25px; background: var(--ivory); outline: 1.5px solid var(--ink); }
-.hitmarker i:nth-of-type(1) { transform: rotate(45deg) translateX(-10px); }
-.hitmarker i:nth-of-type(2) { transform: rotate(135deg) translateX(-10px); }
-.hitmarker i:nth-of-type(3) { transform: rotate(225deg) translateX(-10px); }
-.hitmarker i:nth-of-type(4) { transform: rotate(315deg) translateX(-10px); }
-/* hit: white tick that pops in · head: amber · kill: thick red X with a shock ring · head kill: amber X + ring */
-.hitmarker { --hm: var(--ivory); }
+/* hit: white X that pops in · head: bigger amber X · kill: thick red X with a shock ring · head kill: amber X + ring */
+.hitmarker { position: absolute; left: 50%; top: 50%; width: 0; height: 0; opacity: 0; --hm: var(--ivory); }
+.hitmarker svg { position: absolute; left: -32px; top: -32px; overflow: visible; fill: none; }
+.hitmarker .ol { stroke: var(--ink); }
+.hitmarker .fill { stroke: var(--hm); }
+.hitmarker .ring { opacity: 0; transform-box: view-box; transform-origin: center; }
 .hitmarker.head { --hm: #f4b740; }
 .hitmarker.kill { --hm: #e8462e; }
 .hitmarker.kill.head { --hm: #f4b740; }
-.hitmarker i { background: var(--hm); }
-.hitmarker b { position: absolute; left: -14px; top: -14px; width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--hm); box-shadow: 0 0 0 1.5px var(--ink), inset 0 0 0 1.5px var(--ink); opacity: 0; }
 .hitmarker.on { animation: hit 0.24s cubic-bezier(.2,1.8,.4,1); }
-.hitmarker.head i { width: 13px; left: -6.5px; height: 3px; }
-.hitmarker.kill i { width: 18px; left: -9px; height: 4px; top: -2px; outline-width: 2px; }
 .hitmarker.kill.on { animation: kill 0.55s cubic-bezier(.2,1.6,.4,1); }
-.hitmarker.kill.on b { animation: killring 0.45s ease-out; }
+.hitmarker.kill.on .ring { animation: killring 0.45s ease-out; }
+
 @keyframes hit { 0% { opacity: 1; transform: scale(1.6); } 35% { opacity: 1; transform: scale(0.95); } 100% { opacity: 0; transform: scale(1); } }
 @keyframes kill { 0% { opacity: 1; transform: scale(0.5) rotate(-10deg); } 30% { opacity: 1; transform: scale(1.35) rotate(6deg); } 70% { opacity: 1; transform: scale(1.15) rotate(6deg); } 100% { opacity: 0; transform: scale(1.1) rotate(6deg); } }
-@keyframes killring { 0% { opacity: 1; transform: scale(0.4); } 100% { opacity: 0; transform: scale(2.2); } }
+@keyframes killring { 0% { opacity: 1; transform: scale(0.96); } 100% { opacity: 0; transform: scale(1.75); } }
 .killflash { position: absolute; inset: 0; pointer-events: none; opacity: 0; background: radial-gradient(ellipse at center, transparent 55%, rgba(232, 70, 46, 0.32) 100%); }
 .killflash.head { background: radial-gradient(ellipse at center, transparent 55%, rgba(244, 183, 64, 0.34) 100%); }
 .killflash.on { animation: killflash 0.5s ease-out; }
 @keyframes killflash { 0% { opacity: 1; } 100% { opacity: 0; } }
 
-.dmg { position: absolute; font: 800 17px/1 var(--mono); color: var(--ivory); -webkit-text-stroke: 1px var(--ink); paint-order: stroke fill; text-shadow: 2px 2px 0 var(--ink); white-space: nowrap; transform: translate(-50%, -50%); }
+.dmg { position: absolute; left: 0; top: 0; will-change: transform; font: 800 17px/1 var(--mono); color: var(--ivory); -webkit-text-stroke: 1px var(--ink); paint-order: stroke fill; text-shadow: 2px 2px 0 var(--ink); white-space: nowrap; transform: translate(-50%, -50%); }
 .dmg.head { color: var(--clay); font-size: 21px; }
+.dmg.ar { color: var(--ar); display: flex; align-items: center; gap: 3px; }
+.dmg .sh { width: 0.74em; height: 0.88em; overflow: visible; fill: var(--ar); stroke: var(--ink); stroke-width: 2.2; stroke-linejoin: round; filter: drop-shadow(1.5px 1.5px 0 var(--ink)); }
+.dmg.brk { font-size: 22px; gap: 6px; animation: dmg-brk 0.3s cubic-bezier(.2,1.8,.4,1); }
+.dmg.brk .sh { width: 0.9em; height: 1.06em; }
+.dmg.brk .sh path { transform-box: view-box; transform-origin: center; animation: 0.55s cubic-bezier(.15,.8,.3,1) forwards; }
+.dmg.brk .sh .l { animation-name: shard-l; }
+.dmg.brk .sh .r { animation-name: shard-r; }
+@keyframes dmg-brk { from { scale: 1.7; } }
+@keyframes shard-l { 0%, 10% { transform: none; } 100% { transform: translate(-3.5px, 3px) rotate(-16deg); } }
+@keyframes shard-r { 0%, 10% { transform: none; } 100% { transform: translate(3.5px, 3px) rotate(16deg); } }
 
 
 /* weapon panel */
@@ -111,8 +116,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--pampas
 /* ───────── menu ───────── */
 .menu {
   position: fixed; inset: 0; display: grid; place-items: center; padding: 16px;
-  background: color-mix(in srgb, var(--pampas) 78%, transparent);
-  backdrop-filter: blur(6px) saturate(0.9);
+  background: color-mix(in srgb, var(--pampas) 88%, transparent);
   overflow: auto;
 }
 .menu[hidden] { display: none; }
@@ -360,3 +364,8 @@ body:has(#title[hidden]) .char-pick, body:has(.title-sheet.home .main-pick) .cha
 .sb-cols span:not(:first-child) { font: 600 10px/1 var(--mono); }
 .sb-row.you { background: var(--ink); color: var(--ivory); }
 .sb-row.dead { opacity: 0.5; }
+
+/* dead: the crosshair and the weapon panels go while the camera watches your killer */
+.hud.dead .xhair, .hud.dead .hitmarker { opacity: 0 !important; }
+.hud.dead .weapon { transform: translateY(130%); opacity: 0; }
+.hud.dead .loadout { transform: translate(-50%, 140%); opacity: 0; }

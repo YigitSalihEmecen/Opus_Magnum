@@ -6,6 +6,10 @@ const _m = new THREE.Matrix4();
 const _q = new THREE.Quaternion();
 const _s = new THREE.Vector3();
 const _z = new THREE.Vector3(0, 0, 1);
+const _p = new THREE.Vector3();
+const _spin = new THREE.Quaternion();
+const _hidden = new THREE.Matrix4().makeScale(0, 0, 0);
+const _color = new THREE.Color();
 
 /** World-space shot feedback: tracers, bullet decals, spark bursts, dust puffs. */
 export class WorldFX {
@@ -17,11 +21,14 @@ export class WorldFX {
     const tracerGeo = new THREE.BoxGeometry(0.014, 0.014, 1).translate(0, 0, -0.5);
     this.tracers = Array.from({ length: 24 }, () => this.#fx(new THREE.Mesh(tracerGeo, tracerMat), { from: new THREE.Vector3(), dir: new THREE.Vector3(), dist: 0, t: 0 }));
 
-    // decals
-    const decalTex = decalTexture();
-    const decalMat = new THREE.MeshBasicMaterial({ map: decalTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4 });
-    const decalGeo = new THREE.PlaneGeometry(0.1, 0.1);
-    this.decals = Array.from({ length: 96 }, () => this.#fx(new THREE.Mesh(decalGeo, decalMat), {}));
+    // decals: one instanced ring of them, one draw call however many are up
+    const decalMat = new THREE.MeshBasicMaterial({ map: decalTexture(), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4 });
+    this.decalCount = 96;
+    this.decals = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.1, 0.1), decalMat, this.decalCount);
+    for (let i = 0; i < this.decalCount; i++) this.decals.setMatrixAt(i, _hidden);
+    this.decals.frustumCulled = false;
+    this.decals.layers.set(FX_LAYER);
+    scene.add(this.decals);
     this.decalIndex = 0;
 
     // sparks (instanced)
@@ -33,7 +40,8 @@ export class WorldFX {
     this.sparkData = Array.from({ length: this.sparkCount }, () => ({ p: new THREE.Vector3(), v: new THREE.Vector3(), life: 0 }));
     this.sparkIndex = 0;
     const black = new THREE.Color(0);
-    for (let i = 0; i < this.sparkCount; i++) { this.sparks.setMatrixAt(i, _m.makeScale(0, 0, 0)); this.sparks.setColorAt(i, black); }
+    for (let i = 0; i < this.sparkCount; i++) { this.sparks.setMatrixAt(i, _hidden); this.sparks.setColorAt(i, black); }
+    this.sparksLive = false;
     scene.add(this.sparks);
 
     // dust puffs
@@ -62,26 +70,24 @@ export class WorldFX {
 
   impact(point, normal, { flesh = false } = {}) {
     if (!flesh) {
-      const d = this.decals[this.decalIndex++ % this.decals.length];
-      d.position.copy(point).addScaledVector(normal, 0.004);
-      d.quaternion.setFromUnitVectors(_z, normal);
-      d.rotateZ(Math.random() * Math.PI * 2);
+      _q.setFromUnitVectors(_z, normal).multiply(_spin.setFromAxisAngle(_z, Math.random() * Math.PI * 2));
       const sc = 0.7 + Math.random() * 0.5;
-      d.scale.set(sc, sc, 1);
-      d.visible = true;
+      this.decals.setMatrixAt(this.decalIndex++ % this.decalCount, _m.compose(_p.copy(point).addScaledVector(normal, 0.004), _q, _s.set(sc, sc, 1)));
+      this.decals.instanceMatrix.needsUpdate = true;
       this.#puff(point, normal);
     }
-    const color = new THREE.Color(flesh ? P.clay : 0xffe2b0);
+    const color = _color.set(flesh ? P.clay : 0xffe2b0);
     const n = flesh ? 7 : 9;
     for (let i = 0; i < n; i++) {
       const idx = this.sparkIndex++ % this.sparkCount;
       const s = this.sparkData[idx];
       s.p.copy(point);
-      s.v.copy(normal).multiplyScalar(2 + Math.random() * 3).add(new THREE.Vector3().randomDirection().multiplyScalar(2.5));
+      s.v.copy(normal).multiplyScalar(2 + Math.random() * 3).addScaledVector(_p.randomDirection(), 2.5);
       s.life = 0.18 + Math.random() * 0.2;
       this.sparks.setColorAt(idx, color);
     }
     this.sparks.instanceColor.needsUpdate = true;
+    this.sparksLive = true;
   }
 
   #puff(point, normal) {
@@ -106,9 +112,13 @@ export class WorldFX {
       if (head >= u.dist) tr.visible = false;
     }
 
+    // the spark buffer only goes to the GPU while some are flying (and once more to clear the last)
+    const wasLive = this.sparksLive;
+    this.sparksLive = false;
     for (let i = 0; i < this.sparkCount; i++) {
       const s = this.sparkData[i];
       if (s.life <= 0) continue;
+      this.sparksLive = true;
       s.life -= dt;
       s.v.y -= 12 * dt;
       s.p.addScaledVector(s.v, dt);
@@ -116,7 +126,7 @@ export class WorldFX {
       _q.setFromUnitVectors(_z, _s.copy(s.v).normalize());
       this.sparks.setMatrixAt(i, _m.compose(s.p, _q, _s.set(k, k, k * (0.5 + s.v.length() * 0.15))));
     }
-    this.sparks.instanceMatrix.needsUpdate = true;
+    if (wasLive) this.sparks.instanceMatrix.needsUpdate = true;
 
     for (const p of this.puffs) {
       if (!p.visible) continue;

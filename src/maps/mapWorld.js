@@ -5,7 +5,7 @@ import { PALETTE as P, toon } from '../core/toon.js';
 import { buildPiece, buildJoints, makeContext } from './assets.js';
 import { terrainMesh, setHeights, heightsOf, heightAt, LIMIT, terrainMaterial, tintGround } from './terrain.js';
 import { applySky } from '../world/sky.js';
-import { markStatic } from '../core/renderer.js';
+import { markStatic, disposeTree } from '../core/renderer.js';
 import { Doors } from './doors.js';
 import { pickupSpec } from '../items/items.js';
 import { WEAPONS } from '../weapons/weapons.js';
@@ -118,7 +118,7 @@ export function buildMapWorld(scene, map) {
     killY: map.water !== undefined ? map.water - 0.4 : undefined,
     doors: new Doors(group, doorSpots),
     bounds: { minX: -half, maxX: half, minZ: -half, maxZ: half, cell: 1 },
-    dispose: () => scene.remove(group),
+    dispose: () => disposeTree(group),
   };
 }
 
@@ -175,17 +175,22 @@ const JOIN = 0.012; // ends this close count as touching (the trims' 2 × 4 mm i
 const SAME = 0.001; // cross sections equal to 1 mm
 const _bm = new THREE.Matrix4(), _bb = new THREE.Box3();
 
+/** Every basis column a unit axis: any quarter turn, no scale or shear. */
+function squareToAxes(o) {
+  const e = o.matrixWorld.elements;
+  for (const c of [0, 4, 8]) {
+    const v = [Math.abs(e[c]), Math.abs(e[c + 1]), Math.abs(e[c + 2])].sort((a, b) => b - a);
+    if (Math.abs(v[0] - 1) > 1e-4 || v[1] > 1e-4) return false;
+  }
+  return true;
+}
+
 /** The world box of a plain box mesh square to the axes, or null. */
 function plainBox(o) {
   const g = o.geometry;
   if (g.type !== 'BoxGeometry' || !g.parameters || (g.index ? g.index.count : g.attributes.position.count) !== 36) return null;
   if (o.material.vertexColors || Object.keys(g.morphAttributes).length) return null;
-  const e = o.matrixWorld.elements;
-  // every basis column a unit axis (any quarter turn, no scale or shear)
-  for (const c of [0, 4, 8]) {
-    const v = [Math.abs(e[c]), Math.abs(e[c + 1]), Math.abs(e[c + 2])].sort((a, b) => b - a);
-    if (Math.abs(v[0] - 1) > 1e-4 || v[1] > 1e-4) return null;
-  }
+  if (!squareToAxes(o)) return null;
   if (!g.boundingBox) g.computeBoundingBox();
   const b = _bb.copy(g.boundingBox).applyMatrix4(o.matrixWorld);
   return { min: b.min.toArray(), max: b.max.toArray() };
@@ -298,20 +303,26 @@ function quad(p, f, r) {
 }
 
 /**
- * Render batches: every mesh merged by material (a few dozen draw calls instead of thousands).
+ * Render batches: every mesh merged by material and 32 m cell (draw calls in the hundreds, not thousands).
  * Collision proxy: one invisible mesh for the octree and bullets — boxes, ramps and terrain stay exact,
  * rounded/organic forms become their bounding boxes, decoration and paint are left out.
  */
+const BATCH_CELL = 32;
 function batch(root) {
   root.updateMatrixWorld(true);
   const buckets = new Map();
   const chunks = new Map(); // 16 m cells so a bullet only tests the chunks it passes through
+  const boxes = new Map(); // per chunk: collision boxes square to the axes, fused before they become triangles
   const _c = new THREE.Vector3();
   root.traverse((o) => {
     if (!o.isMesh) return;
     const geo = o.geometry;
     if (!o.userData.collider) {
-      const key = `${o.material.uuid}|${o.castShadow}`;
+      // batches per material and per 32 m cell: one map-wide batch could never be culled (off screen, or
+      // outside the sun's near shadow box), so every triangle of the map was drawn every frame, twice
+      o.getWorldPosition(_c);
+      const cell = o.userData.terrain ? 'terrain' : `${Math.floor(_c.x / BATCH_CELL)},${Math.floor(_c.z / BATCH_CELL)}`;
+      const key = `${o.material.uuid}|${o.castShadow}|${cell}`;
       let b = buckets.get(key);
       if (!b) buckets.set(key, (b = { material: o.material, cast: o.castShadow, geos: [], boxes: [] }));
       const box = plainBox(o);
@@ -330,15 +341,14 @@ function batch(root) {
   });
   function collide(o, geo) {
     if (o.userData.noCollide || o.userData.paint) return;
-    let p;
+    let p, box = true;
     const tris = (geo.index ? geo.index.count : geo.attributes.position.count) / 3;
     // (RoundedBoxGeometry also reports 'BoxGeometry'; only a real 12-triangle box counts as exact)
     const exact = o.userData.collider || (EXACT.has(geo.type) && (geo.type !== 'BoxGeometry' || tris === 12));
     if (exact && geo.type === 'BoxGeometry' && geo.parameters) {
       const { width, height, depth } = geo.parameters;
       p = new THREE.BoxGeometry(...thicken(width, height, depth)).toNonIndexed();
-    } else if (exact) p = geo.index ? geo.toNonIndexed() : geo.clone();
-    else {
+    } else if (exact) { p = geo.index ? geo.toNonIndexed() : geo.clone(); box = false; } else {
       geo.computeBoundingBox();
       const size = geo.boundingBox.getSize(new THREE.Vector3()), c = geo.boundingBox.getCenter(new THREE.Vector3());
       p = new THREE.BoxGeometry(...thicken(size.x, size.y, size.z)).translate(c.x, c.y, c.z).toNonIndexed();
@@ -348,20 +358,42 @@ function batch(root) {
     pos.applyMatrix4(o.matrixWorld);
     o.getWorldPosition(_c);
     const key = o.userData.terrain ? 'terrain' : `${Math.floor(_c.x / 16)},${Math.floor(_c.z / 16)}`;
+    // a box square to the axes joins its chunk's box list, fused with its neighbours below (half the triangles:
+    // runs of wall pieces become one block, and the octree builds in a fraction of the time)
+    if (box && squareToAxes(o)) {
+      pos.computeBoundingBox();
+      if (!boxes.has(key)) boxes.set(key, []);
+      boxes.get(key).push({ min: pos.boundingBox.min.toArray(), max: pos.boundingBox.max.toArray() });
+      return;
+    }
     if (!chunks.has(key)) chunks.set(key, []);
     chunks.get(key).push(pos);
   }
+  const fuseCollision = () => {
+    for (const [key, list] of boxes) {
+      if (!chunks.has(key)) chunks.set(key, []);
+      for (const b of fuseBoxes(list)) {
+        const g = new THREE.BoxGeometry(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2])
+          .translate((b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2).toNonIndexed();
+        const pos = new THREE.BufferGeometry();
+        pos.setAttribute('position', g.attributes.position);
+        chunks.get(key).push(pos);
+      }
+    }
+  };
   const visual = [];
   const all = [...buckets.values()];
   const shells = boxShells(all.map((b) => fuseBoxes(b.boxes)));
   all.forEach((b, i) => { if (shells[i]) b.geos.push(shells[i]); });
   for (const b of all) {
     if (!b.geos.length) continue;
+    if (!b.material.map) for (const g of b.geos) g.deleteAttribute('uv'); // untextured: the zero uvs were a quarter of the vertex data
     const m = new THREE.Mesh(mergeGeometries(b.geos), b.material);
     m.castShadow = b.cast;
     m.receiveShadow = true;
     visual.push(m);
   }
+  fuseCollision();
   const hidden = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
   const proxies = [...chunks.values()].map((list) => {
     const m = new THREE.Mesh(mergeGeometries(list), hidden);

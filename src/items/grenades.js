@@ -1,11 +1,15 @@
 import * as THREE from 'three';
+import { disposeTree } from '../core/renderer.js';
 import { buildGrenade } from './models/grenade.js';
+import { buildSmoke } from './models/smoke.js';
 import { Explosions } from './explosion.js';
+import { Smokes, SMOKE } from './smoke.js';
 
 /*
   Thrown grenades: ballistic flight with bounces off the level (ray-cast so fast throws can't tunnel through
   thin walls), a fuse, then a blast. Damage falls off from FULL m to RADIUS m and needs a clear line from the
   blast to the target. Only grenades we threw deal damage (online, each thrower's client reports its hits).
+  A smoke grenade (kind 'smoke') flies the same way and pops a smoke screen instead (smoke.js).
     damage(pos) → onBlast(pos, hits) where hits = [{ target, dmg, point, dir }] for every damageable in reach
 */
 
@@ -14,39 +18,41 @@ const FUSE = 2.4, R = 0.05, GRAVITY = 21, REST = 0.38, THROW_SPEED = 17;
 const _n = new THREE.Vector3(), _d = new THREE.Vector3(), _p = new THREE.Vector3(), _c = new THREE.Vector3();
 const _ray = new THREE.Ray(), _sph = new THREE.Sphere(), _box = new THREE.Box3();
 
-let template = null;
-function grenadeMesh() {
-  if (!template) {
-    template = buildGrenade();
-    template.userData.parts.pin.visible = false; // the pin stays in the hand
-    for (const c of template.children) c.position.y -= 0.042; // spin about the body's centre
+const templates = {};
+function grenadeMesh(kind) {
+  if (!templates[kind]) {
+    const t = (templates[kind] = kind === 'smoke' ? buildSmoke() : buildGrenade());
+    t.userData.parts.pin.visible = false; // the pin stays in the hand
+    for (const c of t.children) c.position.y -= 0.045; // spin about the body's centre
   }
-  return template.clone();
+  return templates[kind].clone();
 }
 
 export class Grenades {
   constructor(scene, { octree, audio, camera, onBlast }) {
     Object.assign(this, { scene, octree, audio, camera, onBlast });
     this.fx = new Explosions(scene);
+    this.smoke = new Smokes(scene);
     this.live = [];
   }
 
   dispose() {
-    for (const g of this.live) this.scene.remove(g.mesh);
+    for (const g of this.live) disposeTree(g.mesh);
     this.fx.dispose();
+    this.smoke.dispose();
   }
 
-  /** Throw from the eye along `dir`, inheriting some of the thrower's velocity. mine: we deal its damage. */
-  throw(origin, dir, inherit, { mine = true, fuse = FUSE } = {}) {
+  /** Throw from the eye along `dir`, inheriting some of the thrower's velocity. mine: we deal its damage. kind: 'grenade' | 'smoke'. */
+  throw(origin, dir, inherit, { mine = true, kind = 'grenade', fuse = kind === 'smoke' ? SMOKE.fuse : FUSE } = {}) {
     const vel = _d.copy(dir).multiplyScalar(THROW_SPEED).add(_n.set(0, 3.2, 0)).addScaledVector(inherit, 0.6).clone();
-    return this.spawn(origin, vel, { mine, fuse });
+    return this.spawn(origin, vel, { mine, fuse, kind });
   }
 
-  spawn(pos, vel, { mine = false, fuse = FUSE } = {}) {
-    const mesh = grenadeMesh();
+  spawn(pos, vel, { mine = false, fuse = FUSE, kind = 'grenade' } = {}) {
+    const mesh = grenadeMesh(kind);
     mesh.position.copy(pos);
     this.scene.add(mesh);
-    const g = { mesh, pos: pos.clone(), vel: vel.clone(), fuse, mine, spin: new THREE.Vector3(8 + Math.random() * 6, Math.random() * 4, 2), lastNormal: new THREE.Vector3(0, 1, 0), clink: 0 };
+    const g = { mesh, kind, pos: pos.clone(), vel: vel.clone(), fuse, mine, spin: new THREE.Vector3(8 + Math.random() * 6, Math.random() * 4, 2), lastNormal: new THREE.Vector3(0, 1, 0), clink: 0 };
     this.live.push(g);
     return g;
   }
@@ -105,9 +111,15 @@ export class Grenades {
       this.#explode(g);
     }
     this.fx.update(dt, this.camera);
+    this.smoke.update(dt);
   }
 
   #explode(g) {
+    if (g.kind === 'smoke') {
+      this.smoke.spawn(g.pos);
+      this.audio.smoke?.(this.#loudness(g.pos));
+      return;
+    }
     // sit the blast on the surface it rests on (or in the air if it went off mid-flight)
     const onFloor = g.vel.lengthSq() < 4;
     this.fx.spawn(g.pos, onFloor ? g.lastNormal : _n.set(0, 1, 0));

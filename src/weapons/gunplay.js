@@ -10,6 +10,7 @@ const _aim = new THREE.Vector3();
 /** Aim input mode, shared by every gun (pause menu → Controls). */
 export const AIM = { mode: 'hold' };
 const _right = new THREE.Vector3();
+const PULL_BUFFER = 0.2; // s: how early a single-shot pull may come and still fire once the gun is ready
 const _up = new THREE.Vector3();
 
 /**
@@ -32,6 +33,7 @@ export class Gunplay {
     this.mode = this.modes[0];
     this.burstLeft = 0;
     this.cooldown = 0;
+    this.pull = 0;
     this.shotIndex = 0;
     this.sinceShot = 99;
     this.ads = 0;
@@ -60,6 +62,7 @@ export class Gunplay {
     this.hud.setModes(this.modes);
     this.vm.setFireMode(this.modes.indexOf(this.mode));
     this.burstLeft = 0;
+    this.pull = 0;
     this.loading = null;
     this.vm.playEquip();
   }
@@ -134,6 +137,8 @@ export class Gunplay {
     // trigger
     const held = input.mouse(0);
     const pressed = input.clicked(0);
+    // single-shot modes: a pull up to PULL_BUFFER s before the gun is ready again is kept and fires the moment it is
+    this.pull = pressed ? PULL_BUFFER : Math.max(0, this.pull - dt);
     this.triggerHeld = (held || this.burstLeft > 0) && this.ammo > 0 && !reloading && canAct;
     if (held && canAct) mv.blockSprint(0.3);
     const ready = canAct && !this.vm.busy && this.vm.w.sprint < 0.3;
@@ -141,11 +146,14 @@ export class Gunplay {
       // a burst finishes on its own once started
       if (!ready || this.ammo === 0) this.burstLeft = 0;
       else if (this.cooldown <= 0) this.#shot(mv, camera, targets, now);
-    } else if (held && ready) {
+    } else if ((held || this.pull > 0) && ready) {
       if (this.ammo === 0) {
         if (pressed) { this.audio.play('click', { volume: 0.7, rate: 0.9 }); if (this.reserve > 0) this.#reload(); else this.hud.toast('No ammo'); }
-      } else if (this.cooldown <= 0 && (this.mode === 'auto' || pressed)) {
-        if (this.cooldown < -0.05) this.cooldown = 0;
+      } else if (this.cooldown <= 0 && (this.mode === 'auto' ? held : this.pull > 0)) {
+        // full auto carries the remainder for a steady cadence; a single pull starts the clock fresh, so shots
+        // are never closer than 60 / rpm however fast the clicks come
+        if (this.mode !== 'auto' || this.cooldown < -0.05) this.cooldown = 0;
+        this.pull = 0;
         if (this.mode === 'burst') this.burstLeft = this.S.burst;
         this.#shot(mv, camera, targets, now);
       }
@@ -175,7 +183,7 @@ export class Gunplay {
   }
 
   /** Pellet ring radius (deg) right now; 0 for bullets. ADS tightens it (to pelletAds × hip). */
-  get pelletSpread() { return (this.S.pelletSpread ?? 0) * (1 - (1 - (this.S.pelletAds ?? 0.8)) * this.adsEased); }
+  get pelletSpread() { return (this.S.pelletSpread ?? 0) * this.stats.choke * (1 - (1 - (this.S.pelletAds ?? 0.8)) * this.adsEased); }
 
   #fire(mv, camera, targets, now) {
     this.ammo--;
@@ -195,17 +203,20 @@ export class Gunplay {
     const spin = Math.random() * 0.4;
     const muzzle = this.vm.muzzleWorld(camera);
     const tally = new Map();
+    // with an octree, meshes are only tested for what can take damage; the world goes through the octree (far cheaper)
+    const hittable = this.octree ? targets.filter((t) => t.userData.dummy) : targets;
     for (let i = 0; i < n; i++) {
       _dir.copy(_aim);
       if (i > 0) {
         const a = spin + ((i - 1) / (n - 1)) * Math.PI * 2, k = ring * (0.9 + Math.random() * 0.2);
         _dir.addScaledVector(_right, Math.cos(a) * k).addScaledVector(_up, Math.sin(a) * k).normalize();
       }
-      this.#trace(camera, targets, now, muzzle, tally);
+      this.#trace(camera, hittable, now, muzzle, tally);
     }
     for (const [, t] of tally) {
       this.hud.hitmarker(t.killed ? 'kill' : 'hit', t.head);
-      this.hud.damageNumber(t.point, Math.round(t.dmg), t.head);
+      this.hud.damageNumber(t.point, Math.round(t.dmg), t.head, t.armour);
+      if (t.armour?.broke) this.audio.armourBreak(t.armour.tier);
       this.audio.hit(t.killed ? 'kill' : 'body', t.head);
     }
 
@@ -223,10 +234,11 @@ export class Gunplay {
     this.bloom = Math.min(this.S.bloom.max, this.bloom + this.S.bloom.perShot);
 
     this.vm.fire(aimed, rp, ry);
-    this.audio.fire({ ads: this.adsEased > 0.5, suppressed: this.stats.suppressed, sample: this.def.sound });
+    const v = this.def.vm;
+    this.audio.fire({ ads: this.adsEased > 0.5, suppressed: this.stats.suppressed, sample: this.def.sound, brass: !v.pump && !v.bolt && !v.hinge });
     if (this.ammo === 0) this.vm.boltLocked = !this.pump && !this.bolt;
     else if (this.pump) this.vm.playPump();
-    else if (this.bolt) this.vm.playClip('bolt');
+    else if (this.bolt) this.vm.playClip('bolt', this.S.cycleRate ?? 1);
     this.hud.recoilPulse();
   }
 
@@ -234,8 +246,7 @@ export class Gunplay {
   #trace(camera, targets, now, muzzle, tally) {
     this.raycaster.set(camera.position, _dir);
     this.raycaster.camera = camera;
-    // with an octree, meshes are only tested for what can take damage; the world goes through the octree (far cheaper)
-    const hits = this.raycaster.intersectObjects(this.octree ? targets.filter((t) => t.userData.dummy) : targets, false);
+    const hits = this.raycaster.intersectObjects(targets, false);
     let hit = hits.find((h) => !h.object.userData.dummy?.dead && h.object.layers.test(this.raycaster.layers));
     const wall = this.octree?.rayIntersect(this.raycaster.ray);
     if (wall && wall.distance < this.S.range && (!hit || wall.distance < hit.distance)) hit = { point: wall.position, distance: wall.distance, object: null, normal: wall.triangle.getNormal(new THREE.Vector3()) };
@@ -256,6 +267,7 @@ export class Gunplay {
           t.dmg += dmg;
           t.head ||= head;
           t.killed ||= res.killed;
+          if (res.armour) t.armour = { tier: res.armour.tier, broke: t.armour?.broke || res.armour.broke };
           tally.set(dummy, t);
         }
         this.fx.impact(hit.point, normal, { flesh: true });
@@ -307,9 +319,18 @@ export class Gunplay {
       case 'cloth': a.play('cloth', { volume: 0.35 }); break;
       case 'shellGrab': a.play('click', { volume: 0.2, rate: 1.6 }); break;
       case 'shellIn':
-        a.play('magIn', { volume: 0.55, rate: 1.45 });
+        if (this.def.vm.hinge) a.play('shellIn', { volume: 0.8 });
+        else a.play('magIn', { volume: 0.55, rate: 1.45 });
         this.#refill(1);
         break;
+      case 'latch': a.play('latch', { volume: 0.7 }); break;
+      case 'breakOpen': a.play('breakOpen', { volume: 0.9 }); break;
+      case 'breakClose': a.play('breakClose', { volume: 1.0 }); break;
+      case 'cylOpen': a.play('latch', { volume: 0.55, rate: 1.5 }); a.play('click', { volume: 0.5, rate: 0.8, delay: 0.05 }); break;
+      case 'cylClose': a.play('breakClose', { volume: 0.75, rate: 1.55 }); break;
+      case 'ejectAll': a.play('magDrop', { volume: 0.35, rate: 1.6 }); if (a.ready) { a.brass(0.25); a.brass(0.32); } break;
+      case 'loaderGrab': a.play('cloth', { volume: 0.3, rate: 1.2 }); break;
+      case 'speedload': a.play('magIn', { volume: 0.7, rate: 1.3 }); a.play('click', { volume: 0.5, rate: 1.1, delay: 0.06 }); this.#refill(this.magSize - this.ammo); break;
       case 'clipEnd': if (this.loading) this.#nextLoadStep(data); break;
       case 'pumpBack': a.play('pumpBack', { volume: 0.9 }); break;
       case 'pumpForward': a.play('pumpForward', { volume: 0.9 }); break;

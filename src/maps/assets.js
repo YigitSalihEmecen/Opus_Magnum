@@ -45,7 +45,13 @@ const sbox = (g, w, h, d, x, y, z, material) => add(g, new THREE.BoxGeometry(w, 
  * a shadow map draws that as a lit gap and a row of teeth. The ink of the trim itself already marks the edge.
  */
 const trim = (m) => { m.castShadow = false; return m; };
-const rbox = (g, w, h, d, x, y, z, material, r = 0.04) => add(g, new RoundedBoxGeometry(w, h, d, 2, Math.min(r, w / 2, h / 2, d / 2)), material, x, y, z);
+// one chamfer step (108 triangles, not 300): at building scale a 4 cm rounding reads the same; built once per size
+const rboxGeos = new Map();
+const rbox = (g, w, h, d, x, y, z, material, r = 0.04) => {
+  const rr = Math.min(r, w / 2, h / 2, d / 2), key = `${w}|${h}|${d}|${rr}`;
+  if (!rboxGeos.has(key)) rboxGeos.set(key, Math.min(w, h, d) < 0.02 ? new THREE.BoxGeometry(w, h, d) : new RoundedBoxGeometry(w, h, d, 1, rr));
+  return add(g, rboxGeos.get(key), material, x, y, z);
+};
 const cyl = (r, h, seg = 20, r2 = r) => new THREE.CylinderGeometry(r2, r, h, seg);
 const ico = (r, detail = 1) => new THREE.IcosahedronGeometry(r, detail);
 /** Profile in the (a, y) plane extruded `depth`, centred; axis 'x' puts the profile's a along Z. */

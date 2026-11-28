@@ -22,6 +22,7 @@ const HOLD = {
   bandage: { at: [-0.06, -0.1, 0.114, 0, 35, 0], scale: 0.8, frame: [0.15, -0.02, -0.5, 12, -12, 0] },
   charger: { at: [-0.06, -0.15, 0.1, 0, 0, -12], scale: 0.9, frame: [0.13, 0, -0.46, 14, -16, 0] },
   grenade: { at: [0, -0.115, 0.105, 0, 0, 0], scale: 1.15, frame: [0.15, -0.035, -0.52, 6, 6, 0] },
+  smoke: { at: [0, -0.12, 0.105, 0, 0, 0], scale: 1.1, frame: [0.15, -0.035, -0.52, 6, 6, 0] },
 };
 // an overhand throw on the right side: held low while the pin comes out, the arm swings back and up beside the
 // head (cocked, the grenade tipped back), comes over and forward to let go high in front, then follows through down

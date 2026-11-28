@@ -12,6 +12,7 @@ import { PALETTE as P } from '../core/toon.js';
 const W = 4096, H = 2048;
 const D = W / 360; // canvas pixels per degree, both ways
 let cached;
+const CROP_ROWS = Math.ceil((0.5 + 3 / 180) * H); // the painted sky down to 3° under the horizon
 
 const hex = (c) => `#${new THREE.Color(c).getHexString()}`;
 /** Pixel row for an elevation in degrees (0 = horizon). */
@@ -181,7 +182,11 @@ function paint() {
   layer(mix('#8d9291', HORIZON, 0.4), 0, 2.2, 6, 0.6);
   layer(mix('#626867', HORIZON, 0.22), 1, 3.4, 12, 0.3);
 
-  const tex = new THREE.CanvasTexture(c);
+  // only the rows down to just under the horizon go to the GPU (half the memory): below them it's all the
+  // horizon colour, which the texture's clamped bottom edge repeats
+  const crop = Object.assign(document.createElement('canvas'), { width: W, height: CROP_ROWS });
+  crop.getContext('2d').drawImage(c, 0, 0);
+  const tex = new THREE.CanvasTexture(crop);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.generateMipmaps = false; // read at one level: the u = 0/1 seam would pick a blurry mip
   tex.minFilter = THREE.LinearFilter;
@@ -234,7 +239,7 @@ void main() {
   gNormal = vec4(0.0);
   vec3 d = normalize(vDir);
   float az = atan(d.z, d.x), el = asin(clamp(d.y, -1.0, 1.0));
-  vec3 col = textureLod(tSky, vec2(az * 0.15915494 + 0.5, el * 0.31830989 + 0.5), 0.0).rgb;
+  vec3 col = textureLod(tSky, vec2(az * 0.15915494 + 0.5, 1.0 - (0.5 - el * 0.31830989) * ${(H / CROP_ROWS).toFixed(6)}), 0.0).rgb;
   vec2 wv = vec2(cos(windAz), sin(windAz));
 
   if (d.y > 0.004) {
@@ -275,8 +280,8 @@ void main() {
 }`;
 
 /**
- * Sky behind everything: one inside-out box drawn first, at the far plane, ignoring depth (so it reads to the
- * outline pass exactly like a cleared background). Fog stays the horizon colour so far geometry fades into it.
+ * Sky behind everything: one inside-out box at the far plane, drawn after the opaque scenery so its shader only
+ * runs where nothing else is; it writes no depth (so it reads to the outline pass exactly like a cleared background). Fog stays the horizon colour so far geometry fades into it.
  */
 export function applySky(scene) {
   scene.background = null;
@@ -304,14 +309,13 @@ export function applySky(scene) {
       plumeCount: { value: smoke.length },
     },
     side: THREE.BackSide,
-    depthTest: false,
     depthWrite: false,
     fog: false,
   });
   const sky = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), mat);
   sky.name = 'sky';
   sky.frustumCulled = false;
-  sky.renderOrder = -1e6;
+  sky.renderOrder = 1e6; // last of the opaques: at the far plane, the depth test leaves only the pixels nothing covered
   sky.raycast = () => {};
   sky.onBeforeRender = () => { mat.uniforms.time.value = performance.now() / 1000; };
   scene.add(sky);
