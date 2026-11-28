@@ -97,12 +97,12 @@ export class HUD {
     const shape = kind === 'kill' ? 'kill' : head ? 'head' : 'hit';
     if (h.dataset.shape !== shape) { h.innerHTML = MARKERS[shape]; h.dataset.shape = shape; }
     h.className = `hitmarker ${kind}${head ? ' head' : ''}`;
-    void h.offsetWidth;
+    h.getAnimations(); // restarts the animation: a style flush only (offsetWidth would force a whole layout)
     h.classList.add('on');
     if (kind !== 'kill') return;
     const f = this.el.killflash;
     f.className = `killflash${head ? ' head' : ''}`;
-    void f.offsetWidth;
+    f.getAnimations();
     f.classList.add('on');
   }
 
@@ -119,7 +119,7 @@ export class HUD {
   recoilPulse() {
     const w = this.el.weapon;
     w.classList.remove('kick');
-    void w.offsetWidth;
+    w.getAnimations();
     w.classList.add('kick');
   }
 
@@ -143,16 +143,23 @@ export class HUD {
     // pellet guns: a ring that traces the pattern instead of four bars
     const ring = !!gun.S.pellets;
     this.el.xhair.classList.toggle('ring', ring);
-    if (ring) {
-      const d = 2 * Math.max(6, gap - 2);
-      Object.assign(this.el.ring.style, { width: `${d}px`, height: `${d}px`, left: `${-d / 2}px`, top: `${-d / 2}px` });
+    // style writes only when the value moved (a write per frame restyles the crosshair and restarts its fade)
+    const g = Math.round(gap * 4) / 4;
+    if (g !== this.gap || ring !== this.ringOn) {
+      this.gap = g;
+      this.ringOn = ring;
+      if (ring) {
+        const d = 2 * Math.max(6, g - 2);
+        Object.assign(this.el.ring.style, { width: `${d}px`, height: `${d}px`, left: `${-d / 2}px`, top: `${-d / 2}px` });
+      }
+      const [t, b, l, r] = this.el.bars;
+      t.style.transform = `translateY(${-g - 9}px)`;
+      b.style.transform = `translateY(${g}px)`;
+      l.style.transform = `translateX(${-g - 9}px)`;
+      r.style.transform = `translateX(${g}px)`;
     }
-    const [t, b, l, r] = this.el.bars;
-    t.style.transform = `translateY(${-gap - 9}px)`;
-    b.style.transform = `translateY(${gap}px)`;
-    l.style.transform = `translateX(${-gap - 9}px)`;
-    r.style.transform = `translateX(${gap}px)`;
-    this.el.xhair.style.opacity = String(Math.max(0, 1 - gun.adsEased * 2.5) * (mv.sprinting ? 0.35 : 1));
+    const op = Math.round(Math.max(0, 1 - gun.adsEased * 2.5) * (mv.sprinting ? 0.35 : 1) * 50) / 50;
+    if (op !== this.xOpacity) { this.xOpacity = op; this.el.xhair.style.opacity = String(op); }
 
     // weapon panel
     if (gun.reserve !== this.lastReserve) {
@@ -169,17 +176,17 @@ export class HUD {
     this.el.modes.forEach((m) => m.classList.toggle('on', m.dataset.m === gun.mode));
 
     // floating damage numbers
-    this.numbers = this.numbers.filter((n) => {
+    // floating damage numbers: moved by transform (compositor only), never left/top (layout)
+    for (let i = this.numbers.length - 1; i >= 0; i--) {
+      const n = this.numbers[i];
       n.t += dt;
-      if (n.t > 0.8) { n.el.remove(); return false; }
+      if (n.t > 0.8) { n.el.remove(); this.numbers.splice(i, 1); continue; }
       const v = this._v.copy(n.pos).project(camera);
-      if (v.z > 1) { n.el.style.opacity = '0'; return true; }
+      if (v.z > 1) { n.el.style.opacity = '0'; continue; }
       const x = (v.x * 0.5 + 0.5) * innerWidth + n.dx * n.t;
       const y = (-v.y * 0.5 + 0.5) * innerHeight - 40 * n.t - 18;
-      n.el.style.left = `${x}px`;
-      n.el.style.top = `${y}px`;
+      n.el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -50%)`;
       n.el.style.opacity = String(Math.min(1, (0.8 - n.t) * 4));
-      return true;
-    });
+    }
   }
 }

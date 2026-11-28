@@ -62,7 +62,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--pampas
 .killflash.on { animation: killflash 0.5s ease-out; }
 @keyframes killflash { 0% { opacity: 1; } 100% { opacity: 0; } }
 
-.dmg { position: absolute; font: 800 17px/1 var(--mono); color: var(--ivory); -webkit-text-stroke: 1px var(--ink); paint-order: stroke fill; text-shadow: 2px 2px 0 var(--ink); white-space: nowrap; transform: translate(-50%, -50%); }
+.dmg { position: absolute; left: 0; top: 0; will-change: transform; font: 800 17px/1 var(--mono); color: var(--ivory); -webkit-text-stroke: 1px var(--ink); paint-order: stroke fill; text-shadow: 2px 2px 0 var(--ink); white-space: nowrap; transform: translate(-50%, -50%); }
 .dmg.head { color: var(--clay); font-size: 21px; }
 .dmg.ar { color: var(--ar); display: flex; align-items: center; gap: 3px; }
 .dmg .sh { width: 0.74em; height: 0.88em; overflow: visible; fill: var(--ar); stroke: var(--ink); stroke-width: 2.2; stroke-linejoin: round; filter: drop-shadow(1.5px 1.5px 0 var(--ink)); }
@@ -116,8 +116,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--pampas
 /* ───────── menu ───────── */
 .menu {
   position: fixed; inset: 0; display: grid; place-items: center; padding: 16px;
-  background: color-mix(in srgb, var(--pampas) 78%, transparent);
-  backdrop-filter: blur(6px) saturate(0.9);
+  background: color-mix(in srgb, var(--pampas) 88%, transparent);
   overflow: auto;
 }
 .menu[hidden] { display: none; }

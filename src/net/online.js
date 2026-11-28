@@ -753,7 +753,7 @@ class Online {
 
   update(dt, { camera, gun }) {
     this.camera = camera;
-    this.ui.root.hidden = document.getElementById('hud')?.hidden ?? false;
+    this.ui.root.hidden = (this.hudEl ??= document.getElementById('hud'))?.hidden ?? false;
     if (!this.ended) this.time = Math.max(0, this.time - dt);
 
     const mv = this.mv;
@@ -794,6 +794,7 @@ class Online {
     this.fx.update(dt, camera);
     this.ui.update(dt, { ally: 0, enemy: 0 }, this.time, (p) => this.#bearing(p));
     const wpn = WEAPONS[this.round?.weapon]?.name;
-    this.mid.textContent = `${this.round ? `Round ${this.round.n}${wpn ? ` · ${wpn}` : ''} · ` : ''}First to ${this.limit}${this.rtt === null ? '' : ` · ${Math.round(this.rtt)} ms`}`;
+    const mid = `${this.round ? `Round ${this.round.n}${wpn ? ` · ${wpn}` : ''} · ` : ''}First to ${this.limit}${this.rtt === null ? '' : ` · ${Math.round(this.rtt)} ms`}`;
+    if (mid !== this.midText) this.mid.textContent = this.midText = mid;
   }
 }

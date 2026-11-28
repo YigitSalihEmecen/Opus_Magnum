@@ -22,8 +22,8 @@
 .tdm-feed em i { font: 700 10px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; }
 
 
-.tdm-vignette { position: absolute; inset: 0; opacity: 0; background: radial-gradient(ellipse at center, transparent 48%, rgba(214, 58, 38, 0.5) 85%, rgba(150, 24, 16, 0.75) 100%); }
-.tdm-low { position: absolute; inset: 0; opacity: 0; background: radial-gradient(ellipse at center, transparent 40%, rgba(170, 20, 14, 0.3) 72%, rgba(95, 6, 4, 0.78) 100%); }
+.tdm-vignette { position: absolute; inset: 0; opacity: 0; will-change: opacity; background: radial-gradient(ellipse at center, transparent 48%, rgba(214, 58, 38, 0.5) 85%, rgba(150, 24, 16, 0.75) 100%); }
+.tdm-low { position: absolute; inset: 0; opacity: 0; will-change: opacity; background: radial-gradient(ellipse at center, transparent 40%, rgba(170, 20, 14, 0.3) 72%, rgba(95, 6, 4, 0.78) 100%); }
 
 /* hit direction: a red arc on a ring round the crosshair, turned toward the shooter; it pops in on each hit */
 .tdm-dirs { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }

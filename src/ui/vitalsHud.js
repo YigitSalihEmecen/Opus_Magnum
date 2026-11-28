@@ -47,8 +47,8 @@ export class VitalsHud {
   update(dt, { vitals, inv, prompt }) {
     const hp = Math.max(0, vitals.hp) / vitals.max;
     this.ghost = Math.max(hp, this.ghost - dt * 0.5);
-    this.el.hp.style.width = `${hp * 100}%`;
-    this.el.ghost.style.width = `${this.ghost * 100}%`;
+    this.#set('hpw', (hp * 100).toFixed(1), (v) => { this.el.hp.style.width = `${v}%`; });
+    this.#set('ghostw', (this.ghost * 100).toFixed(1), (v) => { this.el.ghost.style.width = `${v}%`; });
     this.#set('hp', Math.ceil(Math.max(0, vitals.hp)), (v) => { this.el.num.textContent = v; });
     this.el.hp.parentElement.classList.toggle('low', hp < 0.35);
 
@@ -59,7 +59,7 @@ export class VitalsHud {
       this.el.ar.style.setProperty('--tier', tier ? hex(tier.color) : 'transparent');
       this.el.ar.style.setProperty('--cells', String(Math.max(1, (tier?.cap ?? 25) / 25)));
     });
-    this.el.arFill.style.width = `${tier ? (vitals.armour / tier.cap) * 100 : 0}%`;
+    this.#set('arw', (tier ? (vitals.armour / tier.cap) * 100 : 0).toFixed(1), (v) => { this.el.arFill.style.width = `${v}%`; });
     this.#set('anum', tier ? `${Math.ceil(vitals.armour)} / ${tier.cap}` : '', (v) => { this.el.anum.textContent = v; });
 
     for (const [id] of CHIPS) {

@@ -85,7 +85,7 @@ export class MatchHud {
     t.textContent = text;
     t.classList.toggle('head', !!head);
     t.classList.remove('show');
-    void t.offsetWidth;
+    t.getAnimations(); // restart: a style flush, no layout
     t.classList.add('show');
   }
 
@@ -110,7 +110,7 @@ export class MatchHud {
     m.t = 0;
     m.k = Math.max(m.k ?? 0, 0.45 + 0.55 * k);
     m.el.classList.remove('hit');
-    void m.el.offsetWidth;
+    m.el.getAnimations();
     m.el.classList.add('hit');
   }
 
@@ -143,13 +143,16 @@ export class MatchHud {
   /** bearing(p): screen bearing (radians, clockwise from ahead) from the camera to world point p. */
   update(dt, s, time, bearing) {
     this.fx.hidden = this.root.hidden;
-    this.el.clock.textContent = fmtTime(time);
+    const clock = fmtTime(time);
+    if (clock !== this.clockText) this.el.clock.textContent = this.clockText = clock;
     this.vig = Math.max(0, this.vig - dt * 1.8);
-    this.el.vig.style.opacity = Math.max(this.vig, (1 - this.hp) * 0.3).toFixed(3);
+    const vig = Math.max(this.vig, (1 - this.hp) * 0.3).toFixed(2);
+    if (vig !== this.vigOp) this.el.vig.style.opacity = this.vigOp = vig;
     // under ~45% the edges go deep red and pulse like a heartbeat, quicker the lower it gets
     const low = this.hp > 0 ? THREE.MathUtils.clamp((0.45 - this.hp) / 0.35, 0, 1) : 0;
     this.beat = (this.beat + dt * (1.1 + low * 0.9)) % 1;
-    this.el.low.style.opacity = (low * (0.5 + 0.5 * Math.exp(-this.beat * 7))).toFixed(3);
+    const lowOp = (low * (0.5 + 0.5 * Math.exp(-this.beat * 7))).toFixed(2);
+    if (lowOp !== this.lowOp) this.el.low.style.opacity = this.lowOp = lowOp;
     for (const [who, m] of this.marks) {
       m.t += dt;
       if (m.t > DIR_LIFE) { m.el.remove(); this.marks.delete(who); continue; }
