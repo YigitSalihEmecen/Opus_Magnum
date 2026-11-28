@@ -51,42 +51,6 @@ export function profile(points, width, { bevel = 0.003, segments = 2, holes = []
   return geo;
 }
 
-/**
- * An oval tube swept along a curve in the gun's side plane (grips that bend and flare): points [[f, y], …],
- * half-widths rx(t) across the gun and rz(t) along it at t 0…1. Optional t0/t1 and v0/v1 (angle from the front,
- * around toward +x) cut a band out of it for inlays; closed tubes get flat end caps.
- */
-export function ovalSweep(points, { rx, rz, t0 = 0, t1 = 1, v0 = 0, v1 = Math.PI * 2, rings = 18, seg = 28 } = {}) {
-  const curve = new THREE.CatmullRomCurve3(points.map(([f, y]) => new THREE.Vector3(0, y, f2z(f))));
-  const closed = v1 - v0 >= Math.PI * 2 - 1e-6;
-  const pos = [], idx = [], X = new THREE.Vector3(1, 0, 0), T = new THREE.Vector3(), Z = new THREE.Vector3(), P = new THREE.Vector3();
-  for (let i = 0; i <= rings; i++) {
-    const t = t0 + ((t1 - t0) * i) / rings;
-    curve.getPointAt(t, P);
-    curve.getTangentAt(t, T);
-    Z.crossVectors(X, T).normalize().negate(); // in the side plane, square to the curve, facing forward
-    for (let j = 0; j <= seg; j++) {
-      const v = v0 + ((v1 - v0) * j) / seg;
-      pos.push(P.x + Math.sin(v) * rx(t), P.y + Math.cos(v) * rz(t) * Z.y, P.z + Math.cos(v) * rz(t) * Z.z);
-    }
-  }
-  for (let i = 0; i < rings; i++) for (let j = 0; j < seg; j++) {
-    const a = i * (seg + 1) + j, b = a + seg + 1;
-    idx.push(a, b, a + 1, b, b + 1, a + 1);
-  }
-  if (closed) for (const [ring, flip] of [[0, true], [rings, false]]) {
-    const c = pos.length / 3;
-    curve.getPointAt(t0 + ((t1 - t0) * ring) / rings, P);
-    pos.push(P.x, P.y, P.z);
-    for (let j = 0; j < seg; j++) { const a = ring * (seg + 1) + j; idx.push(...(flip ? [c, a + 1, a] : [c, a, a + 1])); }
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setIndex(idx);
-  g.computeVertexNormals();
-  return g;
-}
-
 export function rbox(w, h, d, r = 0.002) { return new RoundedBoxGeometry(w, h, d, 2, Math.min(r, w / 2, h / 2, d / 2)); }
 
 /** Cylinder along the barrel axis between f0 and f1. */
@@ -141,6 +105,22 @@ export function shotShell() {
 
 
 /**
+ * The standard pistol grip's layout in gun space: a straight rake (RAKE metres back per metre down) from the
+ * frame (top) to the foot; front(y) / back(y) give its edges at height y. Stock-integrated grips reuse it.
+ */
+const RAKE = 0.28;
+export const GRIP = {
+  width: 0.031, top: -0.028, foot: -0.154,
+  front: (y) => 0.012 + RAKE * (y + 0.028),
+  back: (y) => -0.044 + RAKE * (y + 0.028),
+  /** Base cap geometry for a grip of width w on this layout, its foot at `foot`. */
+  cap(w, foot = this.foot) {
+    const c0 = foot + 0.008, c1 = foot - 0.006, e = 0.002;
+    return profile([[this.front(c0) + e, c0], [this.front(c1) + e, c1], [this.back(c1) - e, c1], [this.back(c0) - e, c0]], w + 0.004, { bevel: 0.003, segments: 1, inset: true });
+  },
+};
+
+/**
  * Shared builders for receiver parts every gun has (fire controls, grip, rail, irons, mounts…).
  * Usage: const k = gunKit(root); k.add(geo, mat); k.at(obj, x, y, f); …
  */
@@ -173,11 +153,21 @@ export function gunKit(root) {
       return { trigger, selector };
     },
 
-    /** Raked pistol grip behind the trigger with stipple panels. */
-    pistolGrip(mat = MATS.poly, panelMat = MATS.black) {
-      add(profile([[0.012, -0.028], [0.006, -0.058], [0.0, -0.068], [-0.002, -0.082], [-0.009, -0.093], [-0.012, -0.108], [-0.019, -0.122], [-0.025, -0.138], [-0.03, -0.152], [-0.05, -0.16], [-0.077, -0.152], [-0.074, -0.13], [-0.064, -0.082], [-0.054, -0.04], [-0.046, -0.028]], 0.031, { bevel: 0.006 }), mat);
-      for (const x of [-0.0175, 0.0175]) add(profile([[-0.006, -0.05], [-0.018, -0.13], [-0.06, -0.135], [-0.05, -0.05]], 0.004, { bevel: 0.001 }), panelMat).position.x = x;
-      at(add(rbox(0.036, 0.012, 0.03, 0.004), MATS.black), 0, -0.158, -0.052);
+    /**
+     * Raked pistol grip behind the trigger: a straight, even-width block (front and back edges parallel) with flat
+     * chamfered edges, a stipple panel inlaid flush in each side and a flared base cap. Panel and cap are laid out
+     * from the same rake lines as the grip, so they always sit square on it.
+     */
+    pistolGrip(mat = MATS.poly, panelMat = MATS.black, capMat = MATS.black, { width = GRIP.width, foot = GRIP.foot } = {}) {
+      const G = GRIP, W = width;
+      add(profile([[G.front(G.top), G.top], [G.front(foot), foot], [G.back(foot), foot], [G.back(G.top), G.top]], W, { bevel: 0.004, segments: 1, inset: true }), mat);
+      // panel: a parallelogram on the flat side face, an even margin in from every edge
+      const m = 0.009, y0 = -0.05, y1 = foot + 0.02;
+      const panel = profile([[G.front(y0) - m, y0], [G.front(y1) - m, y1], [G.back(y1) + m, y1], [G.back(y0) + m, y0]], 0.002, { bevel: 0.0006, segments: 1 });
+      for (const sx of [-1, 1]) add(panel, panelMat).position.x = sx * (W / 2 + 0.0006);
+      // base cap: a band over the foot, its ends just outside the same rake lines and a little wider than the
+      // grip, so it covers the grip's chamfered foot all round
+      add(G.cap(W, foot), capMat);
     },
 
     /** Picatinny rail from f0 to f1; base centred at y, teeth on top (top surface ≈ y + 0.01). */

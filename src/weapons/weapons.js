@@ -346,21 +346,21 @@ export const WEAPONS = [
       reloadRate: 1,
       spread: { hip: 1.2, ads: 0.05, move: 0.8, moveAds: 0.15, air: 1.8, airAds: 0.5, slide: 0.3 },
       bloom: { perShot: 0.8, max: 2, recovery: 4 },
-      recoil: { adsScale: 0.85, resetTime: 0.45, jitter: 0.2, punch: 1.4 },
+      recoil: { adsScale: 0.9, resetTime: 0.55, jitter: 0.35, punch: 2.4 },
     },
-    // one heavy flip per shot
-    pattern: () => [2.6, 0.3],
+    // a hand-cannon: one big flip per shot (the aim settles back on its own), a throw of the gun up and back
+    pattern: () => [4.6, 0.55],
     poses: {
-      rightHand: [0.002, -0.056, 0.106, -12, -25, -90, 1.4],
+      rightHand: [0.002, -0.064, 0.11, -14, -25, -90, 1.4], // the standard grip at full size, like the rifles
       triggerCurl: 0.85,
       thumbAim: [[-0.031, -0.02, 0.05], [-0.031, -0.015, -0.02]],
       lhRest: [-0.036, -0.088, 0.058, -12, -6, 90, 1.35],
-      lhCrane: [-0.05, 0.008, 0.045, 0, 0, 90, 1.0],
-      lhLoad: [-0.03, -0.032, 0.05, 0, 0, 180, 0.9],
+      lhCrane: [-0.05, -0.013, 0.035, 0, 0, 90, 1.0],
+      lhLoad: [-0.03, -0.053, 0.04, 0, 0, 180, 0.9],
       lhOff: [-0.2, -0.42, 0.08, 40, 10, 60, 1.2],
     },
     vm: {
-      hipPos: [0.05, -0.09, -0.36], hipRot: [3, 1, 2], inspectPos: [0.02, 0.0, -0.48], boltTravel: 0, chTravel: 0, kick: 1.6,
+      hipPos: [0.05, -0.09, -0.36], hipRot: [3, 1, 2], inspectPos: [0.05, 0.0, -0.56], boltTravel: 0, chTravel: 0, kick: 3.2,
       sprintPos: [0.11, 0.04, 0.04], sprintRot: [45, -14, -10], oneHand: true, twoHandHip: true, ironAds: 0.36,
       hinge: { axis: 'z', angle: 1.35 },
     },

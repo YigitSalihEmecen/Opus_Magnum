@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { MATS, profile, rbox, tube, gunKit } from './parts.js';
+import { MATS, profile, rbox, tube, gunKit, GRIP } from './parts.js';
 
 /*
   "Coyote" bolt-action scout rifle — procedural model. Same gun space as the other guns (trigger at f 0.036).
@@ -45,15 +45,18 @@ export function buildCoyote() {
     [-0.012, -0.034], [-0.06, -0.034], [-0.11, -0.05], [-0.2, -0.072], [-0.38, -0.106], [-0.396, -0.1], [-0.396, 0.054], [-0.38, 0.062],
     [-0.16, 0.058], [-0.1, 0.052], [-0.07, 0.03], [0.2, 0.018], [0.48, 0.03],
   ], 0.05, round(0.009, 4)), MATS.tan);
+  // the grip: the standard straight rake, a little wider, its back edge running up into the wrist
+  const gw = 0.036, gy = -0.06; // gy: where the grip's back meets the stock's underside
   add(profile([
-    [0.012, -0.026], [0.004, -0.06], [-0.004, -0.096], [-0.014, -0.128], [-0.026, -0.148], [-0.05, -0.156], [-0.074, -0.148],
-    [-0.07, -0.12], [-0.066, -0.09], [-0.074, -0.062], [-0.11, -0.046], [-0.06, -0.03], [-0.02, -0.03],
-  ], 0.036, round(0.01, 4)), MATS.tan);
+    [GRIP.front(-0.03), -0.03], [GRIP.front(GRIP.foot), GRIP.foot], [GRIP.back(GRIP.foot), GRIP.foot], [GRIP.back(gy), gy],
+    [-0.1, -0.046], [-0.06, -0.03],
+  ], gw, { bevel: 0.005, segments: 1, inset: true }), MATS.tan);
+  add(GRIP.cap(gw), MATS.black);
   const { trigger, selector } = k.fireControls(MATS.black);
   // black inlays on the flat faces (kept inside the rounded edges): grip stipple panels, forend panels
   const inlay = (points, x) => add(profile(points, 0.002, { bevel: 0.0006, segments: 1 }), MATS.black).position.x = x;
   for (const s of [-1, 1]) {
-    inlay([[-0.012, -0.056], [-0.02, -0.11], [-0.032, -0.13], [-0.056, -0.134], [-0.058, -0.1], [-0.054, -0.07], [-0.03, -0.054]], s * 0.0182);
+    inlay([[GRIP.front(-0.056) - 0.01, -0.056], [GRIP.front(-0.134) - 0.01, -0.134], [GRIP.back(-0.134) + 0.01, -0.134], [GRIP.back(-0.056) + 0.01, -0.056]], s * (gw / 2 + 0.0006));
     inlay([[0.24, -0.026], [0.46, -0.016], [0.46, 0.012], [0.24, 0.006]], s * 0.0252);
   }
   // adjustable comb riser, rubber butt pad, sling swivel under the forend
