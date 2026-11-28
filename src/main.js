@@ -568,6 +568,7 @@ window.OM = {
   get vm() { return vm; }, get gun() { return gun; }, arsenal, switchWeapon, inv, vitals, get grenades() { return grenades; },
   mv, rig, deathCam, hud, melee, handheld, wheel, get level() { return level; }, get lobby() { return lobby; }, scene, vmScene, input, gunsmith, setInspect, startMode,
   step: (n = 1, dt = 1 / 60) => { for (let i = 0; i < n; i++) tick(dt); },
+  bench: async (opts) => (await import('./dev/bench.js')).bench(window.OM, opts),
 };
 const params = new URLSearchParams(location.search);
 let lobby = params.has('dev') ? null : new Lobby(scene, camera, canvas);
